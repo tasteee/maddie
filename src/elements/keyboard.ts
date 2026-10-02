@@ -2,7 +2,7 @@ import { css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { inScale, isBlackKey, pitchClass, pitchName, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
-import { labelForPitch } from '../engine/computer-keyboard';
+import { keyLabelsByPitch } from '../engine/computer-keyboard';
 import { handleWheel } from '../engine/interact';
 import { mix, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
@@ -144,14 +144,17 @@ export class MaddieKeyboard extends CanvasElement {
         ctx.fillRect(0, Math.round(y + rh) - 1, w, 1);
       }
 
-      // Labels: every C on a piano; every row when folded.
+      // Labels: every row when there's room; otherwise just the Cs.
       const isRoot = key && pc === key.root;
-      if ((piano && pc === 0) || (!piano && rh >= 12)) {
-        ctx.font = `${pc === 0 ? 600 : 500} ${Math.min(10.5, rh - 3)}px ${p.font}`;
+      if (pc === 0 || rh >= 12) {
+        const size = Math.min(piano && black ? 9.5 : 10.5, rh - 3);
+        ctx.font = `${pc === 0 ? 600 : 500} ${size}px ${p.font}`;
         ctx.fillStyle = on ? p['note-text'] : isRoot ? p.text : pc === 0 ? p['text-muted'] : p['text-faint'];
+        // A piano's black key is drawn dark, but its label sits on the white past it, so `on` text would vanish.
+        if (on && piano && black) ctx.fillStyle = p.text;
         const label = pitchName(pitch);
         const tw = ctx.measureText(label).width;
-        ctx.fillText(label, w - tw - 8, y + rh / 2 + 0.5);
+        ctx.fillText(label, w - tw - 7, y + rh / 2 + 0.5);
       } else if (isRoot && !on && rh >= 8) {
         ctx.fillStyle = p.text;
         ctx.beginPath();
@@ -161,22 +164,26 @@ export class MaddieKeyboard extends CanvasElement {
       ctx.globalAlpha = 1;
     }
 
-    // Computer-keyboard hints: which key plays each row.
-    if (ed.view.computerKeyboard) {
+    // Computer-keyboard hints: which key plays each row. Same chip on every row, piano or folded.
+    if (ed.view.computerKeyboard && rh >= 10) {
+      const labels = keyLabelsByPitch(ed);
       ctx.font = `600 ${Math.min(10, rh - 4)}px ${p.fontMono}`;
       for (const pitch of rows.pitches()) {
-        const label = labelForPitch(ed, pitch);
-        if (!label || rh < 10) continue;
+        const label = labels.get(pitch);
+        if (!label) continue;
         const y = (rows.rowOf(pitch, now) - v.scrollRow) * rh;
         if (y > h || y + rh < 0) continue;
-        const black = isBlackKey(pitch) && ed.view.fold === 'none';
         const tw = ctx.measureText(label).width;
+        const cw = Math.max(tw + 7, rh - 4);
         ctx.globalAlpha = rows.alphaOf(pitch, now);
-        ctx.fillStyle = black ? withAlpha(p['key-white'], 0.9) : p.text;
-        roundRect(ctx, 5, y + 2, tw + 7, rh - 4, 3);
+        roundRect(ctx, 4, y + 2, cw, rh - 4, 3);
+        ctx.fillStyle = p['key-white'];
         ctx.fill();
-        ctx.fillStyle = black ? p['key-black'] : p.bg;
-        ctx.fillText(label, 8.5, y + rh / 2 + 0.5);
+        ctx.strokeStyle = p.border;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = p.text;
+        ctx.fillText(label, 4 + (cw - tw) / 2, y + rh / 2 + 0.5);
       }
       ctx.globalAlpha = 1;
     }

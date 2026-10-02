@@ -1,10 +1,11 @@
-import type { Editor } from '../core';
+import { degreeOf, MAX_PITCH, pitchClass, pitchOfDegree, type Editor } from '../core';
 import { Engine } from './engine';
 
 /**
  * Play the grid from the computer keyboard.
  * Bottom row starts at `view.keyboardBase`; each key to the right is a semitone up,
  * and each row continues where the one below it ended.
+ * With `view.keyboardScale` and a key set, each key is a scale step instead, and Z is the tonic.
  * By physical key (`e.code`), so it works on any layout.
  */
 const ROWS = [
@@ -31,11 +32,29 @@ export function stepOctave(base: number, dir: 1 | -1): number {
   return next;
 }
 
-/** Pitch → key label for the current base (for drawing hints on the piano keys). */
-export function labelForPitch(editor: Editor, pitch: number): string | null {
-  const off = pitch - editor.view.keyboardBase;
-  for (const [code, o] of KEY_OFFSETS) if (o === off) return keyLabel(code);
-  return null;
+/** True when keys map to scale steps (the switch is on and there is a key to follow). */
+export const scaleMapped = (editor: Editor) => editor.view.keyboardScale && !!editor.key;
+
+/** Pitch for the key at `offset`, or null if it falls off the top. */
+export function pitchForOffset(editor: Editor, offset: number): number | null {
+  const base = editor.view.keyboardBase;
+  const key = editor.key;
+  let pitch = base + offset;
+  if (editor.view.keyboardScale && key) {
+    const tonic = base + pitchClass(key.root - base);
+    pitch = pitchOfDegree(degreeOf(tonic, key) + offset, key);
+  }
+  return pitch <= MAX_PITCH ? pitch : null;
+}
+
+/** Pitch → key label for the current mapping (for drawing hints on the piano keys). */
+export function keyLabelsByPitch(editor: Editor): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const [code, off] of KEY_OFFSETS) {
+    const pitch = pitchForOffset(editor, off);
+    if (pitch !== null) out.set(pitch, keyLabel(code));
+  }
+  return out;
 }
 
 const held = new WeakMap<Editor, Map<string, number>>();
@@ -60,8 +79,8 @@ export function computerKeyDown(editor: Editor, e: KeyboardEvent): boolean {
   const off = KEY_OFFSETS.get(e.code);
   if (off === undefined) return false;
   if (e.repeat) return true;
-  const pitch = editor.view.keyboardBase + off;
-  if (pitch > 127) return true;
+  const pitch = pitchForOffset(editor, off);
+  if (pitch === null) return true;
   let map = held.get(editor);
   if (!map) held.set(editor, (map = new Map()));
   map.set(e.code, pitch);
@@ -95,4 +114,9 @@ export function releaseAll(editor: Editor) {
 export function setComputerKeyboard(editor: Editor, on: boolean) {
   if (!on) releaseAll(editor);
   editor.setView({ computerKeyboard: on });
+}
+
+export function setKeyboardScale(editor: Editor, on: boolean) {
+  releaseAll(editor);
+  editor.setView({ keyboardScale: on });
 }
