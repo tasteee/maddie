@@ -19,7 +19,7 @@ import {
 } from '../core';
 import type { Engine, Toast } from '../engine/engine';
 import { clamp } from '../engine/ease';
-import { clampScrollRow, crisp, handleWheel, maxScrollTick } from '../engine/interact';
+import { clampScrollRow, handleWheel, maxScrollTick } from '../engine/interact';
 import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
 import { icons } from './icons';
@@ -328,7 +328,10 @@ export class MaddiePianoRoll extends CanvasElement {
 
     const hit = this.hitTest(x, y);
     const tool = ed.view.tool;
-    ed.setView({ cursor: this.snap(this.tickAt(x), e, 'floor') });
+    const clicked = this.snap(this.tickAt(x), e, 'floor');
+    ed.setView({ cursor: clicked });
+    // Clicking empty grid moves the play marker (when stopped), like a DAW timeline.
+    if (!hit && !ed.transport.playing && tool !== 'erase') ed.transport.seek(clicked);
 
     if (tool === 'erase') return this.begin(e, this.eraseGesture(e));
     if (hit && tool === 'velocity') return this.begin(e, this.velocityGesture(e, hit.note));
@@ -852,11 +855,6 @@ export class MaddiePianoRoll extends CanvasElement {
       }
     }
 
-    // Insert cursor (faint) and playhead.
-    if (!ed.transport.playing && ed.view.cursor > 0 && ed.view.cursor !== pos) {
-      ctx.fillStyle = withAlpha(p.text, 0.12);
-      ctx.fillRect(crisp((ed.view.cursor - v.scrollTick) * v.pxPerTick) - 0.5, 0, 1, h);
-    }
     drawPlayhead(ctx, ed, v, p, h);
   }
 }

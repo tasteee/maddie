@@ -513,6 +513,12 @@ editor.output = {
 
 `smplr` is a playground `devDependency` only. The library never imports it.
 
+### 6.3.1 Marker, metronome, follow
+
+- **Marker:** play always starts at the marker; stop returns to it. Clicking the ruler or empty grid moves it (when stopped). A second stop rewinds to 0.
+- **Metronome:** `transport.setMetronome({ enabled, volume })`. Clicks are scheduled with the notes, on every beat (accent on the bar). Sound: `output.click(e)` if provided, otherwise a 60ms sine blip straight to the AudioContext. That blip is the one built-in sound; it's a utility, not an instrument.
+- **Follow:** `view.follow`, off by default. When on, the view pages forward as the playhead reaches the right edge.
+
 ### 6.4 External clock (consumer owns time)
 
 For apps that already have a transport (a DAW, Tone.js):

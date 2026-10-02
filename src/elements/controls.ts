@@ -359,6 +359,68 @@ export class MaddieTransport extends ControlElement {
       .dot {
         color: var(--_text-faint);
       }
+      .volume {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        width: 56px;
+        height: 30px;
+        margin: 0 4px 0 -2px;
+        transition: opacity var(--_motion-fast) var(--_ease);
+      }
+      .volume.off {
+        opacity: 0.4;
+      }
+      .volume input {
+        width: 100%;
+        height: 16px;
+        margin: 0;
+        background: transparent;
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+        --fill: calc(var(--v) * 100%);
+      }
+      .volume input:focus-visible {
+        outline: 2px solid var(--_focus);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+      .volume input::-webkit-slider-runnable-track {
+        height: 3px;
+        border-radius: 3px;
+        background: linear-gradient(to right, var(--_text) var(--fill), var(--_surface-2) var(--fill));
+      }
+      .volume input::-moz-range-track {
+        height: 3px;
+        border-radius: 3px;
+        background: var(--_surface-2);
+      }
+      .volume input::-moz-range-progress {
+        height: 3px;
+        border-radius: 3px;
+        background: var(--_text);
+      }
+      .volume input::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 11px;
+        height: 11px;
+        margin-top: -4px;
+        border-radius: 50%;
+        background: var(--_text);
+        box-shadow: 0 0 0 2px var(--_surface);
+        transition: transform var(--_motion-fast) var(--_ease);
+      }
+      .volume input::-moz-range-thumb {
+        width: 11px;
+        height: 11px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--_text);
+      }
+      .volume input:active::-webkit-slider-thumb {
+        transform: scale(1.2);
+      }
     `,
   ];
 
@@ -388,10 +450,41 @@ export class MaddieTransport extends ControlElement {
     const t = ed.transport;
     const [bar, beat, six] = this.position.split('.');
     return html`
-      <button class="play" aria-pressed=${t.playing} aria-label=${t.playing ? 'Pause' : 'Play'} data-tip=${tip(t.playing ? 'Pause' : 'Play', 'Space')} @click=${() => t.toggle()}>
-        ${t.playing ? icons.pause : icons.play}
+      <button class="play" aria-pressed=${t.playing} aria-label=${t.playing ? 'Stop' : 'Play'} data-tip=${tip(t.playing ? 'Stop · back to marker' : 'Play from marker', 'Space')} @click=${() => t.toggle()}>
+        ${t.playing ? icons.stop : icons.play}
       </button>
-      <button aria-label="Stop" data-tip=${tip('Stop · twice to rewind', '↵')} @click=${() => t.stop()}>${icons.stop}</button>
+      <button aria-label="Rewind" data-tip=${tip('Back to start', '↵')} @click=${() => {
+        t.stop();
+        if (t.state === 'stopped' && t.position !== 0) t.stop();
+      }}>${icons.rewind}</button>
+      <button
+        aria-pressed=${t.metronome.enabled}
+        aria-label="Metronome"
+        data-tip=${tip('Metronome', 'C')}
+        @click=${() => t.setMetronome({ enabled: !t.metronome.enabled })}
+      >
+        ${icons.metronome}
+      </button>
+      <label class="volume ${t.metronome.enabled ? '' : 'off'}" data-tip="Metronome volume">
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          aria-label="Metronome volume"
+          .value=${String(t.metronome.volume)}
+          style=${`--v: ${t.metronome.volume}`}
+          @input=${(e: Event) => t.setMetronome({ volume: Number((e.target as HTMLInputElement).value), enabled: true })}
+        />
+      </label>
+      <button
+        aria-pressed=${ed.view.follow}
+        aria-label="Follow playhead"
+        data-tip=${tip('Follow playhead', 'F')}
+        @click=${() => ed.setView({ follow: !ed.view.follow })}
+      >
+        ${icons.follow}
+      </button>
       <button
         aria-pressed=${t.loop.enabled}
         aria-label="Loop"
@@ -420,6 +513,7 @@ export class MaddieTempo extends ControlElement {
     controlStyles,
     css`
       .tempo {
+        position: relative;
         display: inline-flex;
         align-items: center;
         gap: 5px;

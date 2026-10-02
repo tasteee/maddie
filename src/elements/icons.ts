@@ -29,6 +29,8 @@ export const icons = {
   legato: icon(svg`<rect x="2" y="6" width="4.5" height="4" rx="1"/><path d="M6.5 8h5.25M10 6.25 11.75 8 10 9.75M13.75 5v6"/>`),
   download: icon(svg`<path d="M8 2.5v7.75M4.75 7 8 10.25 11.25 7"/><path d="M2.75 11v1.25a1.25 1.25 0 0 0 1.25 1.25h8a1.25 1.25 0 0 0 1.25-1.25V11"/>`),
   upload: icon(svg`<path d="M8 10.25V2.5M4.75 5.75 8 2.5l3.25 3.25"/><path d="M2.75 11v1.25a1.25 1.25 0 0 0 1.25 1.25h8a1.25 1.25 0 0 0 1.25-1.25V11"/>`),
+  rewind: icon(svg`<path d="M3.25 3v10"/><path d="M12.75 3.6v8.8a.6.6 0 0 1-.94.5L5.6 8.5a.6.6 0 0 1 0-1l6.2-4.4a.6.6 0 0 1 .95.5Z" fill="currentColor" stroke="none"/>`),
+  metronome: icon(svg`<path d="M5.4 13.5h5.2L9 2.75H7L5.4 13.5Z"/><path d="M8 10.5 12 4.5"/><path d="M5.9 10.5h4.2" opacity=".6"/>`),
   chevron: icon(svg`<path d="m4.75 6.25 3.25 3.25 3.25-3.25"/>`),
   follow: icon(svg`<path d="M2.75 8h7.5M7.5 5.25 10.25 8 7.5 10.75"/><path d="M13.25 3v10"/>`),
 };

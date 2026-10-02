@@ -34,6 +34,7 @@ export class MaddieRoot extends LitElement {
     css`
       :host {
         display: block;
+        outline: none;
         color-scheme: light dark;
         color: var(--_text);
       }
@@ -63,6 +64,11 @@ export class MaddieRoot extends LitElement {
   @property({ reflect: true }) theme?: 'light' | 'dark' | 'auto';
   /** Edits fire `maddie-beforechange` and are not applied. Apply them yourself. */
   @property({ type: Boolean }) controlled = false;
+  /**
+   * Handle shortcuts even when nothing in the editor has focus (focus on <body>).
+   * For full-page editors. Off by default so embedded editors don't steal keys.
+   */
+  @property({ attribute: 'global-shortcuts', type: Boolean }) globalShortcuts = false;
   /** Keyboard shortcuts. Merge with `defaultKeymap` to extend. */
   @property({ attribute: false }) keymap: Keymap = defaultKeymap;
 
@@ -77,6 +83,14 @@ export class MaddieRoot extends LitElement {
       req.callback(this.editor);
     });
     this.addEventListener('keydown', this.onKeyDown);
+    // Clicking any non-focusable part (ruler, keyboard, lanes) still focuses the editor,
+    // so shortcuts like Space keep working.
+    this.addEventListener('pointerdown', () => {
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) this.focus({ preventScroll: true });
+      });
+    });
     this.wireEvents();
   }
 
@@ -119,6 +133,8 @@ export class MaddieRoot extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
+    window.addEventListener('keydown', this.onWindowKeyDown);
     document.dispatchEvent(new Event(ROOT_READY));
     this.readMotion();
   }
@@ -179,11 +195,27 @@ export class MaddieRoot extends LitElement {
     ed.on('noteon', (e) => fire('maddie-noteon', e));
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener('keydown', this.onWindowKeyDown);
+  }
+
+  private onWindowKeyDown = (e: KeyboardEvent) => {
+    if (!this.globalShortcuts || e.defaultPrevented) return;
+    if (e.target === document.body || e.target === document.documentElement) this.onKeyDown(e);
+  };
+
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
     const target = e.composedPath()[0] as HTMLElement | undefined;
     const tag = target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+    const textInput =
+      (tag === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)) ||
+      tag === 'TEXTAREA' ||
+      target?.isContentEditable;
+    if (textInput) return;
+    // Selects and sliders keep their own arrow keys.
+    if ((tag === 'SELECT' || tag === 'INPUT') && /^Arrow|^Page|^Home$|^End$/.test(e.key)) return;
     // Let buttons keep Enter; Space is play/pause everywhere.
     if (tag === 'BUTTON' && e.key === 'Enter') return;
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
