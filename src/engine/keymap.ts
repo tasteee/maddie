@@ -1,4 +1,4 @@
-import { downloadMidi, snapTick, type Editor } from '../core';
+import { downloadMidi, stepGrid, type Editor } from '../core';
 import { Engine } from './engine';
 
 export type Action = (editor: Editor) => void;
@@ -27,10 +27,7 @@ export const rowZoomBy = (editor: Editor, factor: number) => {
 const stepMarker = (editor: Editor, dir: -1 | 1) => {
   const { transport } = editor;
   const from = transport.playing ? transport.position : transport.marker;
-  const grid = editor.commands.gridTicks(from);
-  const sigs = editor.meta.timeSignature;
-  const snapped = snapTick(from, grid, sigs, dir < 0 ? 'ceil' : 'floor');
-  const tick = Math.max(0, snapTick(snapped + dir * grid, grid, sigs));
+  const tick = stepGrid(from, editor.commands.gridTicks(from), editor.meta.timeSignature, dir);
   transport.seek(tick);
   editor.setView({ cursor: tick });
   const v = editor.view;
@@ -40,9 +37,13 @@ const stepMarker = (editor: Editor, dir: -1 | 1) => {
   else if (tick > v.scrollTick + span - margin) editor.setView({ scrollTick: tick - span + margin }, { animate: true });
 };
 
+/** Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step. */
 const nudge = (editor: Editor, dir: -1 | 1) => {
   if (!editor.selection.size) return stepMarker(editor, dir);
-  editor.commands.move(undefined, { ticks: dir * editor.commands.gridTicks() });
+  const from = Math.min(...editor.selectedNotes.map((n) => n.start));
+  const grid = editor.commands.gridTicks(from);
+  const to = editor.view.snap ? stepGrid(from, grid, editor.meta.timeSignature, dir) : from + dir * grid;
+  editor.commands.move(undefined, { ticks: to - from });
 };
 
 const pitchNudge = (editor: Editor, steps: number) => {
@@ -50,9 +51,17 @@ const pitchNudge = (editor: Editor, steps: number) => {
   editor.commands.nudgePitch(undefined, steps);
 };
 
+/** Move each selected note's end to the previous / next grid line (never past its start). Snap off: one grid step. */
 const resizeBy = (editor: Editor, dir: -1 | 1) => {
   if (!editor.selection.size) return;
-  editor.commands.resize(undefined, { edge: 'end', ticks: dir * editor.commands.gridTicks() });
+  if (!editor.view.snap) return editor.commands.resize(undefined, { edge: 'end', ticks: dir * editor.commands.gridTicks() });
+  const sigs = editor.meta.timeSignature;
+  const changes = editor.selectedNotes.flatMap((n) => {
+    const end = n.start + n.duration;
+    const next = stepGrid(end, editor.commands.gridTicks(end), sigs, dir);
+    return next > n.start && next !== end ? [{ id: n.id, duration: next - n.start }] : [];
+  });
+  if (changes.length) editor.commands.update(changes, 'Resize notes');
 };
 
 /** Built-in actions, by name. Keymaps point at these (or at functions). */

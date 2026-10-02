@@ -380,4 +380,28 @@ describe('arrow keys without a selection', () => {
     expect(ed.transport.marker).toBe(0);
     expect(n.id).toBe(ed.notes()[0].id);
   });
+
+  it('land off-grid notes on grid lines, not a grid step away', async () => {
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ grid: '1/16', snap: true });
+    const g = ed.commands.gridTicks();
+    ed.commands.add([
+      { pitch: 60, start: g * 2 + 37, duration: g + 50, velocity: 0.8 },
+      { pitch: 64, start: g * 3 + 37, duration: g, velocity: 0.8 },
+    ]);
+    const starts = () => ed.notes().map((n) => n.start).sort((a, b) => a - b);
+    actions.nudgeRight(ed);
+    expect(starts()).toEqual([g * 3, g * 4]); // first note on the next line, spacing kept
+    actions.nudgeLeft(ed);
+    expect(starts()).toEqual([g * 2, g * 3]);
+
+    const first = () => ed.notes().find((n) => n.pitch === 60)!;
+    ed.select([first().id]);
+    actions.lengthen(ed); // end at 3g + 50 → 4g
+    expect(first().start + first().duration).toBe(g * 4);
+    actions.shorten(ed);
+    actions.shorten(ed); // never collapses past the start
+    expect(first().start + first().duration).toBe(g * 3);
+  });
 });
