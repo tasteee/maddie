@@ -1,4 +1,4 @@
-import { downloadMidi, type Editor } from '../core';
+import { downloadMidi, snapTick, type Editor } from '../core';
 import { Engine } from './engine';
 
 export type Action = (editor: Editor) => void;
@@ -23,8 +23,25 @@ export const rowZoomBy = (editor: Editor, factor: number) => {
   editor.setView({ scrollRow: Math.max(0, Math.min(max, anchor - half / rh)) });
 };
 
+/** Step the play marker to the previous / next grid line, scrolling to keep it in view. */
+const stepMarker = (editor: Editor, dir: -1 | 1) => {
+  const { transport } = editor;
+  const from = transport.playing ? transport.position : transport.marker;
+  const grid = editor.commands.gridTicks(from);
+  const sigs = editor.meta.timeSignature;
+  const snapped = snapTick(from, grid, sigs, dir < 0 ? 'ceil' : 'floor');
+  const tick = Math.max(0, snapTick(snapped + dir * grid, grid, sigs));
+  transport.seek(tick);
+  editor.setView({ cursor: tick });
+  const v = editor.view;
+  const span = (Engine.for(editor).viewport.width || 800) / v.pxPerTick;
+  const margin = span * 0.1;
+  if (tick < v.scrollTick + margin) editor.setView({ scrollTick: Math.max(0, tick - margin) }, { animate: true });
+  else if (tick > v.scrollTick + span - margin) editor.setView({ scrollTick: tick - span + margin }, { animate: true });
+};
+
 const nudge = (editor: Editor, dir: -1 | 1) => {
-  if (!editor.selection.size) return;
+  if (!editor.selection.size) return stepMarker(editor, dir);
   editor.commands.move(undefined, { ticks: dir * editor.commands.gridTicks() });
 };
 

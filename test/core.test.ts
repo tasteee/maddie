@@ -347,3 +347,37 @@ describe('transport', () => {
     vi.useRealTimers();
   });
 });
+
+describe('arrow keys without a selection', () => {
+  it('step the play marker along the grid', async () => {
+    const { vi } = await import('vitest');
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ grid: '1/16', snap: true });
+    const step = ed.commands.gridTicks();
+    ed.transport.seek(step * 2 + 37); // off the grid
+    actions.nudgeRight(ed);
+    expect(ed.transport.marker).toBe(step * 3);
+    actions.nudgeRight(ed);
+    expect(ed.transport.marker).toBe(step * 4);
+    ed.transport.seek(step * 2 + 37);
+    actions.nudgeLeft(ed);
+    expect(ed.transport.marker).toBe(step * 2);
+    actions.nudgeLeft(ed);
+    actions.nudgeLeft(ed);
+    actions.nudgeLeft(ed);
+    expect(ed.transport.marker).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
+  it('still nudge selected notes', async () => {
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const [n] = ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
+    actions.nudgeRight(ed);
+    expect(ed.notes()[0].start).toBe(ed.commands.gridTicks());
+    expect(ed.transport.marker).toBe(0);
+    expect(n.id).toBe(ed.notes()[0].id);
+  });
+});
