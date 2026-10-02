@@ -116,13 +116,18 @@ export class Commands {
    * Arrow-key pitch move. With a fold on, one step = one visible row
    * (scale fold: scale rows only), and nothing moves if any note has no row left.
    * Otherwise a step is a scale degree (scale lock) or a semitone. Octaves are always 12 semitones.
+   * The moved notes are auditioned together for half a second.
    */
   nudgePitch(ids: Ids, steps: number, opts?: TransactOptions) {
     const { view, key } = this.editor;
-    if (Math.abs(steps) !== 1) return this.transpose(ids, { semitones: steps }, opts);
-    if (view.fold === 'scale' || view.fold === 'used') return this.transpose(ids, { rows: steps }, opts);
-    if (view.scaleLock && key) return this.transpose(ids, { degrees: steps }, opts);
-    this.transpose(ids, { semitones: steps }, opts);
+    const before = this.notesOf(ids);
+    if (Math.abs(steps) !== 1) this.transpose(ids, { semitones: steps }, opts);
+    else if (view.fold === 'scale' || view.fold === 'used') this.transpose(ids, { rows: steps }, opts);
+    else if (view.scaleLock && key) this.transpose(ids, { degrees: steps }, opts);
+    else this.transpose(ids, { semitones: steps }, opts);
+    // Let the user hear where the notes landed (only if they moved).
+    const after = this.notesOf(ids);
+    if (after.some((n, i) => n.pitch !== before[i]?.pitch)) this.editor.auditionChord(after.map((n) => n.pitch));
   }
 
   /** By semitones, by scale degrees (needs a key), or by visible rows of the current fold. */

@@ -365,6 +365,27 @@ export class Editor extends Emitter<EditorEvents> {
     else out.noteOn(e);
   }
 
+  private chord: { notes: Note[]; timer: ReturnType<typeof setTimeout> } | null = null;
+
+  /** Play several pitches together for `seconds`. A new call cuts the previous one off. */
+  auditionChord(pitches: Iterable<number>, seconds = 0.5, velocity = this._view.noteVelocity) {
+    this.stopChord();
+    const out = this.output;
+    if (!out || this.volume.muted) return;
+    const v = this.outVelocity(velocity);
+    const notes = [...new Set(pitches)].map((pitch): Note => ({ id: `chord-${pitch}`, pitch, start: 0, duration: 0, velocity }));
+    if (!notes.length) return;
+    for (const note of notes) out.noteOn({ note, pitch: note.pitch, velocity: v, time: 0 });
+    this.chord = { notes, timer: setTimeout(() => this.stopChord(), seconds * 1000) };
+  }
+
+  private stopChord() {
+    if (!this.chord) return;
+    clearTimeout(this.chord.timer);
+    for (const note of this.chord.notes) this.output?.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
+    this.chord = null;
+  }
+
   /** @internal Called by the transport scheduler. */
   dispatchNote(note: Note, time: number, duration: number) {
     this.emit('noteon', { note, time });

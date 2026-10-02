@@ -67,6 +67,12 @@ export const actions: Record<string, Action> = {
   rowsTaller: (e) => rowZoomBy(e, 1.25),
   rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
   playPause: (e) => e.transport.toggle(),
+  playSelection: (e) => {
+    const notes = e.selectedNotes;
+    if (!notes.length) return e.transport.toggle();
+    e.transport.seek(Math.min(...notes.map((n) => n.start)));
+    if (!e.transport.playing) e.transport.play();
+  },
   stop: (e) => {
     e.transport.stop();
     if (e.transport.position !== 0) e.transport.stop();
@@ -116,6 +122,8 @@ export const defaultKeymap: Keymap = {
   'alt+=': 'rowsTaller',
   'alt+-': 'rowsShorter',
   space: 'playPause',
+  'mod+space': 'playSelection',
+  'ctrl+space': 'playSelection',
   enter: 'stop',
   v: 'toolSelect',
   b: 'toolDraw',
@@ -135,6 +143,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 export function comboOf(e: KeyboardEvent): string {
   const parts: string[] = [];
   if (isMac ? e.metaKey : e.ctrlKey) parts.push('mod');
+  if (isMac && e.ctrlKey) parts.push('ctrl');
   if (e.altKey) parts.push('alt');
   const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
   if (e.shiftKey && key.length > 1) parts.push('shift');

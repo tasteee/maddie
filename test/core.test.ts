@@ -260,3 +260,24 @@ describe('pitch nudge through folds', () => {
     expect(ed.getNote(c.id)!.pitch).toBe(72);
   });
 });
+
+describe('pitch nudge audition', () => {
+  it('plays the moved chord, cuts the previous one, stops after 0.5s', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const log: string[] = [];
+    const ed = createEditor({
+      output: { noteOn: (e) => log.push(`on ${e.pitch}`), noteOff: (e) => log.push(`off ${e.pitch}`), allNotesOff: () => {} },
+    });
+    const chord = ed.commands.add([60, 64, 67].map((pitch) => ({ pitch, start: 0, duration: 480, velocity: 0.8 })));
+    ed.commands.nudgePitch(chord.map((n) => n.id), 1);
+    expect(log).toEqual(['on 61', 'on 65', 'on 68']);
+    log.length = 0;
+    ed.commands.nudgePitch(chord.map((n) => n.id), 1);
+    expect(log).toEqual(['off 61', 'off 65', 'off 68', 'on 62', 'on 66', 'on 69']);
+    log.length = 0;
+    vi.advanceTimersByTime(500);
+    expect(log).toEqual(['off 62', 'off 66', 'off 69']);
+    vi.useRealTimers();
+  });
+});
