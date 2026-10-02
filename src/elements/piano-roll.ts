@@ -330,8 +330,6 @@ export class MaddiePianoRoll extends CanvasElement {
     const tool = ed.view.tool;
     const clicked = this.snap(this.tickAt(x), e, 'floor');
     ed.setView({ cursor: clicked });
-    // Clicking empty grid moves the play marker (when stopped), like a DAW timeline.
-    if (!hit && !ed.transport.playing && tool !== 'erase') ed.transport.seek(clicked);
 
     if (tool === 'erase') return this.begin(e, this.eraseGesture(e));
     if (hit && tool === 'velocity') return this.begin(e, this.velocityGesture(e, hit.note));
@@ -343,9 +341,24 @@ export class MaddiePianoRoll extends CanvasElement {
     return this.begin(e, this.marqueeGesture(e));
   };
 
+  /** Marker before the last click-seek, so a double-click can put it back. */
+  private seekUndo: { tick: number; at: number } | null = null;
+
+  private clickSeek(tick: number) {
+    const ed = this.ed!;
+    const now = performance.now();
+    // The second click of a double-click keeps the first one's "before".
+    if (!this.seekUndo || now - this.seekUndo.at > 500) this.seekUndo = { tick: ed.transport.marker, at: now };
+    else this.seekUndo.at = now;
+    ed.transport.seek(tick);
+  }
+
   private onDoubleClick = (e: MouseEvent) => {
     const ed = this.ed;
     if (!ed || ed.view.tool !== 'select') return;
+    // Double-click isn't a marker click: undo the seek its first click made.
+    if (this.seekUndo && performance.now() - this.seekUndo.at < 500 && !ed.transport.playing) ed.transport.seek(this.seekUndo.tick);
+    this.seekUndo = null;
     const { x, y } = this.local(e);
     const hit = this.hitTest(x, y);
     if (hit) {
@@ -613,7 +626,10 @@ export class MaddiePianoRoll extends CanvasElement {
         ed.select([...initial, ...hits]);
       },
       up: () => {
-        if (!dragging && !initial.length) ed.clearSelection();
+        if (dragging) return;
+        if (!initial.length) ed.clearSelection();
+        // A plain click on empty grid moves the play marker (when stopped), like a DAW timeline.
+        if (!ed.transport.playing) this.clickSeek(this.snap(this.tickAt(origin.x), down, 'floor'));
       },
       cancel: () => ed.select(initial),
     };
