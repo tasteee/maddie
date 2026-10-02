@@ -646,6 +646,8 @@ export class MaddiePianoRoll extends CanvasElement {
     const origin = this.local(down);
     const initial = down.shiftKey || down.metaKey || down.ctrlKey ? [...ed.selection] : [];
     let dragging = false;
+    // Notes inside the box. Each one plays as it enters, so a fast sweep sounds like a chord.
+    let inside = new Set<NoteId>();
 
     return {
       move: (e) => {
@@ -668,9 +670,15 @@ export class MaddiePianoRoll extends CanvasElement {
           .filter((n) => {
             const r = this.noteRect(n);
             return r && r.y + r.h > y0 && r.y < y1;
-          })
-          .map((n) => n.id);
-        ed.select([...initial, ...hits]);
+          });
+        const played = new Set<number>();
+        for (const n of hits) {
+          if (inside.has(n.id) || n.muted || played.has(n.pitch)) continue;
+          played.add(n.pitch);
+          ed.audition(n.pitch, n.velocity);
+        }
+        inside = new Set(hits.map((n) => n.id));
+        ed.select([...initial, ...inside]);
       },
       up: () => {
         if (dragging) return;

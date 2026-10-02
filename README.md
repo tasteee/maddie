@@ -53,6 +53,8 @@ Two toolbar rows. The **top row** is global: play/stop, back to start, position,
 - **Follow playhead:** **F** (off by default).
 - **Fold:** `Off · Scale · Notes`, one click each.
 - **Keyboard input:** **`** toggles. The Z row plays from C2; each key to the right is a semitone up and each row above continues from the one below. **+ / −** shift octaves (Z wraps C6 → C0). Letter shortcuts are paused while it's on.
+- **Auto key:** the **Auto** button next to the key picks the key and scale that fit the notes best: every note in scale if possible, else the most. Among equal fits, the tonic comes from the note weights and the opening bass note. Undoable.
+- **Marquee select** plays each note as it enters the box, so a fast sweep over a chord sounds the chord.
 - **Chords** (**H**): a panel of every chord built only from notes in the key, grouped by scale degree. Triads, power, sus, 6ths, 7ths, 9ths, 11ths, 13ths, add, ♭5, no 3 / no 5, and combos (`7sus4♭9`, `maj9♯11`, `m(add9)(11)`…). Filter by type, search, pick an inversion. Click to hear. Drag onto the grid: the chord follows the cursor, release to place it (one beat long, selected, ready to resize). Its lowest note lands on the row nearest the cursor, keeping the root, so it stays in key.
 - **Velocity (selection bar):** drag either end of `55 – 65` on its own; the notes in between rescale. Double-click to type `100` (all) or `20-40` (rescale; equal velocities become a ramp).
 - `global-shortcuts` attribute: handle shortcuts even when focus is on `<body>` (for full-page editors).
