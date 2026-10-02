@@ -320,3 +320,30 @@ describe('detectKey', () => {
     expect(detectKey([])).toBeNull();
   });
 });
+
+describe('transport', () => {
+  it('plays notes that start exactly on the play marker', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    for (const bpm of [90, 96, 120, 124, 140]) {
+      const played: number[] = [];
+      const ed = createEditor({
+        audioContext,
+        doc: { tempo: [{ tick: 0, bpm }] },
+        output: { noteOn: (e) => played.push(e.note.start), noteOff: () => {}, allNotesOff: () => {} },
+      });
+      // One note per 16th over 16 bars: every marker position the grid can snap to.
+      const starts = Array.from({ length: 256 }, (_, i) => i * (PPQ / 4));
+      ed.commands.add(starts.map((start) => ({ pitch: 60, start, duration: PPQ / 4, velocity: 0.8 })));
+      for (const start of starts) {
+        played.length = 0;
+        ed.transport.seek(start);
+        await ed.transport.play();
+        ed.transport.stop();
+        expect(played[0], `${bpm} bpm, marker at ${start}`).toBe(start);
+      }
+    }
+    vi.useRealTimers();
+  });
+});
