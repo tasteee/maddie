@@ -513,6 +513,12 @@ editor.output = {
 
 `smplr` is a playground `devDependency` only. The library never imports it.
 
+### 6.3.0 Two toolbar rows
+
+- `<maddie-topbar>`: global (transport, tempo, metronome, volume, loop, follow, keyboard input, files).
+- `<maddie-editbar>`: grid tools (tools, grid, snap, key, scale lock, fold, history, row height, zoom).
+- `<maddie-toolbar>` stacks both and renders the edit row in the **inverse** color scheme (`edit-row="same"` to opt out). It detects the active scheme with a `light-dark()` sentinel, so it follows theme changes live.
+
 ### 6.3.1 Marker, metronome, follow
 
 - **Marker:** play always starts at the marker; stop returns to it. Clicking the ruler or empty grid moves it (when stopped). A second stop rewinds to 0.

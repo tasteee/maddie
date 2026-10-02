@@ -99,6 +99,9 @@ export class Editor extends Emitter<EditorEvents> {
   private tx: Tx | null = null;
   private docCache: MaddieDoc | null = null;
   private rowMapCache: RowMap | null = null;
+  /** Master volume (0–1) and mute. Applied via `output.setVolume`, or by scaling velocity. */
+  volume = { level: 0.8, muted: false };
+  private live = new Map<number, Note>();
   /** Internal clipboard. Notes relative to tick 0. */
   clipboard: Note[] = [];
 
@@ -319,10 +322,43 @@ export class Editor extends Emitter<EditorEvents> {
 
   // ── Sound ─────────────────────────────────────────────────────────
 
+  setVolume(volume: Partial<Editor['volume']>) {
+    this.volume = { ...this.volume, ...volume, level: Math.max(0, Math.min(1, volume.level ?? this.volume.level)) };
+    this.output?.setVolume?.(this.volume.muted ? 0 : this.volume.level);
+    this.emit('transport', { state: this.transport.state, position: this.transport.position });
+  }
+
+  /** Velocity after master volume, for outputs without `setVolume`. */
+  private outVelocity(v: number) {
+    return this.output?.setVolume ? v : v * this.volume.level;
+  }
+
+  /** Start a held note (computer keyboard, on-screen keys). */
+  liveNoteOn(pitch: number, velocity = this._view.noteVelocity) {
+    this.liveNoteOff(pitch);
+    const note: Note = { id: `live-${pitch}`, pitch, start: 0, duration: 0, velocity };
+    this.live.set(pitch, note);
+    if (!this.output || this.volume.muted) return;
+    this.output.noteOn({ note, pitch, velocity: this.outVelocity(velocity), time: 0 });
+  }
+
+  liveNoteOff(pitch: number) {
+    const note = this.live.get(pitch);
+    if (!note) return;
+    this.live.delete(pitch);
+    this.output?.noteOff({ note, pitch, velocity: 0, time: 0 });
+  }
+
+  /** Release every held note. */
+  liveAllOff() {
+    for (const pitch of [...this.live.keys()]) this.liveNoteOff(pitch);
+  }
+
   /** Preview a pitch while editing. */
   audition(pitch: number, velocity = this._view.noteVelocity) {
     const out = this.output;
-    if (!out) return;
+    if (!out || this.volume.muted) return;
+    velocity = this.outVelocity(velocity);
     const note: Note = { id: 'audition', pitch, start: 0, duration: 0, velocity };
     const e = { note, pitch, velocity, time: 0, duration: 0.35 };
     if (out.audition) out.audition(e);
@@ -331,10 +367,11 @@ export class Editor extends Emitter<EditorEvents> {
 
   /** @internal Called by the transport scheduler. */
   dispatchNote(note: Note, time: number, duration: number) {
-    const e = { note, pitch: note.pitch, velocity: note.velocity, time, duration };
+    this.emit('noteon', { note, time });
+    if (this.volume.muted) return;
+    const e = { note, pitch: note.pitch, velocity: this.outVelocity(note.velocity), time, duration };
     this.output?.noteOn(e);
     this.output?.noteOff({ ...e, time: time + duration });
-    this.emit('noteon', { note, time });
   }
 
   /** @internal */

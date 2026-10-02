@@ -4,6 +4,7 @@ import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type No
 import { Engine } from '../engine/engine';
 import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
+import { computerKeyDown, computerKeyUp, releaseAll } from '../engine/computer-keyboard';
 import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
@@ -83,6 +84,13 @@ export class MaddieRoot extends LitElement {
       req.callback(this.editor);
     });
     this.addEventListener('keydown', this.onKeyDown);
+    this.addEventListener('keyup', this.onKeyUp);
+    this.addEventListener('focusout', (e) => {
+      // Leaving the editor entirely: don't leave notes stuck on.
+      if (!this.contains((e as FocusEvent).relatedTarget as Node) && !this.shadowRoot?.contains((e as FocusEvent).relatedTarget as Node)) {
+        if (!this.globalShortcuts) releaseAll(this.editor);
+      }
+    });
     // Clicking any non-focusable part (ruler, keyboard, lanes) still focuses the editor,
     // so shortcuts like Space keep working.
     this.addEventListener('pointerdown', () => {
@@ -119,6 +127,7 @@ export class MaddieRoot extends LitElement {
   }
   set output(out: Output | null) {
     this.editor.output = out;
+    this.editor.setVolume({});
   }
 
   get audioContext(): AudioContext | null {
@@ -135,6 +144,8 @@ export class MaddieRoot extends LitElement {
     super.connectedCallback();
     if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
     window.addEventListener('keydown', this.onWindowKeyDown);
+    window.addEventListener('keyup', this.onWindowKeyUp);
+    window.addEventListener('blur', this.onWindowBlur);
     document.dispatchEvent(new Event(ROOT_READY));
     this.readMotion();
   }
@@ -198,7 +209,20 @@ export class MaddieRoot extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this.onWindowKeyDown);
+    window.removeEventListener('keyup', this.onWindowKeyUp);
+    window.removeEventListener('blur', this.onWindowBlur);
   }
+
+  private onWindowBlur = () => releaseAll(this.editor);
+
+  private onWindowKeyUp = (e: KeyboardEvent) => {
+    // Always release, wherever focus went.
+    computerKeyUp(this.editor, e);
+  };
+
+  private onKeyUp = (e: KeyboardEvent) => {
+    if (computerKeyUp(this.editor, e)) e.stopPropagation();
+  };
 
   private onWindowKeyDown = (e: KeyboardEvent) => {
     if (!this.globalShortcuts || e.defaultPrevented) return;
@@ -216,6 +240,11 @@ export class MaddieRoot extends LitElement {
     if (textInput) return;
     // Selects and sliders keep their own arrow keys.
     if ((tag === 'SELECT' || tag === 'INPUT') && /^Arrow|^Page|^Home$|^End$/.test(e.key)) return;
+    if (computerKeyDown(this.editor, e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // Let buttons keep Enter; Space is play/pause everywhere.
     if (tag === 'BUTTON' && e.key === 'Enter') return;
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {

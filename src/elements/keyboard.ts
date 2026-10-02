@@ -2,6 +2,7 @@ import { css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { inScale, isBlackKey, pitchClass, pitchName, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
+import { labelForPitch } from '../engine/computer-keyboard';
 import { handleWheel } from '../engine/interact';
 import { mix, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
@@ -156,6 +157,26 @@ export class MaddieKeyboard extends CanvasElement {
         ctx.beginPath();
         ctx.arc(w - 10, y + rh / 2, 2, 0, Math.PI * 2);
         ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Computer-keyboard hints: which key plays each row.
+    if (ed.view.computerKeyboard) {
+      ctx.font = `600 ${Math.min(10, rh - 4)}px ${p.fontMono}`;
+      for (const pitch of rows.pitches()) {
+        const label = labelForPitch(ed, pitch);
+        if (!label || rh < 10) continue;
+        const y = (rows.rowOf(pitch, now) - v.scrollRow) * rh;
+        if (y > h || y + rh < 0) continue;
+        const black = isBlackKey(pitch) && ed.view.fold === 'none';
+        const tw = ctx.measureText(label).width;
+        ctx.globalAlpha = rows.alphaOf(pitch, now);
+        ctx.fillStyle = black ? withAlpha(p['key-white'], 0.9) : p.text;
+        roundRect(ctx, 5, y + 2, tw + 7, rh - 4, 3);
+        ctx.fill();
+        ctx.fillStyle = black ? p['key-black'] : p.bg;
+        ctx.fillText(label, 8.5, y + rh / 2 + 0.5);
       }
       ctx.globalAlpha = 1;
     }

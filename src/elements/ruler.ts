@@ -9,7 +9,7 @@ import { CanvasElement } from './canvas-element';
 import { roundRect } from './paint';
 import type { Palette } from './tokens';
 
-/** Bars and beats. Click to seek, drag to set the loop, double-click to toggle it. */
+/** Bars and beats. Click to set the marker, drag to draw a loop, click the loop bar to toggle it. */
 @customElement('maddie-ruler')
 export class MaddieRuler extends CanvasElement {
   static styles = [
@@ -28,6 +28,7 @@ export class MaddieRuler extends CanvasElement {
   connectedCallback() {
     super.connectedCallback();
     this.addEventListener('pointerdown', this.onDown);
+    this.addEventListener('pointermove', this.onHover);
     this.addEventListener('pointermove', (e) => {
       this.hoverX = this.local(e).x;
       this.engine?.invalidate();
@@ -35,10 +36,6 @@ export class MaddieRuler extends CanvasElement {
     this.addEventListener('pointerleave', () => {
       this.hoverX = null;
       this.engine?.invalidate();
-    });
-    this.addEventListener('dblclick', () => {
-      const t = this.ed?.transport;
-      if (t && t.loop.end > t.loop.start) t.setLoop({ enabled: !t.loop.enabled });
     });
     this.addEventListener('wheel', (e) => this.ed && handleWheel(this.ed, e, this.local(e).x, 0, { vertical: false }), {
       passive: false,
@@ -58,16 +55,44 @@ export class MaddieRuler extends CanvasElement {
     return snapTick(tick, grid, ed.meta.timeSignature);
   }
 
+  /** Height of the loop strip along the top of the ruler. */
+  private static readonly STRIP = 12;
+
+  private loopHit(x: number, y: number): 'start' | 'end' | 'bar' | null {
+    const ed = this.ed!;
+    const { loop } = ed.transport;
+    if (loop.end <= loop.start) return null;
+    const v = ed.view;
+    const x0 = (loop.start - v.scrollTick) * v.pxPerTick;
+    const x1 = (loop.end - v.scrollTick) * v.pxPerTick;
+    if (y > MaddieRuler.STRIP + 6) return null;
+    if (Math.abs(x - x1) <= 6) return 'end';
+    if (Math.abs(x - x0) <= 6) return 'start';
+    if (y <= MaddieRuler.STRIP && x > x0 && x < x1) return 'bar';
+    return null;
+  }
+
+  private onHover = (e: PointerEvent) => {
+    if (!this.ed || e.buttons) return;
+    const { x, y } = this.local(e);
+    const hit = this.loopHit(x, y);
+    this.style.cursor = hit === 'start' || hit === 'end' ? 'ew-resize' : hit === 'bar' ? 'pointer' : 'text';
+  };
+
+  /**
+   * - Click the loop bar: toggle the loop.
+   * - Drag a loop edge: resize.
+   * - Drag anywhere else: draw a new loop.
+   * - Click anywhere else: move the play marker.
+   */
   private onDown = (e: PointerEvent) => {
     const ed = this.ed;
     if (!ed || e.button !== 0) return;
     this.setPointerCapture(e.pointerId);
-    const x0 = this.local(e).x;
+    const { x: x0, y: y0 } = this.local(e);
     const t0 = this.snapped(this.tickAt(x0), e.altKey);
-    const loop = ed.transport.loop;
-    const v = ed.view;
-    const near = (t: number) => Math.abs((t - v.scrollTick) * v.pxPerTick - x0) < 6;
-    const edge = loop.enabled && near(loop.start) ? 'start' : loop.enabled && near(loop.end) ? 'end' : null;
+    const hit = this.loopHit(x0, y0);
+    const start = ed.transport.loop;
     let dragging = false;
 
     const move = (ev: PointerEvent) => {
@@ -75,14 +100,17 @@ export class MaddieRuler extends CanvasElement {
       if (!dragging && Math.abs(x - x0) < 3) return;
       dragging = true;
       const t = this.snapped(this.tickAt(x), ev.altKey);
-      if (edge === 'start') ed.transport.setLoop({ start: Math.min(t, loop.end - 1), enabled: true });
-      else if (edge === 'end') ed.transport.setLoop({ end: Math.max(t, loop.start + 1), enabled: true });
-      else ed.transport.setLoop({ start: Math.min(t0, t), end: Math.max(t0, t), enabled: t !== t0 });
+      if (hit === 'start') ed.transport.setLoop({ start: Math.min(t, start.end - 1), enabled: true });
+      else if (hit === 'end') ed.transport.setLoop({ end: Math.max(t, start.start + 1), enabled: true });
+      else if (t !== t0) ed.transport.setLoop({ start: Math.min(t0, t), end: Math.max(t0, t), enabled: true });
     };
     const up = () => {
       this.removeEventListener('pointermove', move);
       this.removeEventListener('pointerup', up);
-      if (!dragging) {
+      if (dragging) return;
+      if (hit) {
+        ed.transport.setLoop({ enabled: !ed.transport.loop.enabled });
+      } else {
         ed.transport.seek(t0);
         ed.setView({ cursor: t0 });
       }
@@ -98,16 +126,21 @@ export class MaddieRuler extends CanvasElement {
     ctx.fillStyle = p.surface;
     ctx.fillRect(0, 0, w, h);
 
-    // Loop region: a slim bar along the top, plus a faint tint.
+    // Loop: a bar along the top (grab its edges to resize), plus a faint tint while on.
     const loop = ed.transport.loop;
     if (loop.end > loop.start) {
       const x0 = x(loop.start);
       const x1 = x(loop.end);
-      ctx.fillStyle = withAlpha(p.loop, loop.enabled ? 0.07 : 0.03);
-      ctx.fillRect(x0, 0, x1 - x0, h);
-      ctx.fillStyle = loop.enabled ? p.loop : withAlpha(p['text-faint'], 0.6);
-      roundRect(ctx, x0 + 1, 3, x1 - x0 - 2, 4, 2);
+      if (loop.enabled) {
+        ctx.fillStyle = withAlpha(p.loop, 0.08);
+        ctx.fillRect(x0, 0, x1 - x0, h);
+      }
+      ctx.fillStyle = loop.enabled ? p.text : withAlpha(p['text-faint'], 0.7);
+      roundRect(ctx, x0 + 1, 3, x1 - x0 - 2, 6, 3);
       ctx.fill();
+      // Edge grips.
+      ctx.fillStyle = loop.enabled ? p.surface : p['text-faint'];
+      for (const gx of [x0 + 4, x1 - 5]) ctx.fillRect(Math.round(gx), 4, 1, 4);
     }
 
     // Ticks and bar numbers.
