@@ -77,7 +77,10 @@ export class MaddieEditor extends MaddieRoot {
   protected render() {
     return html`
       <div class="frame" part="frame">
-        <slot name="toolbar"><maddie-toolbar part="toolbar"></maddie-toolbar></slot>
+        <slot name="toolbar"
+          ><maddie-toolbar part="toolbar"
+            ><slot name="toolbar-start" slot="start"></slot><slot name="toolbar-end" slot="end"></slot></maddie-toolbar
+        ></slot>
         <div class="grid" part="body">
           <div class="corner" part="corner"><slot name="corner"></slot></div>
           <maddie-ruler part="ruler"></maddie-ruler>

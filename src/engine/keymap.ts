@@ -68,12 +68,17 @@ export const actions: Record<string, Action> = {
   rowsTaller: (e) => rowZoomBy(e, 1.25),
   rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
   playPause: (e) => e.transport.toggle(),
-  stop: (e) => e.transport.stop(),
+  stop: (e) => {
+    e.transport.stop();
+    if (e.transport.position !== 0) e.transport.stop();
+  },
   toolSelect: (e) => e.setView({ tool: 'select' }),
   toolDraw: (e) => e.setView({ tool: 'draw' }),
   toolErase: (e) => e.setView({ tool: 'erase' }),
   toolVelocity: (e) => e.setView({ tool: 'velocity' }),
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
+  toggleMetronome: (e) => e.transport.setMetronome({ enabled: !e.transport.metronome.enabled }),
+  toggleFollow: (e) => e.setView({ follow: !e.view.follow }),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
   exportMidi: (e) => e.notes().length && downloadMidi(e.doc),
 };
@@ -119,6 +124,8 @@ export const defaultKeymap: Keymap = {
   g: 'toolVelocity',
   s: 'toggleSnap',
   'mod+l': 'toggleLoop',
+  c: 'toggleMetronome',
+  f: 'toggleFollow',
   'mod+shift+e': 'exportMidi',
 };
 

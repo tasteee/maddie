@@ -1,5 +1,5 @@
 import type { Editor } from './editor';
-import { secondsToTicks, ticksToSeconds } from './music/timeline';
+import { barsInRange, beatLength, secondsToTicks, ticksToSeconds } from './music/timeline';
 import type { Tick } from './types';
 
 export type TransportState = 'stopped' | 'playing' | 'paused';
@@ -8,6 +8,20 @@ export interface LoopRegion {
   enabled: boolean;
   start: Tick;
   end: Tick;
+}
+
+export interface Metronome {
+  enabled: boolean;
+  /** 0–1. */
+  volume: number;
+}
+
+export interface ClickEvent {
+  /** AudioContext time. */
+  time: number;
+  /** First beat of the bar. */
+  accent: boolean;
+  volume: number;
 }
 
 interface Anchor {
@@ -26,6 +40,7 @@ const HORIZON_S = 0.12;
 export class Transport {
   state: TransportState = 'stopped';
   loop: LoopRegion = { enabled: false, start: 0, end: 0 };
+  metronome: Metronome = { enabled: false, volume: 0.6 };
   private stoppedAt: Tick = 0;
   private returnTo: Tick = 0;
   private anchors: Anchor[] = [];
@@ -76,7 +91,10 @@ export class Transport {
     this.halt('paused');
   }
 
-  /** Stop. A second stop returns to the start. */
+  /**
+   * Stop and return to the marker (where play started, or where you last clicked).
+   * A second stop rewinds to the start.
+   */
   stop() {
     if (this.state === 'stopped') {
       this.stoppedAt = 0;
@@ -89,9 +107,20 @@ export class Transport {
     this.emit();
   }
 
+  /** Space bar: play from the marker, or stop back to it. */
   toggle() {
-    if (this.state === 'playing') this.pause();
+    if (this.state === 'playing') this.stop();
     else this.play();
+  }
+
+  /** Where play starts from. */
+  get marker(): Tick {
+    return this.returnTo;
+  }
+
+  setMetronome(metronome: Partial<Metronome>) {
+    this.metronome = { ...this.metronome, ...metronome, volume: Math.max(0, Math.min(1, metronome.volume ?? this.metronome.volume)) };
+    this.emit();
   }
 
   seek(tick: Tick) {
@@ -155,6 +184,18 @@ export class Transport {
         wrapped = true;
       }
 
+      if (this.metronome.enabled && this.metronome.volume > 0) {
+        const { timeSignature } = this.editor.meta;
+        for (const bar of barsInRange(Math.max(0, fromTick - ppq * 16), toTick, timeSignature, ppq)) {
+          const beat = beatLength(bar.sig, ppq);
+          for (let b = 0; b < bar.sig.numerator; b++) {
+            const t = bar.tick + b * beat;
+            if (t < fromTick || t >= toTick) continue;
+            this.click({ time: anchor.time + secs(t) - secs(anchor.tick), accent: b === 0, volume: this.metronome.volume });
+          }
+        }
+      }
+
       for (const note of this.editor.notesStarting(fromTick, toTick)) {
         if (note.muted) continue;
         const time = anchor.time + secs(note.start) - secs(anchor.tick);
@@ -175,6 +216,24 @@ export class Transport {
 
     // Auto-stop well past the end when not looping.
     if (!this.loop.enabled && this.position > this.editor.contentEnd() + ppq * 8) this.stop();
+  }
+
+  /** Metronome click. Uses `output.click` if provided, otherwise a short built-in blip. */
+  private click(e: ClickEvent) {
+    const out = this.editor.output;
+    if (out?.click) return out.click(e);
+    const ctx = this.audioContext;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = e.accent ? 1760 : 1320;
+    const peak = 0.5 * e.volume * e.volume;
+    gain.gain.setValueAtTime(0, e.time);
+    gain.gain.linearRampToValueAtTime(peak, e.time + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, e.time + 0.06);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(e.time);
+    osc.stop(e.time + 0.07);
   }
 
   private tickAtAnchor(anchor: Anchor, time: number): Tick {

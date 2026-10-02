@@ -23,4 +23,6 @@ export interface Output {
   allNotesOff(): void;
   /** Preview while editing (placing, dragging pitch, clicking a key). */
   audition?(e: NoteEvent): void;
+  /** Metronome click. Optional: a built-in click plays if omitted. */
+  click?(e: { time: number; accent: boolean; volume: number }): void;
 }

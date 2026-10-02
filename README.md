@@ -43,6 +43,14 @@ el.output = {
 };
 ```
 
+## Transport
+
+- **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid.
+- **Enter** / the rewind button goes back to the start.
+- **Metronome:** toggle with **C**, volume slider next to it. A short built-in click plays unless your `output` has a `click(e)` method.
+- **Follow playhead:** toggle with **F** (off by default).
+- `global-shortcuts` attribute: handle shortcuts even when focus is on `<body>` (for full-page editors).
+
 ## Import / export MIDI
 
 **Import:** the toolbar's **Import** button (`⌘O`), or drop a `.mid` file on the grid. Notes, tempo, time signature and key are replaced in one undoable step. `<maddie-import>` fires a cancelable `maddie-import` event with `{ file, bytes }`.
@@ -81,7 +89,7 @@ Pieces find the nearest `<maddie-root>` automatically. Or wire one directly: `ro
 
 1. **Tokens:** `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, … (light/dark built in, `theme="dark|light"`)
 2. **Parts:** `maddie-editor::part(toolbar)`, `::part(piano-roll)`, …
-3. **Slots:** replace `toolbar`, `corner`, `lane-label`, `footer`
+3. **Slots:** replace `toolbar`, `corner`, `lane-label`, `inspector`, `footer`; add buttons with `toolbar-start` / `toolbar-end`
 4. **Note color:** `note-color="pitch | pitch-class | mono"` (default `pitch`)
 5. **Canvas hook:** `roll.noteStyle = (note, state) => ({ fill: '#f59e0b' })`
 

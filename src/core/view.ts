@@ -46,7 +46,7 @@ export const DEFAULT_VIEW: ViewState = {
   fold: 'none',
   scaleLock: false,
   scaleHighlight: true,
-  follow: true,
+  follow: false,
   noteLength: null,
   noteVelocity: 0.8,
   cursor: 0,
