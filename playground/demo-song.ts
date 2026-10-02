@@ -1,55 +1,33 @@
 import type { NoteInput } from '../src/core';
 
 const PPQ = 960;
-const BAR = PPQ * 4;
-const E = PPQ / 2; // eighth
-const S = PPQ / 4; // sixteenth
+const S = PPQ / 4; // one sixteenth
 
-/** A short C minor loop: chords, bass, melody. */
+export const DEMO_TEMPO = 124;
+
+/**
+ * C minor, 4 bars at 124 BPM: Cm · A♭ · E♭ · B♭ with a syncopated bass.
+ * Each entry: [pitch, start (16ths), length (16ths), velocity 0–1].
+ */
+const NOTES: Array<[number, number, number, number]> = [
+  // Chords
+  [67, 0, 6, 0.62], [63, 0, 6, 0.62], [60, 0, 6, 0.62], // Cm
+  [67, 8, 6, 0.51], [63, 8, 6, 0.51], [58, 8, 6, 0.51],
+  [63, 16, 6, 0.62], [60, 16, 6, 0.62], [56, 16, 6, 0.62], // A♭
+  [67, 24, 6, 0.51], [63, 24, 6, 0.51], [58, 24, 6, 0.51],
+  [67, 32, 6, 0.62], [63, 32, 6, 0.62], [58, 32, 6, 0.62], // E♭
+  [67, 40, 6, 0.51], [63, 40, 6, 0.51], [58, 40, 6, 0.51],
+  [65, 48, 6, 0.62], [62, 48, 6, 0.62], [58, 48, 6, 0.62], // B♭
+  [74, 54, 2, 0.55],
+  [75, 56, 3, 0.51], [70, 56, 3, 0.51], [67, 56, 3, 0.32],
+  [74, 60, 3, 0.51], [70, 60, 3, 0.51], [65, 60, 3, 0.32],
+  // Bass + pickups
+  [36, 0, 3, 1], [36, 6, 2, 0.76], [48, 10, 2, 0.65], [36, 12, 3, 0.85],
+  [32, 16, 3, 1], [32, 22, 2, 0.76], [44, 26, 2, 0.65], [32, 28, 3, 0.85],
+  [39, 32, 3, 1], [39, 38, 2, 0.76], [51, 42, 2, 0.65], [39, 44, 3, 0.85],
+  [34, 48, 3, 1], [34, 54, 2, 0.76], [46, 58, 2, 0.65], [34, 60, 3, 0.85],
+];
+
 export function demoSong(): NoteInput[] {
-  const notes: NoteInput[] = [];
-  const add = (pitch: number, start: number, duration: number, velocity: number) =>
-    notes.push({ pitch, start, duration, velocity });
-
-  // Cm – A♭ – E♭ – B♭
-  const chords = [
-    [60, 63, 67],
-    [56, 60, 63],
-    [58, 63, 67],
-    [58, 62, 65],
-  ];
-  const bass = [36, 32, 39, 34];
-
-  chords.forEach((chord, bar) => {
-    const t = bar * BAR;
-    chord.forEach((p, i) => {
-      add(p, t, PPQ * 1.5, 0.62 - i * 0.04);
-      add(p, t + PPQ * 2, PPQ * 1.5, 0.52 - i * 0.04);
-    });
-    add(bass[bar], t, PPQ * 0.75, 0.9);
-    add(bass[bar], t + PPQ * 1.5, E, 0.7);
-    add(bass[bar] + 12, t + PPQ * 2.5, E, 0.6);
-    add(bass[bar], t + PPQ * 3, PPQ * 0.75, 0.78);
-  });
-
-  const melody: Array<[number, number, number, number]> = [
-    [79, 0, E + S, 0.86],
-    [75, E + S, S, 0.6],
-    [77, PPQ, E, 0.7],
-    [79, PPQ * 1.5, PPQ, 0.82],
-    [80, BAR, E, 0.9],
-    [79, BAR + E, E, 0.66],
-    [77, BAR + PPQ, PPQ, 0.74],
-    [75, BAR + PPQ * 2.5, E, 0.58],
-    [74, BAR * 2, E + S, 0.8],
-    [75, BAR * 2 + E + S, S, 0.55],
-    [77, BAR * 2 + PPQ, E, 0.7],
-    [79, BAR * 2 + PPQ * 1.5, PPQ * 1.5, 0.88],
-    [82, BAR * 3, E, 0.95],
-    [79, BAR * 3 + E, E, 0.7],
-    [77, BAR * 3 + PPQ, E, 0.66],
-    [74, BAR * 3 + PPQ * 1.5, PPQ * 2, 0.78],
-  ];
-  for (const [p, t, d, v] of melody) add(p, t, d, v);
-  return notes;
+  return NOTES.map(([pitch, start, length, velocity]) => ({ pitch, start: start * S, duration: length * S, velocity }));
 }

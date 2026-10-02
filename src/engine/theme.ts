@@ -103,3 +103,12 @@ export function normalizeColor(color: string): string {
   const [r, g, b, a] = normCtx.getImageData(0, 0, 1, 1).data;
   return `rgba(${r},${g},${b},${Math.round((a / 255) * 1000) / 1000})`;
 }
+
+/** Relative luminance (0–1) of an rgb()/rgba() color. */
+export function luminance(color: string): number {
+  const [r, g, b] = rgb(color).map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}

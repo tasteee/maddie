@@ -6,6 +6,7 @@ export { MaddiePianoRoll } from './piano-roll';
 export { MaddieKeyboard } from './keyboard';
 export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
+export { MaddieInspector, MaddieScrub } from './inspector';
 export {
   MaddieToolbar,
   MaddieToolSelect,

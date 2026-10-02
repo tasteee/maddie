@@ -46,6 +46,8 @@ export class Engine {
   readonly view: ValueTween<DisplayView>;
   preview: Preview = { overrides: new Map(), added: [], hidden: new Set() };
   motion: Motion = { fast: 90, medium: 150, slow: 220, glide: 45 };
+  /** Note under the pointer in any view (roll ↔ velocity lane stay in sync). */
+  hoverId: NoteId | null = null;
   /** Pitches currently held on the keyboard (for highlight). */
   held = new Set<number>();
   /** Size of the main roll viewport, used for clamping and follow. */
@@ -107,6 +109,12 @@ export class Engine {
 
   private isPreviewed(id: NoteId) {
     return this.preview.added.some((n) => n.id === id);
+  }
+
+  setHover(id: NoteId | null) {
+    if (id === this.hoverId) return;
+    this.hoverId = id;
+    this.invalidate();
   }
 
   setMotion(motion: Partial<Motion>) {

@@ -1,7 +1,7 @@
 import { css, html } from 'lit';
 import type { Editor } from '../core';
 import type { Engine } from '../engine/engine';
-import { ThemeReader } from '../engine/theme';
+import { luminance, ThemeReader } from '../engine/theme';
 import { MaddieElement } from './base';
 import { PALETTE_TOKENS, tokens, type Palette } from './tokens';
 
@@ -86,6 +86,18 @@ export abstract class CanvasElement extends MaddieElement {
       p.noteRadius = this.theme.number('note-radius', 3);
       p.font = this.theme.value('font') || 'system-ui';
       p.fontMono = this.theme.value('font-mono') || 'monospace';
+      p.dark = luminance(p.bg) < 0.4;
+      const num = (t: string, fallback: number) => {
+        const n = parseFloat(this.theme!.value(t));
+        return Number.isFinite(n) ? n : fallback;
+      };
+      p.pitch = {
+        lightness: num('pitch-lightness', p.dark ? 0.72 : 0.64),
+        chroma: num('pitch-chroma', p.dark ? 0.15 : 0.18),
+        hueLow: num('pitch-hue-low', 265),
+        hueHigh: num('pitch-hue-high', 15),
+      };
+      p.pitchCache = new Map();
       this.palette = p;
     }
     return this.palette!;

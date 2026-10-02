@@ -10,9 +10,10 @@ import {
   type FoldMode,
   type ScaleId,
   type Tool,
+  ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
-import { modKeyLabel } from '../engine/keymap';
+import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MaddieElement } from './base';
 import { icons } from './icons';
 import { tokens } from './tokens';
@@ -96,6 +97,12 @@ export const controlStyles = css`
   }
   .select select:focus {
     outline: none;
+  }
+  .sep {
+    width: 1px;
+    height: 16px;
+    margin: 0 3px;
+    background: var(--_border);
   }
   .value {
     font-variant-numeric: tabular-nums;
@@ -290,7 +297,7 @@ export class MaddieFoldSelect extends ControlElement {
     const ed = this.ed;
     if (!ed) return nothing;
     const folded = ed.view.fold !== 'none';
-    return html`<label class="select" data-tip="Fold rows" style=${folded ? 'color: var(--_accent)' : ''}>
+    return html`<label class="select" data-tip="Fold rows" style=${folded ? 'background: var(--_surface-2)' : ''}>
       ${icons.fold}<span class="value">${folded ? (ed.view.fold === 'scale' ? 'Scale' : 'Notes') : 'Fold'}</span>
       <span class="chev">${icons.chevron}</span>
       <select aria-label="Fold" @change=${(e: Event) => ed.setView({ fold: (e.target as HTMLSelectElement).value as FoldMode }, { animate: true })}>
@@ -317,7 +324,7 @@ export class MaddieTransport extends ControlElement {
         margin-right: 4px;
       }
       .play:hover {
-        background: color-mix(in oklab, var(--_accent) 88%, var(--_text));
+        background: color-mix(in oklab, var(--_accent) 84%, var(--_bg));
         color: var(--_accent-text);
       }
       .play[aria-pressed='true'] {
@@ -575,10 +582,19 @@ export class MaddieZoom extends ControlElement {
   }
 
   render() {
-    if (!this.ed) return nothing;
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const [minRh, maxRh] = ZOOM_LIMITS.rowHeight;
     return html`
-      <button aria-label="Zoom out" data-tip=${tip('Zoom out', '−')} @click=${() => this.zoom(1 / 1.5)}>${icons.zoomOut}</button>
-      <button aria-label="Zoom in" data-tip=${tip('Zoom in', '+')} @click=${() => this.zoom(1.5)}>${icons.zoomIn}</button>
+      <button aria-label="Shorter rows" ?disabled=${ed.view.rowHeight <= minRh} data-tip=${tip('Shorter rows · ⌥ scroll', '⌥ −')} @click=${() => rowZoomBy(ed, 1 / 1.25)}>
+        ${icons.rowsShorter}
+      </button>
+      <button aria-label="Taller rows" ?disabled=${ed.view.rowHeight >= maxRh} data-tip=${tip('Taller rows · ⌥ scroll', '⌥ +')} @click=${() => rowZoomBy(ed, 1.25)}>
+        ${icons.rowsTaller}
+      </button>
+      <span class="sep"></span>
+      <button aria-label="Zoom out" data-tip=${tip('Zoom out · ⌘ scroll', '−')} @click=${() => this.zoom(1 / 1.5)}>${icons.zoomOut}</button>
+      <button aria-label="Zoom in" data-tip=${tip('Zoom in · ⌘ scroll', '+')} @click=${() => this.zoom(1.5)}>${icons.zoomIn}</button>
     `;
   }
 }

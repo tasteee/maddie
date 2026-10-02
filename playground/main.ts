@@ -1,7 +1,7 @@
 import { SplendidGrandPiano } from 'smplr';
 import { toMidiVelocity, type Output } from '../src/core';
 import '../src/elements';
-import { demoSong } from './demo-song';
+import { DEMO_TEMPO, demoSong } from './demo-song';
 
 const editorEl = document.querySelector('maddie-editor')!;
 const editor = editorEl.editor;
@@ -35,11 +35,13 @@ piano.load
 
 // ── Content ─────────────────────────────────────────────────────────
 editorEl.notes = demoSong();
+editor.commands.setTempo(DEMO_TEMPO, { origin: 'load' });
 editor.transport.setLoop({ start: 0, end: editor.ppq * 16, enabled: true });
 editor.setView({ pxPerTick: 0.075 });
 
 document.getElementById('demo')!.addEventListener('click', () => {
   editorEl.notes = demoSong();
+  editor.commands.setTempo(DEMO_TEMPO, { origin: 'load' });
   editorEl.pianoRoll?.centerOnContent();
 });
 document.getElementById('clear')!.addEventListener('click', () => {

@@ -11,6 +11,18 @@ const zoomBy = (editor: Editor, factor: number) => {
   editor.setView({ pxPerTick: px, scrollTick: Math.max(0, center - width / 2 / px) }, { animate: true });
 };
 
+/** Taller / shorter rows, keeping the row at the center in place. */
+export const rowZoomBy = (editor: Editor, factor: number) => {
+  const v = editor.view;
+  const engine = Engine.for(editor);
+  const half = (engine.viewport.height || 400) / 2;
+  const anchor = (v.scrollRow ?? 0) + half / v.rowHeight;
+  editor.setView({ rowHeight: v.rowHeight * factor });
+  const rh = editor.view.rowHeight;
+  const max = engine.maxScrollRow(rh);
+  editor.setView({ scrollRow: Math.max(0, Math.min(max, anchor - half / rh)) });
+};
+
 const nudge = (editor: Editor, dir: -1 | 1) => {
   if (!editor.selection.size) return;
   editor.commands.move(undefined, { ticks: dir * editor.commands.gridTicks() });
@@ -53,6 +65,8 @@ export const actions: Record<string, Action> = {
   velocityDown: (e) => e.selection.size && e.commands.setVelocity(undefined, { mode: 'relative', value: -0.05 }),
   zoomIn: (e) => zoomBy(e, 1.5),
   zoomOut: (e) => zoomBy(e, 1 / 1.5),
+  rowsTaller: (e) => rowZoomBy(e, 1.25),
+  rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
   playPause: (e) => e.transport.toggle(),
   stop: (e) => e.transport.stop(),
   toolSelect: (e) => e.setView({ tool: 'select' }),
@@ -93,6 +107,8 @@ export const defaultKeymap: Keymap = {
   '=': 'zoomIn',
   '+': 'zoomIn',
   '-': 'zoomOut',
+  'alt+=': 'rowsTaller',
+  'alt+-': 'rowsShorter',
   space: 'playPause',
   enter: 'stop',
   v: 'toolSelect',
@@ -121,8 +137,9 @@ export function comboOf(e: KeyboardEvent): string {
 export function handleKey(editor: Editor, e: KeyboardEvent, keymap: Keymap = defaultKeymap): boolean {
   // Use the physical key for letters when Alt changes e.key (macOS: ⌥A = å).
   let combo = comboOf(e);
-  if (!keymap[combo] && e.code.startsWith('Key')) {
-    combo = combo.replace(/[^+]+$/, e.code.slice(3).toLowerCase());
+  if (!keymap[combo]) {
+    const physical = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.code === 'Equal' ? '=' : e.code === 'Minus' ? '-' : null;
+    if (physical) combo = combo.replace(/[^+]+$/, physical);
   }
   const entry = keymap[combo];
   if (!entry) return false;

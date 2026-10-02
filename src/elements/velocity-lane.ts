@@ -6,7 +6,7 @@ import { clamp } from '../engine/ease';
 import { handleWheel } from '../engine/interact';
 import { withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
-import { drawTimeGrid, noteFill, playingFlash } from './paint';
+import { drawTimeGrid, noteBase, noteFill, playingFlash } from './paint';
 import type { Palette } from './tokens';
 
 const PAD_TOP = 10;
@@ -29,23 +29,14 @@ export class MaddieVelocityLane extends CanvasElement {
     `,
   ];
 
-  private hoverId: string | null = null;
-
   connectedCallback() {
     super.connectedCallback();
     this.addEventListener('pointerdown', this.onDown);
     this.addEventListener('pointermove', (e) => {
       if (e.buttons) return;
-      const hit = this.hit(this.local(e).x);
-      if ((hit?.id ?? null) !== this.hoverId) {
-        this.hoverId = hit?.id ?? null;
-        this.engine?.invalidate();
-      }
+      this.engine?.setHover(this.hit(this.local(e).x)?.id ?? null);
     });
-    this.addEventListener('pointerleave', () => {
-      this.hoverId = null;
-      this.engine?.invalidate();
-    });
+    this.addEventListener('pointerleave', () => this.engine?.setHover(null));
     this.addEventListener('wheel', (e) => this.ed && handleWheel(this.ed, e, this.local(e).x, 0, { vertical: false }), {
       passive: false,
     });
@@ -153,19 +144,19 @@ export class MaddieVelocityLane extends CanvasElement {
       const x = Math.round((d.start - v.scrollTick) * v.pxPerTick) + 0.5;
       if (x < -4 || x > w + 4) continue;
       const selected = ed.selection.has(n.id) || n.id.startsWith('copy:');
-      const hovered = this.hoverId === n.id;
+      const hovered = engine.hoverId === n.id;
       const top = PAD_TOP + span * (1 - d.velocity);
-      const color = selected ? p['note-selected'] : p.note;
+      const base = noteBase(p, n.pitch, ed.view.noteColor, selected);
       ctx.globalAlpha = d.alpha;
-      ctx.strokeStyle = withAlpha(color, selected || hovered ? 0.95 : 0.55);
-      ctx.lineWidth = selected ? 2 : 1.5;
+      ctx.strokeStyle = withAlpha(base, selected || hovered ? 1 : 0.55);
+      ctx.lineWidth = selected || hovered ? 2 : 1.5;
       ctx.beginPath();
       ctx.moveTo(x, h - PAD_BOTTOM);
       ctx.lineTo(x, top);
       ctx.stroke();
-      ctx.fillStyle = noteFill(p, { velocity: 1, muted: n.muted }, { selected, hovered, playing: playingFlash(ed, n, pos) });
+      ctx.fillStyle = noteFill(p, base, { velocity: 1, muted: n.muted }, { selected, hovered, playing: playingFlash(ed, n, pos) });
       ctx.beginPath();
-      ctx.arc(x, top, hovered ? 4.5 : 3.5, 0, Math.PI * 2);
+      ctx.arc(x, top, hovered ? 5 : 3.5, 0, Math.PI * 2);
       ctx.fill();
       if (selected) {
         ctx.lineWidth = 1.5;

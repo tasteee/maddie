@@ -1,6 +1,6 @@
 import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type Tool, type FoldMode } from '../core';
+import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type Tool, type FoldMode, type NoteColorMode } from '../core';
 import { Engine } from '../engine/engine';
 import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
@@ -57,6 +57,8 @@ export class MaddieRoot extends LitElement {
   @property({ type: Number }) tempo?: number;
   @property({ attribute: 'time-signature' }) timeSignature?: string;
   @property({ attribute: 'scale-lock', converter: bool }) scaleLock?: boolean;
+  /** `pitch` (default), `pitch-class`, or `mono`. */
+  @property({ attribute: 'note-color' }) noteColor?: NoteColorMode;
   @property({ reflect: true }) theme?: 'light' | 'dark' | 'auto';
   /** Edits fire `maddie-beforechange` and are not applied. Apply them yourself. */
   @property({ type: Boolean }) controlled = false;
@@ -128,6 +130,7 @@ export class MaddieRoot extends LitElement {
     if (changed.has('fold') && this.fold) view.fold = this.fold;
     if (changed.has('tool') && this.tool) view.tool = this.tool;
     if (changed.has('scaleLock') && this.scaleLock !== undefined) view.scaleLock = this.scaleLock;
+    if (changed.has('noteColor') && this.noteColor) view.noteColor = this.noteColor;
     ed.setView(view);
 
     // Doc-level attributes apply without creating undo steps.

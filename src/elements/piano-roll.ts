@@ -20,9 +20,9 @@ import {
 import type { Engine } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { clampScrollRow, crisp, handleWheel, maxScrollTick } from '../engine/interact';
-import { withAlpha } from '../engine/theme';
+import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
-import { drawLoop, drawPlayhead, drawTimeGrid, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
+import { drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 
 type Zone = 'body' | 'start' | 'end';
@@ -249,6 +249,7 @@ export class MaddiePianoRoll extends CanvasElement {
   private begin(e: PointerEvent, gesture: Gesture) {
     this.gesture = gesture;
     this.hover = { id: null, zone: null, ghost: null };
+    this.engine?.setHover(null);
     this.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       this.lastPointer = ev;
@@ -577,6 +578,7 @@ export class MaddiePianoRoll extends CanvasElement {
   private onLeave = () => {
     if (this.gesture) return;
     this.hover = { id: null, zone: null, ghost: null };
+    this.engine?.setHover(null);
     this.engine?.invalidate();
   };
 
@@ -598,6 +600,7 @@ export class MaddiePianoRoll extends CanvasElement {
     }
     const prev = this.hover;
     this.hover = { id: hit?.note.id ?? null, zone: hit?.zone ?? null, ghost };
+    this.engine?.setHover(this.hover.id);
     if (prev.id !== this.hover.id || prev.ghost?.start !== ghost?.start || prev.ghost?.pitch !== ghost?.pitch) {
       this.engine?.invalidate();
     }
@@ -675,10 +678,10 @@ export class MaddiePianoRoll extends CanvasElement {
       const y = (row - v.scrollRow) * rh + 1 + (inner - nh) / 2;
       if (y > h || y + nh < 0) return;
       const style = this.noteStyle?.(n, state);
-      const base = style?.fill ?? (state.selected ? p['note-selected'] : p.note);
+      const base = style?.fill ? normalizeColor(style.fill) : noteBase(p, n.pitch, ed.view.noteColor, state.selected);
       ctx.globalAlpha = alpha;
       roundRect(ctx, x + 0.5, y, nw - 1, nh, radius);
-      ctx.fillStyle = noteFill(p, { velocity: d.velocity, muted: n.muted }, state, style?.fill);
+      ctx.fillStyle = noteFill(p, base, { velocity: d.velocity, muted: n.muted }, state);
       ctx.fill();
       // Crisp edge so quiet notes still read as shapes.
       ctx.lineWidth = 1;
@@ -695,8 +698,8 @@ export class MaddiePianoRoll extends CanvasElement {
       }
       // Label.
       if (nw > 34 && rh >= 14 && d.scale > 0.95) {
-        const strong = p.noteMinOpacity + (1 - p.noteMinOpacity) * d.velocity > 0.72 && !n.muted;
-        ctx.fillStyle = strong ? p['note-text'] : state.selected ? p.text : p['note-selected'];
+        const strong = (state.selected || p.noteMinOpacity + (1 - p.noteMinOpacity) * d.velocity > 0.72) && !n.muted;
+        ctx.fillStyle = strong ? p['note-text'] : p.text;
         ctx.globalAlpha = alpha * 0.9;
         ctx.save();
         ctx.beginPath();
@@ -713,7 +716,7 @@ export class MaddiePianoRoll extends CanvasElement {
       const selected = ed.selection.has(n.id) || n.id.startsWith('copy:');
       drawNote(n, d, {
         selected,
-        hovered: !dragging && this.hover.id === n.id,
+        hovered: !dragging && engine.hoverId === n.id,
         playing: playingFlash(ed, n, pos),
       });
     }
@@ -730,11 +733,12 @@ export class MaddiePianoRoll extends CanvasElement {
         const y = (row - v.scrollRow) * rh + 1;
         ctx.setLineDash([3, 3]);
         ctx.lineWidth = 1;
-        ctx.strokeStyle = withAlpha(p.note, 0.7);
+        const ghostBase = noteBase(p, g.pitch, ed.view.noteColor, false);
+        ctx.strokeStyle = withAlpha(ghostBase, 0.8);
         roundRect(ctx, x + 1, y + 0.5, Math.max(3, g.duration * v.pxPerTick) - 2, rh - 3, radius);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = withAlpha(p.note, 0.08);
+        ctx.fillStyle = withAlpha(ghostBase, 0.12);
         ctx.fill();
       }
     }

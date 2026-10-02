@@ -63,7 +63,8 @@ Pieces find the nearest `<maddie-root>` automatically. Or wire one directly: `ro
 1. **Tokens:** `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, … (light/dark built in, `theme="dark|light"`)
 2. **Parts:** `maddie-editor::part(toolbar)`, `::part(piano-roll)`, …
 3. **Slots:** replace `toolbar`, `corner`, `lane-label`, `footer`
-4. **Canvas hook:** `roll.noteStyle = (note, state) => ({ fill: '#f59e0b' })`
+4. **Note color:** `note-color="pitch | pitch-class | mono"` (default `pitch`)
+5. **Canvas hook:** `roll.noteStyle = (note, state) => ({ fill: '#f59e0b' })`
 
 ## Develop
 

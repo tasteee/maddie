@@ -137,6 +137,23 @@ export class Commands {
     );
   }
 
+  /**
+   * Random nudges to timing and velocity, so programmed parts feel played.
+   * `timing` is the max offset in ticks; `velocity` the max offset (0–1).
+   */
+  humanize(ids?: Ids, { timing = 0, velocity = 0, random = Math.random }: { timing?: Tick; velocity?: number; random?: () => number } = {}, opts?: TransactOptions) {
+    const jitter = () => random() * 2 - 1;
+    this.update(
+      this.notesOf(ids).map((n) => ({
+        id: n.id,
+        start: Math.max(0, Math.round(n.start + jitter() * timing)),
+        velocity: clampVelocity(n.velocity + jitter() * velocity),
+      })),
+      'Humanize',
+      opts,
+    );
+  }
+
   /** Copies placed right after the selection, aligned to the bar grid. */
   duplicate(ids?: Ids): Note[] {
     const notes = this.notesOf(ids);

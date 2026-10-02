@@ -20,7 +20,7 @@ export const tokens = css`
     --_text-muted: var(--maddie-text-muted, light-dark(#6c6c78, #8e8e9a));
     --_text-faint: var(--maddie-text-faint, light-dark(#a6a6b0, #55555f));
 
-    --_accent: var(--maddie-accent, light-dark(oklch(0.56 0.23 278), oklch(0.7 0.18 278)));
+    --_accent: var(--maddie-accent, light-dark(#111114, #f2f2f5));
     --_accent-text: var(--maddie-accent-text, light-dark(#ffffff, #0c0c0f));
     --_focus: var(--maddie-focus, var(--_accent));
 
@@ -32,15 +32,20 @@ export const tokens = css`
     --_line-sub: var(--maddie-line-sub, light-dark(rgb(15 15 25 / 0.04), rgb(255 255 255 / 0.035)));
     --_line-row: var(--maddie-line-row, light-dark(rgb(15 15 25 / 0.035), rgb(255 255 255 / 0.028)));
 
-    --_note: var(--maddie-note, var(--_accent));
-    --_note-selected: var(--maddie-note-selected, light-dark(oklch(0.42 0.21 278), oklch(0.83 0.14 278)));
+    --_note: var(--maddie-note, light-dark(#3a3a42, #c8c8d0));
+    --_note-selected: var(--maddie-note-selected, light-dark(#111114, #ffffff));
     --_note-outline: var(--maddie-note-outline, light-dark(#111114, #ffffff));
     --_note-text: var(--maddie-note-text, light-dark(#ffffff, #0c0c0f));
+    /* Pitch colors: hue sweeps low → high. Lightness/chroma default per theme (set to override). */
+    --_pitch-lightness: var(--maddie-pitch-lightness, auto);
+    --_pitch-chroma: var(--maddie-pitch-chroma, auto);
+    --_pitch-hue-low: var(--maddie-pitch-hue-low, 265);
+    --_pitch-hue-high: var(--maddie-pitch-hue-high, 15);
     --_note-min-opacity: var(--maddie-note-min-opacity, 0.42);
     --_note-radius: var(--maddie-note-radius, 3px);
 
-    --_playhead: var(--maddie-playhead, light-dark(oklch(0.62 0.22 28), oklch(0.72 0.19 28)));
-    --_loop: var(--maddie-loop, var(--_accent));
+    --_playhead: var(--maddie-playhead, var(--_text));
+    --_loop: var(--maddie-loop, var(--_text-muted));
     --_key-white: var(--maddie-key-white, light-dark(#ffffff, #1b1b21));
     --_key-black: var(--maddie-key-black, light-dark(#2b2b33, #050507));
 
@@ -98,4 +103,20 @@ export const PALETTE_TOKENS = [
 ] as const;
 
 export type PaletteToken = (typeof PALETTE_TOKENS)[number];
-export type Palette = Record<PaletteToken, string> & { noteMinOpacity: number; noteRadius: number; fontMono: string; font: string };
+export interface PitchColorConfig {
+  lightness: number;
+  chroma: number;
+  hueLow: number;
+  hueHigh: number;
+}
+
+export type Palette = Record<PaletteToken, string> & {
+  noteMinOpacity: number;
+  noteRadius: number;
+  fontMono: string;
+  font: string;
+  dark: boolean;
+  pitch: PitchColorConfig;
+  /** Cached rgba per pitch / pitch class. Filled lazily. */
+  pitchCache: Map<string, string>;
+};

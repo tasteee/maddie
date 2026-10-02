@@ -1,9 +1,9 @@
-import { barsInRange, beatLength, resolveGrid, type Editor, type Note } from '../core';
+import { barsInRange, beatLength, pitchClass, resolveGrid, type Editor, type Note, type NoteColorMode } from '../core';
 import type { NoteDisplay } from '../engine/animation';
 import { clamp, easeOut } from '../engine/ease';
 import type { DisplayView, Engine } from '../engine/engine';
 import { crisp } from '../engine/interact';
-import { mix, withAlpha } from '../engine/theme';
+import { mix, normalizeColor, withAlpha } from '../engine/theme';
 import type { Palette } from './tokens';
 
 export interface NoteState {
@@ -18,13 +18,43 @@ export interface NoteStyle {
   outline?: string;
 }
 
-/** Fill color for a note, from velocity, selection and playback state. */
-export function noteFill(p: Palette, note: { velocity: number; muted?: boolean }, state: NoteState, override?: string) {
-  const base = override ?? (state.selected ? p['note-selected'] : p.note);
-  const vel = p.noteMinOpacity + (1 - p.noteMinOpacity) * note.velocity;
+// Most music lives here; notes outside clamp to the ends.
+const PITCH_LOW = 24; // C1
+const PITCH_HIGH = 88; // E6
+
+/**
+ * Base color for a note in the current color mode.
+ * `pitch`: hue sweeps C1 → E6 (clamped), lightness lifts slightly with pitch.
+ * `pitch-class`: 12 hues, every C the same.
+ */
+export function noteBase(p: Palette, pitch: number, mode: NoteColorMode, selected: boolean): string {
+  if (mode === 'mono') return selected ? p['note-selected'] : p.note;
+  const key = `${mode}:${mode === 'pitch' ? Math.round(pitch) : pitchClass(Math.round(pitch))}`;
+  let c = p.pitchCache.get(key);
+  if (!c) {
+    const { lightness, chroma, hueLow, hueHigh } = p.pitch;
+    let t: number;
+    let l = lightness;
+    if (mode === 'pitch') {
+      t = clamp((pitch - PITCH_LOW) / (PITCH_HIGH - PITCH_LOW), 0, 1);
+      l = lightness - 0.06 + t * 0.12;
+    } else {
+      t = pitchClass(Math.round(pitch)) / 12;
+    }
+    // Linear (the long way round the wheel): 265 → 15 sweeps indigo, cyan, green, yellow, orange, red.
+    const hue = (((mode === 'pitch' ? hueLow + (hueHigh - hueLow) * t : hueLow + t * 360) % 360) + 360) % 360;
+    c = normalizeColor(`oklch(${l} ${chroma} ${hue})`);
+    p.pitchCache.set(key, c);
+  }
+  return c;
+}
+
+/** Fill for a note: base color, faded by velocity, lit while playing or hovered. */
+export function noteFill(p: Palette, base: string, note: { velocity: number; muted?: boolean }, state: NoteState) {
+  const vel = state.selected ? 1 : p.noteMinOpacity + (1 - p.noteMinOpacity) * note.velocity;
   let color = withAlpha(base, note.muted ? vel * 0.3 : vel);
-  if (state.playing > 0) color = mix(color, 'rgba(255,255,255,1)', 0.45 * state.playing);
-  if (state.hovered && !state.selected) color = mix(color, withAlpha(base, 1), 0.25);
+  if (state.hovered && !state.selected) color = mix(color, withAlpha(base, 1), 0.4);
+  if (state.playing > 0) color = mix(withAlpha(base, 1), p.dark ? 'rgba(255,255,255,1)' : 'rgba(0,0,0,1)', 0.28 * state.playing);
   return color;
 }
 
