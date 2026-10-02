@@ -26,7 +26,9 @@ export const tokens = css`
 
     --_row-white: var(--maddie-row-white, light-dark(#ffffff, #121216));
     --_row-black: var(--maddie-row-black, light-dark(#f7f7f9, #0e0e12));
-    --_row-out: var(--maddie-row-out-of-scale, light-dark(#ededf1, #08080a));
+    --_row-out: var(--maddie-row-out-of-scale, light-dark(#e8e8ee, #08080a));
+    /* Scale: tints the root row and marks in-scale keys. */
+    --_scale: var(--maddie-scale, light-dark(#4f46e5, #8f8aff));
     --_line-bar: var(--maddie-line-bar, light-dark(rgb(15 15 25 / 0.17), rgb(255 255 255 / 0.15)));
     --_line-beat: var(--maddie-line-beat, light-dark(rgb(15 15 25 / 0.085), rgb(255 255 255 / 0.075)));
     --_line-sub: var(--maddie-line-sub, light-dark(rgb(15 15 25 / 0.04), rgb(255 255 255 / 0.035)));
@@ -48,6 +50,7 @@ export const tokens = css`
     --_loop: var(--maddie-loop, var(--_text-muted));
     --_key-white: var(--maddie-key-white, light-dark(#ffffff, #1b1b21));
     --_key-black: var(--maddie-key-black, light-dark(#2b2b33, #050507));
+    --_key-out: var(--maddie-key-out-of-scale, light-dark(#e4e4ea, #101014));
 
     --_radius: var(--maddie-radius, 12px);
     --_radius-sm: var(--maddie-radius-sm, 8px);
@@ -88,6 +91,7 @@ export const PALETTE_TOKENS = [
   'row-white',
   'row-black',
   'row-out',
+  'scale',
   'line-bar',
   'line-beat',
   'line-sub',
@@ -100,6 +104,7 @@ export const PALETTE_TOKENS = [
   'loop',
   'key-white',
   'key-black',
+  'key-out',
 ] as const;
 
 export type PaletteToken = (typeof PALETTE_TOKENS)[number];

@@ -102,6 +102,15 @@ export class MaddieKeyboard extends CanvasElement {
     ctx.fillRect(0, 0, w, h);
     ctx.textBaseline = 'middle';
 
+    // Two channels, never mixed:
+    //   black / white key → key shape (full piano, or a stub on the left when folded)
+    //   in / out of scale → row shade (matches the grid) + a dot on every in-scale key; root gets a bigger dot.
+    const kw = Math.round(w * 0.5);
+    const stub = Math.min(14, Math.round(w * 0.22));
+    // Dots sit at the far end of the keys, clear of the labels (and of the computer-keyboard chips when shown).
+    const dotX = ed.view.computerKeyboard && rh >= 10 ? Math.min(kw - 5, 28) : 8;
+    const rootTint = withAlpha(p.scale, p.dark ? 0.2 : 0.12);
+
     for (const pitch of rows.pitches()) {
       const y = (rows.rowOf(pitch, now) - v.scrollRow) * rh;
       if (y > h || y + rh < 0) continue;
@@ -109,32 +118,42 @@ export class MaddieKeyboard extends CanvasElement {
       if (alpha <= 0.01) continue;
       ctx.globalAlpha = alpha;
       const black = isBlackKey(pitch);
+      const pc = pitchClass(pitch);
       const out = highlight && !inScale(pitch, key);
+      const isRoot = !!highlight && pc === key.root;
       const on = sounding.has(pitch);
       const hovered = this.hoverPitch === pitch;
-      const pc = pitchClass(pitch);
       const color = noteBase(p, pitch, ed.view.noteColor, false);
 
-      if (piano && black) {
-        const kw = Math.round(w * 0.58);
-        ctx.fillStyle = on ? color : hovered ? mix(p['key-black'], p.text, 0.25) : p['key-black'];
-        roundRect(ctx, 0, y + 0.5, kw, rh - 1, 2.5);
-        ctx.fill();
-        if (out && !on) {
-          ctx.fillStyle = withAlpha(p['key-black'], 0.55);
-          ctx.fill();
-        }
+      // Row background: the scale.
+      if (on) {
+        ctx.fillStyle = color;
+        ctx.fillRect(0, y, w, rh);
       } else {
-        if (on || hovered) {
-          ctx.fillStyle = on ? color : p.hover;
+        if (out) {
+          ctx.fillStyle = p['key-out'];
           ctx.fillRect(0, y, w, rh);
-        } else if (!piano && black) {
-          ctx.fillStyle = p['row-black'];
+        } else if (isRoot) {
+          ctx.fillStyle = rootTint;
           ctx.fillRect(0, y, w, rh);
         }
-        if (out && !on) {
-          ctx.fillStyle = withAlpha(p['row-out'], 0.75);
+        if (hovered) {
+          ctx.fillStyle = p.hover;
           ctx.fillRect(0, y, w, rh);
+        }
+      }
+
+      // Key shape: black or white.
+      if (black) {
+        const bw = piano ? kw : stub;
+        ctx.fillStyle = on ? mix(color, p['key-black'], 0.35) : hovered ? mix(p['key-black'], p.text, 0.25) : p['key-black'];
+        roundRect(ctx, 0, y + (piano ? 0.5 : 1.5), bw, rh - (piano ? 1 : 3), piano ? 2.5 : 2);
+        ctx.fill();
+        // In dark themes a black key can sink into an out-of-scale row; a hairline keeps its shape.
+        if (p.dark && !on) {
+          ctx.strokeStyle = withAlpha(p.text, 0.12);
+          ctx.lineWidth = 1;
+          ctx.stroke();
         }
       }
 
@@ -144,22 +163,43 @@ export class MaddieKeyboard extends CanvasElement {
         ctx.fillRect(0, Math.round(y + rh) - 1, w, 1);
       }
 
-      // Labels: every row when there's room; otherwise just the Cs.
-      const isRoot = key && pc === key.root;
-      if (pc === 0 || rh >= 12) {
-        const size = Math.min(piano && black ? 9.5 : 10.5, rh - 3);
-        ctx.font = `${pc === 0 ? 600 : 500} ${size}px ${p.font}`;
-        ctx.fillStyle = on ? p['note-text'] : isRoot ? p.text : pc === 0 ? p['text-muted'] : p['text-faint'];
-        // A piano's black key is drawn dark, but its label sits on the white past it, so `on` text would vanish.
-        if (on && piano && black) ctx.fillStyle = p.text;
+      // Scale marker: dot on every in-scale key, ringed dot on the root.
+      if (highlight && !out && rh >= 7) {
+        const cy = y + rh / 2;
+        const onBlackKey = piano && black;
+        const r = isRoot ? Math.min(3.5, rh / 2 - 1.5) : Math.min(2.25, rh / 2 - 2);
+        ctx.beginPath();
+        ctx.arc(dotX, cy, Math.max(1.25, r), 0, Math.PI * 2);
+        ctx.fillStyle = on ? p['note-text'] : onBlackKey && !isRoot ? mix(p.scale, '#ffffff', 0.35) : p.scale;
+        ctx.fill();
+        if (isRoot && rh >= 12) {
+          ctx.beginPath();
+          ctx.arc(dotX, cy, r + 2, 0, Math.PI * 2);
+          ctx.strokeStyle = on ? p['note-text'] : p.scale;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      // Labels: every row when there's room; otherwise the Cs and the root.
+      if (pc === 0 || isRoot || rh >= 12) {
+        const size = Math.min(10.5, rh - 3);
+        const weight = isRoot ? 700 : out ? 400 : pc === 0 || highlight ? 600 : 500;
+        ctx.font = `${weight} ${size}px ${p.font}`;
+        ctx.fillStyle = on
+          ? p['note-text']
+          : isRoot
+            ? p.scale
+            : out
+              ? p['text-faint']
+              : highlight
+                ? p.text
+                : pc === 0
+                  ? p['text-muted']
+                  : p['text-faint'];
         const label = pitchName(pitch);
         const tw = ctx.measureText(label).width;
-        ctx.fillText(label, w - tw - 7, y + rh / 2 + 0.5);
-      } else if (isRoot && !on && rh >= 8) {
-        ctx.fillStyle = p.text;
-        ctx.beginPath();
-        ctx.arc(w - 10, y + rh / 2, 2, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillText(label, w - tw - 6, y + rh / 2 + 0.5);
       }
       ctx.globalAlpha = 1;
     }

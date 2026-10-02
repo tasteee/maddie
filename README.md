@@ -52,6 +52,7 @@ Two toolbar rows. The **top row** is global: play/stop, back to start, position,
 - **Metronome** (**C**) and **volume** (**⇧M** mutes): click to toggle, hover for a volume slider. The metronome uses `output.click(e)` if present, else a short built-in click. Volume uses `output.setVolume(v)` if present, else scales velocity.
 - **Follow playhead:** **F** (off by default).
 - **Fold:** `Off · Scale · Notes`, one click each.
+- **Reading the keys:** key shape = black or white (a short stub when folded). Row shade = scale: in-scale rows are light, out-of-scale rows are darker, the root row is tinted. A dot marks every in-scale key; a ringed dot and colored label mark the root. Out-of-scale labels are faint. With no key set, rows shade black keys instead.
 - **Keyboard input:** **`** toggles. The Z row plays from C2; each key to the right is a semitone up and each row above continues from the one below. **+ / −** shift octaves (Z wraps C6 → C0). Letter shortcuts are paused while it's on.
 - **Auto key:** the **Auto** button next to the key picks the key and scale that fit the notes best: every note in scale if possible, else the most. Among equal fits, the tonic comes from the note weights and the opening bass note. Undoable.
 - **Marquee select** plays each note as it enters the box, so a fast sweep over a chord sounds the chord.
@@ -95,7 +96,7 @@ Pieces find the nearest `<maddie-root>` automatically. Or wire one directly: `ro
 
 ## Styling
 
-1. **Tokens:** `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, … (light/dark built in, `theme="dark|light"`)
+1. **Tokens:** `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, `--maddie-scale` (root tint + scale dots), `--maddie-row-out-of-scale`, `--maddie-key-out-of-scale`, … (light/dark built in, `theme="dark|light"`)
 2. **Parts:** `maddie-editor::part(toolbar)`, `::part(piano-roll)`, …
 3. **Slots:** replace `toolbar`, `corner`, `lane-label`, `inspector`, `footer`; add buttons with `toolbar-start` / `toolbar-end`
 4. **Note color:** `note-color="pitch | pitch-class | mono"` (default `pitch`)
