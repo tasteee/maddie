@@ -23,7 +23,8 @@
   ],
   "sideEffects": [
     "./dist/elements.js",
-    "./src/elements/index.ts"
+    "./src/elements/**",
+    "*.css"
   ],
   "scripts": {
     "dev": "vite",

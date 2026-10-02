@@ -6,7 +6,7 @@ A framework-agnostic, browser-based MIDI editor. Web components on a headless co
 - **Compose your own:** `<maddie-root>` + `<maddie-piano-roll>`, `<maddie-keyboard>`, `<maddie-ruler>`, `<maddie-velocity-lane>`, toolbar controls
 - **Headless:** `@tasteee/maddie/core`
 
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+Live demo: https://tasteee.github.io/maddie/ · Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Quick start
 
