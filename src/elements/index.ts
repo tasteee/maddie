@@ -20,7 +20,9 @@ export {
   MaddieHistory,
   MaddieZoom,
   MaddieExport,
+  MaddieImport,
 } from './controls';
+export { importMidiFile, pickMidiFile } from './midi-io';
 export { MaddieElement } from './base';
 export { tokens } from './tokens';
 export { actions, defaultKeymap, type Keymap, type Action } from '../engine/keymap';

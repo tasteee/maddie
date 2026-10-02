@@ -73,6 +73,12 @@ describe('music', () => {
     expect(map.rowOf(61)).toBeNull();
     expect(map.virtual[61]).toBe(map.rowOf(62)! + 0.5);
   });
+
+  it('never folds away a pitch that has notes', () => {
+    const map = buildRowMap({ fold: 'scale', key: parseKey('C minor'), used: [64] });
+    expect(map.rowOf(64)).not.toBeNull();
+    expect(map.rows.find((r) => r.pitch === 64)!.inScale).toBe(false);
+  });
 });
 
 describe('editor', () => {

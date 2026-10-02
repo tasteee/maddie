@@ -18,6 +18,7 @@ import type { Engine } from '../engine/engine';
 import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MaddieElement } from './base';
 import { icons } from './icons';
+import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
 /** Shared look for every toolbar control. */
@@ -635,6 +636,22 @@ export class MaddieExport extends ControlElement {
   }
 }
 
+// ── Import ──────────────────────────────────────────────────────────
+
+/**
+ * Opens a .mid file and replaces the notes (undoable). Drag & drop onto the roll works too.
+ * @fires maddie-import - Cancelable. `detail: { file, bytes }`. Call `preventDefault()` to handle it yourself.
+ */
+@customElement('maddie-import')
+export class MaddieImport extends ControlElement {
+  render() {
+    if (!this.ed) return nothing;
+    return html`<button class="export" aria-label="Import MIDI" data-tip=${tip('Import .mid · or drop on the grid', `${modKeyLabel} O`)} @click=${() => pickMidiFile(this.ed!, this)}>
+      ${icons.upload}<span>Import</span>
+    </button>`;
+  }
+}
+
 // ── Toolbar ─────────────────────────────────────────────────────────
 
 /** The default toolbar. Every piece is also usable on its own. */
@@ -709,7 +726,8 @@ export class MaddieToolbar extends MaddieElement {
         <maddie-history></maddie-history>
       </div>
       <div class="divider"></div>
-      <div class="group" part="group export">
+      <div class="group" part="group file">
+        <maddie-import></maddie-import>
         <maddie-export></maddie-export>
       </div>
       <div class="divider"></div>
@@ -735,5 +753,6 @@ declare global {
     'maddie-zoom': MaddieZoom;
     'maddie-toolbar': MaddieToolbar;
     'maddie-export': MaddieExport;
+    'maddie-import': MaddieImport;
   }
 }

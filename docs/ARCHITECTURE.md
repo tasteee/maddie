@@ -762,7 +762,7 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 4. ✅ **Playback:** lookahead transport, `Output` + note events, ruler seek + loop drag, playhead, follow. Playground plays through smplr.
 5. 🟡 **Lanes + controls:** velocity lane (drag + paint), toolbar controls, `<maddie-editor>` preset. Todo: note inspector, overview/minimap, custom popover menus (selects are native for now).
 6. 🟡 **Music tools:** quantize, transpose (semitone + degree), scale lock, fold (scale/notes), clipboard, legato, mute. Todo: humanize, split/glue, time-sig UI.
-7. 🟡 **Ecosystem:** MIDI export ✅ (`toMidiFile`, `<maddie-export>`). Todo: MIDI import, `webMidiOutput()`, framework wrappers, docs site.
+7. 🟡 **Ecosystem:** MIDI export + import ✅ (`toMidiFile`, `fromMidiFile`, `<maddie-export>`, `<maddie-import>`, drop on grid). Todo: `webMidiOutput()`, framework wrappers, docs site.
 8. ⬜ **Later:** touch, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas, collab adapter, a11y screen-reader layer.
 
 ---

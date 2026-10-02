@@ -4,6 +4,7 @@ import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type No
 import { Engine } from '../engine/engine';
 import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
+import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
 const bool = (v: string | null) => v !== null && v !== 'false' && v !== 'off';
@@ -185,6 +186,11 @@ export class MaddieRoot extends LitElement {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
     // Let buttons keep Enter; Space is play/pause everywhere.
     if (tag === 'BUTTON' && e.key === 'Enter') return;
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
+      e.preventDefault();
+      pickMidiFile(this.editor, this);
+      return;
+    }
     if (handleKey(this.editor, e, this.keymap)) {
       e.preventDefault();
       e.stopPropagation();

@@ -43,14 +43,20 @@ el.output = {
 };
 ```
 
-## Export MIDI
+## Import / export MIDI
+
+**Import:** the toolbar's **Import** button (`⌘O`), or drop a `.mid` file on the grid. Notes, tempo, time signature and key are replaced in one undoable step. `<maddie-import>` fires a cancelable `maddie-import` event with `{ file, bytes }`.
+
+**Export:**
 
 The toolbar has an **Export** button (`⌘⇧E`). Or do it in code:
 
 ```js
-import { toMidiFile, downloadMidi } from '@tasteee/maddie/core';
+import { toMidiFile, fromMidiFile, downloadMidi } from '@tasteee/maddie/core';
 
 const bytes = toMidiFile(el.doc); // Uint8Array, Standard MIDI File type 1
+el.editor.commands.importMidi(bytes); // replace notes from a .mid (undoable)
+const parsed = fromMidiFile(bytes); // just parse: { notes, tempo, timeSignature, key, … }
 downloadMidi(el.doc, 'my-loop.mid'); // browser download
 ```
 

@@ -17,11 +17,13 @@ import {
   type Note,
   type NoteId,
 } from '../core';
-import type { Engine } from '../engine/engine';
+import type { Engine, Toast } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { clampScrollRow, crisp, handleWheel, maxScrollTick } from '../engine/interact';
 import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
+import { icons } from './icons';
+import { importMidiFile } from './midi-io';
 import { drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 
@@ -74,6 +76,66 @@ export class MaddiePianoRoll extends CanvasElement {
       :host(:focus-visible) {
         box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--_focus) 60%, transparent);
       }
+      .drop {
+        position: absolute;
+        inset: 8px;
+        display: grid;
+        place-items: center;
+        border: 1.5px dashed color-mix(in oklab, var(--_text) 45%, transparent);
+        border-radius: var(--_radius-sm);
+        background: color-mix(in oklab, var(--_bg) 78%, transparent);
+        backdrop-filter: blur(2px);
+        color: var(--_text);
+        font-size: 13px;
+        font-weight: 500;
+        pointer-events: none;
+        opacity: 0;
+        transform: scale(0.985);
+        transition:
+          opacity var(--_motion-fast) var(--_ease),
+          transform var(--_motion-fast) var(--_ease);
+      }
+      .drop span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: var(--_surface);
+        box-shadow: 0 0 0 1px var(--_border);
+      }
+      :host([dropping]) .drop {
+        opacity: 1;
+        transform: none;
+      }
+      .toast {
+        position: absolute;
+        left: 50%;
+        bottom: 14px;
+        max-width: calc(100% - 32px);
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: var(--_text);
+        color: var(--_bg);
+        font-size: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+        opacity: 0;
+        transform: translate(-50%, 6px);
+        transition:
+          opacity var(--_motion-medium) var(--_ease),
+          transform var(--_motion-medium) var(--_ease);
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      .toast.error::before {
+        content: '⚠  ';
+      }
       .marquee {
         position: absolute;
         display: none;
@@ -95,7 +157,9 @@ export class MaddiePianoRoll extends CanvasElement {
   private autoScrollRaf = 0;
 
   protected renderOverlay() {
-    return html`<div class="marquee" part="marquee"></div>`;
+    return html`<div class="marquee" part="marquee"></div>
+      <div class="drop" part="drop" aria-hidden="true"><span>${icons.upload} Drop a MIDI file to replace the notes</span></div>
+      <div class="toast" part="toast" role="status" aria-live="polite"></div>`;
   }
 
   connectedCallback() {
@@ -109,7 +173,59 @@ export class MaddiePianoRoll extends CanvasElement {
     this.addEventListener('wheel', this.onWheel, { passive: false });
     this.addEventListener('contextmenu', (e) => e.preventDefault());
     this.addEventListener('dblclick', this.onDoubleClick);
+    this.addEventListener('dragenter', this.onDragEnter);
+    this.addEventListener('dragover', this.onDragOver);
+    this.addEventListener('dragleave', this.onDragLeave);
+    this.addEventListener('drop', this.onDrop);
   }
+
+  // ── Drag & drop MIDI ────────────────────────────────────────────
+
+  private dragDepth = 0;
+  private toastTimer = 0;
+
+  private hasFiles(e: DragEvent) {
+    return [...(e.dataTransfer?.types ?? [])].includes('Files');
+  }
+
+  private onDragEnter = (e: DragEvent) => {
+    if (!this.hasFiles(e)) return;
+    e.preventDefault();
+    this.dragDepth++;
+    this.toggleAttribute('dropping', true);
+  };
+
+  private onDragOver = (e: DragEvent) => {
+    if (!this.hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+
+  private onDragLeave = () => {
+    if (--this.dragDepth <= 0) {
+      this.dragDepth = 0;
+      this.toggleAttribute('dropping', false);
+    }
+  };
+
+  private onDrop = (e: DragEvent) => {
+    if (!this.hasFiles(e)) return;
+    e.preventDefault();
+    this.dragDepth = 0;
+    this.toggleAttribute('dropping', false);
+    const file = e.dataTransfer?.files[0];
+    if (file && this.ed) importMidiFile(this.ed, file, this);
+  };
+
+  private showToast = ({ message, kind }: Toast) => {
+    const el = this.renderRoot.querySelector<HTMLElement>('.toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('error', kind === 'error');
+    el.classList.add('show');
+    clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => el.classList.remove('show'), kind === 'error' ? 4000 : 2800);
+  };
 
   protected firstUpdated() {
     super.firstUpdated();
@@ -118,7 +234,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
-    this.track(editor.on('view', () => this.updateCursor()));
+    this.track(editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast));
   }
 
   protected resized() {
@@ -131,14 +247,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   /** Scroll so the notes (or middle C) are vertically centered. */
   centerOnContent() {
-    const ed = this.ed;
-    if (!ed || !this.height) return;
-    const notes = ed.notes();
-    const pitch = notes.length
-      ? (Math.max(...notes.map((n) => n.pitch)) + Math.min(...notes.map((n) => n.pitch))) / 2
-      : 60;
-    const row = ed.rowMap.virtual[Math.round(pitch)];
-    ed.setView({ scrollRow: clampScrollRow(ed, row - this.height / ed.view.rowHeight / 2) });
+    this.engine?.centerOnNotes();
   }
 
   // ── Coordinates ─────────────────────────────────────────────────
