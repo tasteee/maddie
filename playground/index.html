@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maddie — MIDI editor</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 22 22%27 fill=%27%236d5cf5%27%3E%3Crect x=%272%27 y=%274%27 width=%278%27 height=%274%27 rx=%271.5%27/%3E%3Crect x=%277%27 y=%2710%27 width=%2711%27 height=%274%27 rx=%271.5%27 opacity=%27.7%27/%3E%3Crect x=%274%27 y=%2716%27 width=%276%27 height=%274%27 rx=%271.5%27 opacity=%27.45%27/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 22 22"><rect x="2" y="4" width="8" height="4" rx="1.5" /><rect x="7" y="10" width="11" height="4" rx="1.5" opacity=".7" /><rect x="4" y="16" width="6" height="4" rx="1.5" opacity=".45" /></svg>
+        </span>
+        <span class="wordmark">maddie</span>
+        <span class="pill">@tasteee/maddie</span>
+      </div>
+      <div class="actions">
+        <span class="status" id="status"><span class="dot"></span><span class="label">Loading piano…</span></span>
+        <button class="ghost" id="clear">Clear</button>
+        <button class="ghost" id="demo">Demo song</button>
+        <button class="icon-btn" id="theme" aria-label="Toggle theme"></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <h1>A MIDI editor that feels like an instrument.</h1>
+        <p>Framework-agnostic web components on a headless core. Draw with <kbd>B</kbd>, select with <kbd>V</kbd>, play with <kbd>Space</kbd>.</p>
+      </section>
+
+      <maddie-editor id="editor" grid="1/16" scale="C minor" tempo="96"></maddie-editor>
+
+      <section class="cards">
+        <article class="card">
+          <header><h2>Events</h2><span class="hint">maddie-change</span></header>
+          <ol id="log" class="log"></ol>
+        </article>
+        <article class="card">
+          <header><h2>Shortcuts</h2><span class="hint">focus the roll</span></header>
+          <dl class="keys">
+            <div><dt>Draw / select / erase</dt><dd><kbd>B</kbd> <kbd>V</kbd> <kbd>E</kbd></dd></div>
+            <div><dt>Bypass snap while dragging</dt><dd><kbd>⌥</kbd></dd></div>
+            <div><dt>Duplicate while dragging</dt><dd><kbd>⌘</kbd></dd></div>
+            <div><dt>Nudge · octave</dt><dd><kbd>←</kbd> <kbd>→</kbd> · <kbd>⇧</kbd><kbd>↑</kbd></dd></div>
+            <div><dt>Velocity</dt><dd><kbd>⌥</kbd><kbd>↑</kbd> <kbd>⌥</kbd><kbd>↓</kbd></dd></div>
+            <div><dt>Duplicate · quantize</dt><dd><kbd>⌘</kbd><kbd>D</kbd> · <kbd>Q</kbd></dd></div>
+            <div><dt>Zoom time · rows</dt><dd><kbd>⌘</kbd>+scroll · <kbd>⌥</kbd>+scroll</dd></div>
+            <div><dt>Set loop</dt><dd>drag the ruler</dd></div>
+          </dl>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

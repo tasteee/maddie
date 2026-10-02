@@ -255,7 +255,7 @@ viewport.zoomAt({ x, y }, factor)   // anchored zoom
 | Surface                         | Tech           | Why |
 | ------------------------------- | -------------- | --- |
 | Grid lines, notes, velocity stems | **Canvas 2D** | 20k notes at 60fps. DOM can't. |
-| Playhead                        | DOM, `transform` only | Compositor-only. Never repaints notes. |
+| Playhead                        | Canvas (v0) → DOM `transform` later | v0 redraws per frame while playing anyway (note flash). |
 | Toolbar, inputs, menus, keyboard labels | **DOM** | Real focus, a11y, `::part` styling. |
 | Screen reader layer             | DOM (visually hidden) | See §10. |
 
@@ -301,9 +301,9 @@ idle ──down──▶ pressed ──move>3px──▶ dragging:{move|resizeSt
 - Note body → move
 - Left/right edge (6px, min 1/3 of note width) → resize
 - Empty space → marquee (select tool) or draw (draw tool)
-- `Alt`+drag on note vertical → velocity
+- Velocity tool (`G`) + drag vertical on a note → velocity. `Alt` is reserved for snap bypass.
 
-**Tools:** `select`, `draw`, `erase`, `slice`, `velocity`. Draw tool on empty space = click to place, drag to set length.
+**Tools:** `select`, `draw`, `erase`, `velocity` (`slice` later). Draw tool on empty space = click to place, drag to set length.
 
 Pointer Events + `setPointerCapture`. **Desktop first:** mouse, trackpad (pinch = zoom, two-finger = scroll), pen. Pointer Events keep touch possible later without a rewrite, but touch is not a v1 target.
 
@@ -730,14 +730,16 @@ Tooling: pnpm, TypeScript strict, Vite (lib mode + playground), Vitest, Playwrig
 
 ## 14. Build order
 
-1. **Core:** doc model, commands, history, snap, scale/RowMap, viewport. 100% unit tested.
-2. **Roll MVP:** `<maddie-root>` + `<maddie-piano-roll>` + `<maddie-keyboard>`. Place, select, move, resize, delete, marquee, zoom, scroll.
-3. **Feel pass:** motion system, theme bridge, light/dark, hit zones, auto-scroll, keymap.
-4. **Playback:** transport, scheduler, `Output` + note events, ruler with seek + loop, playhead. Playground plays through smplr.
-5. **Lanes + controls:** velocity lane, toolbar controls, inspector, `<maddie-editor>` preset.
-6. **Music tools:** quantize, transpose, scale lock, fold modes, clipboard, humanize.
-7. **Ecosystem:** MIDI file I/O, `webMidiOutput()` helper, framework wrappers, docs site.
-8. **Later:** touch/tablet editing, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas worker, collab adapter.
+Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
+
+1. ✅ **Core:** doc model, commands, history (gesture coalescing), snap, scale/RowMap, tempo map, time sig. Unit tested.
+2. ✅ **Roll MVP:** `<maddie-root>`, `<maddie-piano-roll>`, `<maddie-keyboard>`. Draw, select, marquee, move, ⌘-drag copy, resize, erase, zoom, scroll, auto-scroll.
+3. 🟡 **Feel pass:** motion system (tween on undo/commands, snap glide, pop-in, fade-out, fold, keyboard zoom), theme bridge, light/dark, keymap, hit zones. Todo: hover lift polish, focus/cursor a11y layer.
+4. ✅ **Playback:** lookahead transport, `Output` + note events, ruler seek + loop drag, playhead, follow. Playground plays through smplr.
+5. 🟡 **Lanes + controls:** velocity lane (drag + paint), toolbar controls, `<maddie-editor>` preset. Todo: note inspector, overview/minimap, custom popover menus (selects are native for now).
+6. 🟡 **Music tools:** quantize, transpose (semitone + degree), scale lock, fold (scale/notes), clipboard, legato, mute. Todo: humanize, split/glue, time-sig UI.
+7. ⬜ **Ecosystem:** MIDI file I/O, `webMidiOutput()`, framework wrappers, docs site.
+8. ⬜ **Later:** touch, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas, collab adapter, a11y screen-reader layer.
 
 ---
 
