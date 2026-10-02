@@ -39,6 +39,8 @@ export interface ViewState {
   keyboardBase: number;
   /** Computer keys play only the key's scale notes (Z = tonic) instead of every semitone. */
   keyboardScale: boolean;
+  /** Show the chords panel (drag chords that fit the key onto the grid). */
+  chordsPanel: boolean;
 }
 
 export const DEFAULT_VIEW: ViewState = {
@@ -60,6 +62,7 @@ export const DEFAULT_VIEW: ViewState = {
   computerKeyboard: false,
   keyboardBase: 36,
   keyboardScale: false,
+  chordsPanel: false,
 };
 
 export const ZOOM_LIMITS = {

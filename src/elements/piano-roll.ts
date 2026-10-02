@@ -13,11 +13,12 @@ import {
   resolveGrid,
   snapTick,
   timeSigAt,
+  voiceChord,
   type Editor,
   type Note,
   type NoteId,
 } from '../core';
-import type { Engine, Toast } from '../engine/engine';
+import type { ChordDrag, ChordDragPhase, Engine, Toast } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { clampScrollRow, handleWheel, maxScrollTick } from '../engine/interact';
 import { normalizeColor, withAlpha } from '../engine/theme';
@@ -234,8 +235,54 @@ export class MaddiePianoRoll extends CanvasElement {
 
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
-    this.track(editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast));
+    this.track(editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast), engine.onChordDrag(this.onChordDrag));
   }
+
+  // ── Chord drop (from <maddie-chords>) ───────────────────────────
+
+  /** Stable ids while one chord is dragged, so the drop doesn't re-animate the preview. */
+  private chordIds: NoteId[] = [];
+  private chordBass: number | null = null;
+
+  /** The chord's notes under the pointer, or null when it's off the grid. */
+  private chordNotesAt(drag: ChordDrag): Note[] | null {
+    const ed = this.ed!;
+    const { x, y } = this.local({ clientX: drag.clientX, clientY: drag.clientY });
+    if (x < 0 || y < 0 || x > this.width || y > this.height) return null;
+    const start = this.snap(this.tickAt(x), { altKey: false }, 'floor');
+    const pitches = voiceChord(drag.root, drag.intervals, this.pitchAt(y));
+    while (this.chordIds.length < pitches.length) this.chordIds.push(createId());
+    // Chords land short (one beat). Resize them after.
+    return pitches.map((pitch, i) => ({ id: this.chordIds[i], pitch, start, duration: ed.ppq, velocity: ed.view.noteVelocity }));
+  }
+
+  private onChordDrag = (drag: ChordDrag, phase: ChordDragPhase) => {
+    const ed = this.ed;
+    const engine = this.engine;
+    if (!ed || !engine) return;
+    const notes = phase === 'cancel' ? null : this.chordNotesAt(drag);
+    if (phase === 'move') {
+      drag.overGrid = !!notes;
+      if (!notes) {
+        if (this.chordBass !== null) engine.clearPreview();
+        this.chordBass = null;
+        return;
+      }
+      engine.setPreview({ added: notes }, ed.view.snap);
+      const bass = notes[0].pitch;
+      if (bass !== this.chordBass) ed.auditionChord(notes.map((n) => n.pitch), 0.4);
+      this.chordBass = bass;
+      return;
+    }
+    if (phase === 'drop' && notes) {
+      ed.commands.add(notes);
+      ed.auditionChord(notes.map((n) => n.pitch), 0.6);
+      this.focus({ preventScroll: true });
+    }
+    engine.clearPreview();
+    this.chordIds = [];
+    this.chordBass = null;
+  };
 
   protected resized() {
     if (!this.engine || !this.ed) return;
