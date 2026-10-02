@@ -1,0 +1,54 @@
+import type { FoldMode } from './music/rowmap';
+import type { GridValue } from './music/grid';
+import type { Tick } from './types';
+
+export type Tool = 'select' | 'draw' | 'erase' | 'velocity';
+
+/** Everything about how the doc is looked at. Never undoable. */
+export interface ViewState {
+  /** Horizontal zoom. */
+  pxPerTick: number;
+  /** Vertical zoom. */
+  rowHeight: number;
+  /** Tick at the left edge. */
+  scrollTick: number;
+  /** Row at the top edge (fractional). `null` = center on content when first shown. */
+  scrollRow: number | null;
+  grid: GridValue;
+  snap: boolean;
+  tool: Tool;
+  fold: FoldMode;
+  /** Constrain placing and pitch moves to the key's scale. */
+  scaleLock: boolean;
+  /** Dim rows outside the key's scale. */
+  scaleHighlight: boolean;
+  /** Keep the playhead in view while playing. */
+  follow: boolean;
+  /** Length and velocity for new notes. Updated as the user works. */
+  noteLength: Tick | null;
+  noteVelocity: number;
+  /** Insert / paste position. */
+  cursor: Tick;
+}
+
+export const DEFAULT_VIEW: ViewState = {
+  pxPerTick: 0.1,
+  rowHeight: 16,
+  scrollTick: 0,
+  scrollRow: null,
+  grid: '1/16',
+  snap: true,
+  tool: 'select',
+  fold: 'none',
+  scaleLock: false,
+  scaleHighlight: true,
+  follow: true,
+  noteLength: null,
+  noteVelocity: 0.8,
+  cursor: 0,
+};
+
+export const ZOOM_LIMITS = {
+  pxPerTick: [0.004, 2] as const,
+  rowHeight: [8, 40] as const,
+};
