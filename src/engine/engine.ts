@@ -28,6 +28,11 @@ export interface Motion {
 
 type Renderer = (now: number) => void;
 
+export interface Toast {
+  message: string;
+  kind: 'info' | 'error';
+}
+
 const engines = new WeakMap<Editor, Engine>();
 
 /**
@@ -46,12 +51,15 @@ export class Engine {
   readonly view: ValueTween<DisplayView>;
   preview: Preview = { overrides: new Map(), added: [], hidden: new Set() };
   motion: Motion = { fast: 90, medium: 150, slow: 220, glide: 45 };
+  /** Note under the pointer in any view (roll ↔ velocity lane stay in sync). */
+  hoverId: NoteId | null = null;
   /** Pitches currently held on the keyboard (for highlight). */
   held = new Set<number>();
   /** Size of the main roll viewport, used for clamping and follow. */
   viewport = { width: 0, height: 0 };
   gridChangedAt = -Infinity;
   private renderers = new Set<Renderer>();
+  private toastListeners = new Set<(t: Toast) => void>();
   private scheduled = false;
 
   private constructor(readonly editor: Editor) {
@@ -107,6 +115,22 @@ export class Engine {
 
   private isPreviewed(id: NoteId) {
     return this.preview.added.some((n) => n.id === id);
+  }
+
+  /** Brief status message (import result, errors). Shown by the piano roll. */
+  toast(message: string, kind: Toast['kind'] = 'info') {
+    this.toastListeners.forEach((l) => l({ message, kind }));
+  }
+
+  onToast(listener: (t: Toast) => void): () => void {
+    this.toastListeners.add(listener);
+    return () => this.toastListeners.delete(listener);
+  }
+
+  setHover(id: NoteId | null) {
+    if (id === this.hoverId) return;
+    this.hoverId = id;
+    this.invalidate();
   }
 
   setMotion(motion: Partial<Motion>) {
@@ -183,6 +207,23 @@ export class Engine {
     if (pos > v.scrollTick + visible * 0.92 || pos < v.scrollTick) {
       editor.setView({ scrollTick: Math.max(0, pos - visible * 0.08) }, { animate: true });
     }
+  }
+
+  /** Scroll to the start and center the rows on the notes (or middle C). */
+  centerOnNotes({ resetTime = false, animate = false } = {}) {
+    const { editor } = this;
+    const h = this.viewport.height;
+    if (!h) return;
+    const notes = editor.notes();
+    const pitch = notes.length
+      ? (Math.max(...notes.map((n) => n.pitch)) + Math.min(...notes.map((n) => n.pitch))) / 2
+      : 60;
+    const rh = editor.view.rowHeight;
+    const row = editor.rowMap.virtual[Math.round(pitch)] - h / rh / 2;
+    editor.setView(
+      { scrollRow: Math.max(0, Math.min(this.maxScrollRow(rh), row)), ...(resetTime ? { scrollTick: 0 } : {}) },
+      { animate },
+    );
   }
 
   /** Max scroll row for the current row count and viewport. */

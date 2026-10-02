@@ -73,10 +73,9 @@ export interface RowMapOptions {
 export function buildRowMap({ fold, key, used = [], min = MIN_PITCH, max = MAX_PITCH }: RowMapOptions): RowMap {
   const all: number[] = [];
   for (let p = max; p >= min; p--) all.push(p);
-  if (fold === 'scale' && key) return new RowMap(all.filter((p) => inScale(p, key)), key);
-  if (fold === 'used') {
-    const set = [...used];
-    if (set.length) return new RowMap(set, key);
-  }
+  // Folding never hides a note: pitches in use always keep their row.
+  const usedSet = new Set(used);
+  if (fold === 'scale' && key) return new RowMap(all.filter((p) => inScale(p, key) || usedSet.has(p)), key);
+  if (fold === 'used' && usedSet.size) return new RowMap([...usedSet], key);
   return new RowMap(all, key);
 }

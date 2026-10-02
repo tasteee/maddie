@@ -202,7 +202,7 @@ export class Editor extends Emitter<EditorEvents> {
   /** Rows for the current fold mode and key. */
   get rowMap(): RowMap {
     if (!this.rowMapCache) {
-      const used = this._view.fold === 'used' ? new Set(this.notes().map((n) => n.pitch)) : [];
+      const used = this._view.fold !== 'none' ? new Set(this.notes().map((n) => n.pitch)) : [];
       this.rowMapCache = buildRowMap({ fold: this._view.fold, key: this._meta.key, used });
     }
     return this.rowMapCache;

@@ -13,3 +13,5 @@ export * from './music/grid';
 export * from './music/rowmap';
 export * from './music/timeline';
 export * from './music/velocity';
+export * from './midi/write';
+export * from './midi/read';

@@ -6,7 +6,7 @@
   --faint: #a6a6b0;
   --line: rgb(15 15 25 / 0.08);
   --card: #ffffff;
-  --accent: oklch(0.56 0.23 278);
+  --accent: #111114;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -18,7 +18,7 @@
   --faint: #55555f;
   --line: rgb(255 255 255 / 0.07);
   --card: #0f0f13;
-  --accent: oklch(0.7 0.18 278);
+  --accent: #f2f2f5;
 }
 * {
   box-sizing: border-box;

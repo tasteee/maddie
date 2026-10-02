@@ -588,6 +588,30 @@ All built-in CSS lives in `@layer maddie` so any consumer CSS wins without `!imp
 
 ---
 
+### Note color
+
+Notes are colored by **pitch**, so you can match a note to its velocity stem at a glance.
+
+- `note-color="pitch"` (default): hue sweeps indigo → cyan → green → yellow → red from C1 to E6 (clamped), with a slight lightness lift going up. Hue only, never black: black notes vanish in dark mode and read as "selected" in light mode.
+- `note-color="pitch-class"`: 12 hues, every C the same (good for harmony).
+- `note-color="mono"`: one neutral color.
+- Velocity is always opacity, so color always means pitch.
+- Linked hover: hovering a note lights its stem, and vice versa.
+- The keyboard shows a thin color strip per row as a legend.
+- Overrides: `--maddie-pitch-hue-low`, `--maddie-pitch-hue-high`, `--maddie-pitch-lightness`, `--maddie-pitch-chroma`.
+
+Chrome is **grayscale**: the darkest color is the accent (play button, pressed states). Color is reserved for notes.
+
+### Selection bar (`<maddie-inspector>`)
+
+Batch edits for the selection live in a fixed bar under the velocity lane, never in a popover over the notes.
+
+- Always visible, fixed height: no layout shift, no covering what you're dragging.
+- Empty selection → controls dim in place (muscle memory stays valid).
+- Contents: count + pitch range · velocity scrub (relative, shows ranges like `65–127`) · quantize (grid + strength) · humanize (timing % of grid, velocity %) · transpose (±1 follows scale lock, ±12) · legato / mute / duplicate / delete.
+- Values are `<maddie-scrub>` controls: drag, ⇧ for fine, double-click to type, arrows to nudge.
+- Standalone element: put it in a sidebar instead by slotting your own layout.
+
 ## 8. Motion design
 
 **Rule 1: direct manipulation is never animated.** The note under your pointer follows it 1:1. Zero lag.
@@ -738,7 +762,7 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 4. ✅ **Playback:** lookahead transport, `Output` + note events, ruler seek + loop drag, playhead, follow. Playground plays through smplr.
 5. 🟡 **Lanes + controls:** velocity lane (drag + paint), toolbar controls, `<maddie-editor>` preset. Todo: note inspector, overview/minimap, custom popover menus (selects are native for now).
 6. 🟡 **Music tools:** quantize, transpose (semitone + degree), scale lock, fold (scale/notes), clipboard, legato, mute. Todo: humanize, split/glue, time-sig UI.
-7. ⬜ **Ecosystem:** MIDI file I/O, `webMidiOutput()`, framework wrappers, docs site.
+7. 🟡 **Ecosystem:** MIDI export + import ✅ (`toMidiFile`, `fromMidiFile`, `<maddie-export>`, `<maddie-import>`, drop on grid). Todo: `webMidiOutput()`, framework wrappers, docs site.
 8. ⬜ **Later:** touch, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas, collab adapter, a11y screen-reader layer.
 
 ---

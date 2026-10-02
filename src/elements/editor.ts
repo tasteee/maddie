@@ -3,7 +3,7 @@ import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 
 /**
- * The full editor: toolbar, ruler, keyboard, piano roll, velocity lane.
+ * The full editor: toolbar, ruler, keyboard, piano roll, velocity lane, selection bar.
  * Every region is a slot, so you can replace any piece.
  */
 @customElement('maddie-editor')
@@ -86,6 +86,7 @@ export class MaddieEditor extends MaddieRoot {
           <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
         </div>
+        <slot name="inspector"><maddie-inspector part="inspector"></maddie-inspector></slot>
         <slot name="footer"></slot>
       </div>
       <slot></slot>

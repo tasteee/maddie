@@ -4,6 +4,9 @@ import type { Tick } from './types';
 
 export type Tool = 'select' | 'draw' | 'erase' | 'velocity';
 
+/** How notes are colored. `pitch`: low → high gradient. `pitch-class`: every C the same. `mono`: one color. */
+export type NoteColorMode = 'pitch' | 'pitch-class' | 'mono';
+
 /** Everything about how the doc is looked at. Never undoable. */
 export interface ViewState {
   /** Horizontal zoom. */
@@ -29,6 +32,7 @@ export interface ViewState {
   noteVelocity: number;
   /** Insert / paste position. */
   cursor: Tick;
+  noteColor: NoteColorMode;
 }
 
 export const DEFAULT_VIEW: ViewState = {
@@ -46,6 +50,7 @@ export const DEFAULT_VIEW: ViewState = {
   noteLength: null,
   noteVelocity: 0.8,
   cursor: 0,
+  noteColor: 'pitch',
 };
 
 export const ZOOM_LIMITS = {

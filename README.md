@@ -43,6 +43,25 @@ el.output = {
 };
 ```
 
+## Import / export MIDI
+
+**Import:** the toolbar's **Import** button (`⌘O`), or drop a `.mid` file on the grid. Notes, tempo, time signature and key are replaced in one undoable step. `<maddie-import>` fires a cancelable `maddie-import` event with `{ file, bytes }`.
+
+**Export:**
+
+The toolbar has an **Export** button (`⌘⇧E`). Or do it in code:
+
+```js
+import { toMidiFile, fromMidiFile, downloadMidi } from '@tasteee/maddie/core';
+
+const bytes = toMidiFile(el.doc); // Uint8Array, Standard MIDI File type 1
+el.editor.commands.importMidi(bytes); // replace notes from a .mid (undoable)
+const parsed = fromMidiFile(bytes); // just parse: { notes, tempo, timeSignature, key, … }
+downloadMidi(el.doc, 'my-loop.mid'); // browser download
+```
+
+`<maddie-export>` fires a cancelable `maddie-export` event with `{ bytes, filename }`, so you can upload instead of downloading.
+
 ## Compose your own
 
 ```html
@@ -63,7 +82,8 @@ Pieces find the nearest `<maddie-root>` automatically. Or wire one directly: `ro
 1. **Tokens:** `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, … (light/dark built in, `theme="dark|light"`)
 2. **Parts:** `maddie-editor::part(toolbar)`, `::part(piano-roll)`, …
 3. **Slots:** replace `toolbar`, `corner`, `lane-label`, `footer`
-4. **Canvas hook:** `roll.noteStyle = (note, state) => ({ fill: '#f59e0b' })`
+4. **Note color:** `note-color="pitch | pitch-class | mono"` (default `pitch`)
+5. **Canvas hook:** `roll.noteStyle = (note, state) => ({ fill: '#f59e0b' })`
 
 ## Develop
 

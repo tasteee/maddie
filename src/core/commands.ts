@@ -5,6 +5,7 @@ import { clampPitch, MAX_PITCH, MIN_PITCH } from './music/pitch';
 import { transposeDegrees } from './music/scale';
 import { timeSigAt } from './music/timeline';
 import { clampVelocity } from './music/velocity';
+import { fromMidiFile, type MidiImport } from './midi/read';
 import type { Key, Note, NoteId, NoteInput, Tick } from './types';
 
 type Ids = Iterable<NoteId> | undefined;
@@ -137,6 +138,23 @@ export class Commands {
     );
   }
 
+  /**
+   * Random nudges to timing and velocity, so programmed parts feel played.
+   * `timing` is the max offset in ticks; `velocity` the max offset (0–1).
+   */
+  humanize(ids?: Ids, { timing = 0, velocity = 0, random = Math.random }: { timing?: Tick; velocity?: number; random?: () => number } = {}, opts?: TransactOptions) {
+    const jitter = () => random() * 2 - 1;
+    this.update(
+      this.notesOf(ids).map((n) => ({
+        id: n.id,
+        start: Math.max(0, Math.round(n.start + jitter() * timing)),
+        velocity: clampVelocity(n.velocity + jitter() * velocity),
+      })),
+      'Humanize',
+      opts,
+    );
+  }
+
   /** Copies placed right after the selection, aligned to the bar grid. */
   duplicate(ids?: Ids): Note[] {
     const notes = this.notesOf(ids);
@@ -196,6 +214,24 @@ export class Commands {
 
   selectAll() {
     this.editor.select(this.editor.notes().map((n) => n.id));
+  }
+
+  /**
+   * Load a .mid file. Replaces the active track's notes (and tempo, time
+   * signature, key) in one undoable step. All MIDI tracks merge into one.
+   */
+  importMidi(input: ArrayBuffer | Uint8Array, { replace = true }: { replace?: boolean } = {}): MidiImport {
+    const ed = this.editor;
+    const midi = fromMidiFile(input, { ppq: ed.ppq });
+    ed.transact('Import MIDI', (tx) => {
+      if (replace) for (const n of [...ed.notes()]) tx.remove(n.id);
+      for (const n of midi.notes) tx.add(normalize({ ...n, id: createId() }));
+      tx.setMeta('tempo', midi.tempo);
+      tx.setMeta('timeSignature', midi.timeSignature);
+      if (midi.key) tx.setMeta('key', midi.key);
+    });
+    ed.clearSelection();
+    return midi;
   }
 
   setTempo(bpm: number, opts?: TransactOptions) {

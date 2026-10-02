@@ -1,7 +1,9 @@
 import { css, html, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import {
+  downloadMidi,
   formatBBT,
+  toMidiFile,
   GRID_OPTIONS,
   pitchClassName,
   SCALE_IDS,
@@ -10,11 +12,13 @@ import {
   type FoldMode,
   type ScaleId,
   type Tool,
+  ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
-import { modKeyLabel } from '../engine/keymap';
+import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MaddieElement } from './base';
 import { icons } from './icons';
+import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
 /** Shared look for every toolbar control. */
@@ -96,6 +100,16 @@ export const controlStyles = css`
   }
   .select select:focus {
     outline: none;
+  }
+  .sep {
+    width: 1px;
+    height: 16px;
+    margin: 0 3px;
+    background: var(--_border);
+  }
+  button.export {
+    padding: 0 10px 0 8px;
+    color: var(--_text);
   }
   .value {
     font-variant-numeric: tabular-nums;
@@ -290,7 +304,7 @@ export class MaddieFoldSelect extends ControlElement {
     const ed = this.ed;
     if (!ed) return nothing;
     const folded = ed.view.fold !== 'none';
-    return html`<label class="select" data-tip="Fold rows" style=${folded ? 'color: var(--_accent)' : ''}>
+    return html`<label class="select" data-tip="Fold rows" style=${folded ? 'background: var(--_surface-2)' : ''}>
       ${icons.fold}<span class="value">${folded ? (ed.view.fold === 'scale' ? 'Scale' : 'Notes') : 'Fold'}</span>
       <span class="chev">${icons.chevron}</span>
       <select aria-label="Fold" @change=${(e: Event) => ed.setView({ fold: (e.target as HTMLSelectElement).value as FoldMode }, { animate: true })}>
@@ -317,7 +331,7 @@ export class MaddieTransport extends ControlElement {
         margin-right: 4px;
       }
       .play:hover {
-        background: color-mix(in oklab, var(--_accent) 88%, var(--_text));
+        background: color-mix(in oklab, var(--_accent) 84%, var(--_bg));
         color: var(--_accent-text);
       }
       .play[aria-pressed='true'] {
@@ -575,11 +589,66 @@ export class MaddieZoom extends ControlElement {
   }
 
   render() {
-    if (!this.ed) return nothing;
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const [minRh, maxRh] = ZOOM_LIMITS.rowHeight;
     return html`
-      <button aria-label="Zoom out" data-tip=${tip('Zoom out', '−')} @click=${() => this.zoom(1 / 1.5)}>${icons.zoomOut}</button>
-      <button aria-label="Zoom in" data-tip=${tip('Zoom in', '+')} @click=${() => this.zoom(1.5)}>${icons.zoomIn}</button>
+      <button aria-label="Shorter rows" ?disabled=${ed.view.rowHeight <= minRh} data-tip=${tip('Shorter rows · ⌥ scroll', '⌥ −')} @click=${() => rowZoomBy(ed, 1 / 1.25)}>
+        ${icons.rowsShorter}
+      </button>
+      <button aria-label="Taller rows" ?disabled=${ed.view.rowHeight >= maxRh} data-tip=${tip('Taller rows · ⌥ scroll', '⌥ +')} @click=${() => rowZoomBy(ed, 1.25)}>
+        ${icons.rowsTaller}
+      </button>
+      <span class="sep"></span>
+      <button aria-label="Zoom out" data-tip=${tip('Zoom out · ⌘ scroll', '−')} @click=${() => this.zoom(1 / 1.5)}>${icons.zoomOut}</button>
+      <button aria-label="Zoom in" data-tip=${tip('Zoom in · ⌘ scroll', '+')} @click=${() => this.zoom(1.5)}>${icons.zoomIn}</button>
     `;
+  }
+}
+
+// ── Export ──────────────────────────────────────────────────────────
+
+/**
+ * Downloads the doc as a Standard MIDI File.
+ * @fires maddie-export - Cancelable. `detail: { bytes, filename }`. Call `preventDefault()` to handle the file yourself.
+ */
+@customElement('maddie-export')
+export class MaddieExport extends ControlElement {
+  /** Download name. `.mid` is added if missing. */
+  @property() filename = 'maddie.mid';
+
+  private export() {
+    const ed = this.ed;
+    if (!ed) return;
+    const bytes = toMidiFile(ed.doc);
+    const go = this.dispatchEvent(
+      new CustomEvent('maddie-export', { detail: { bytes, filename: this.filename }, bubbles: true, composed: true, cancelable: true }),
+    );
+    if (go) downloadMidi(ed.doc, this.filename);
+  }
+
+  render() {
+    if (!this.ed) return nothing;
+    const empty = this.ed.notes().length === 0;
+    return html`<button class="export" ?disabled=${empty} aria-label="Export MIDI" data-tip=${tip('Export .mid', `${modKeyLabel} ⇧ E`)} @click=${() => this.export()}>
+      ${icons.download}<span>Export</span>
+    </button>`;
+  }
+}
+
+// ── Import ──────────────────────────────────────────────────────────
+
+/**
+ * Opens a .mid file and replaces the notes (undoable). Drag & drop onto the roll works too.
+ * @fires maddie-import - Cancelable. `detail: { file, bytes }`. Call `preventDefault()` to handle it yourself.
+ */
+@customElement('maddie-import')
+export class MaddieImport extends ControlElement {
+  render() {
+    if (!this.ed) return nothing;
+    return html`<button class="export" aria-label="Import MIDI" data-tip=${tip('Import .mid · or drop on the grid', `${modKeyLabel} O`)} @click=${() => pickMidiFile(this.ed!, this)}>
+      ${icons.upload}<span>Import</span>
+    </button>`;
   }
 }
 
@@ -657,6 +726,11 @@ export class MaddieToolbar extends MaddieElement {
         <maddie-history></maddie-history>
       </div>
       <div class="divider"></div>
+      <div class="group" part="group file">
+        <maddie-import></maddie-import>
+        <maddie-export></maddie-export>
+      </div>
+      <div class="divider"></div>
       <div class="group" part="group zoom">
         <maddie-zoom></maddie-zoom>
         <slot name="end"></slot>
@@ -678,5 +752,7 @@ declare global {
     'maddie-history': MaddieHistory;
     'maddie-zoom': MaddieZoom;
     'maddie-toolbar': MaddieToolbar;
+    'maddie-export': MaddieExport;
+    'maddie-import': MaddieImport;
   }
 }

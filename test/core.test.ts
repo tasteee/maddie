@@ -73,6 +73,12 @@ describe('music', () => {
     expect(map.rowOf(61)).toBeNull();
     expect(map.virtual[61]).toBe(map.rowOf(62)! + 0.5);
   });
+
+  it('never folds away a pitch that has notes', () => {
+    const map = buildRowMap({ fold: 'scale', key: parseKey('C minor'), used: [64] });
+    expect(map.rowOf(64)).not.toBeNull();
+    expect(map.rows.find((r) => r.pitch === 64)!.inScale).toBe(false);
+  });
 });
 
 describe('editor', () => {
@@ -147,5 +153,18 @@ describe('editor', () => {
     const [a] = ed.commands.add([note(60, 0)]);
     ed.commands.transpose([a.id], { degrees: 2 });
     expect(ed.getNote(a.id)!.pitch).toBe(64);
+  });
+
+  it('humanizes within bounds', () => {
+    const ed = createEditor();
+    const notes = ed.commands.add(Array.from({ length: 20 }, (_, i) => note(60, 960 + i * 240)));
+    ed.commands.humanize(undefined, { timing: 30, velocity: 0.1 });
+    notes.forEach((n) => {
+      const h = ed.getNote(n.id)!;
+      expect(Math.abs(h.start - n.start)).toBeLessThanOrEqual(30);
+      expect(Math.abs(h.velocity - n.velocity)).toBeLessThanOrEqual(0.1 + 1e-9);
+    });
+    ed.undo();
+    expect(ed.getNote(notes[0].id)!.start).toBe(960);
   });
 });

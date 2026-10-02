@@ -6,6 +6,7 @@ export { MaddiePianoRoll } from './piano-roll';
 export { MaddieKeyboard } from './keyboard';
 export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
+export { MaddieInspector, MaddieScrub } from './inspector';
 export {
   MaddieToolbar,
   MaddieToolSelect,
@@ -18,7 +19,10 @@ export {
   MaddieTempo,
   MaddieHistory,
   MaddieZoom,
+  MaddieExport,
+  MaddieImport,
 } from './controls';
+export { importMidiFile, pickMidiFile } from './midi-io';
 export { MaddieElement } from './base';
 export { tokens } from './tokens';
 export { actions, defaultKeymap, type Keymap, type Action } from '../engine/keymap';
