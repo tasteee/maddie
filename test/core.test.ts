@@ -197,3 +197,27 @@ describe('computer keyboard', () => {
   });
 });
 
+describe('computer keyboard mapping', () => {
+  it('maps each key to a semitone by default', async () => {
+    const { pitchForOffset } = await import('../src/engine/computer-keyboard');
+    const ed = createEditor();
+    ed.transact('key', (tx) => tx.setMeta('key', { root: 2, scale: 'minor' }));
+    expect([0, 1, 2, 3].map((o) => pitchForOffset(ed, o))).toEqual([36, 37, 38, 39]);
+  });
+  it('maps keys to scale steps from the tonic when scale mode is on', async () => {
+    const { pitchForOffset, keyLabelsByPitch } = await import('../src/engine/computer-keyboard');
+    const ed = createEditor();
+    ed.transact('key', (tx) => tx.setMeta('key', { root: 2, scale: 'minor' })); // D minor
+    ed.setView({ keyboardScale: true });
+    // D E F G A B♭ C D
+    expect([0, 1, 2, 3, 4, 5, 6, 7].map((o) => pitchForOffset(ed, o))).toEqual([38, 40, 41, 43, 45, 46, 48, 50]);
+    expect(keyLabelsByPitch(ed).get(38)).toBe('Z');
+    expect(keyLabelsByPitch(ed).has(39)).toBe(false);
+  });
+  it('falls back to semitones with no key', async () => {
+    const { pitchForOffset } = await import('../src/engine/computer-keyboard');
+    const ed = createEditor();
+    ed.setView({ keyboardScale: true });
+    expect(pitchForOffset(ed, 1)).toBe(37);
+  });
+});

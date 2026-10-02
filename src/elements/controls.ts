@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   downloadMidi,
   formatBBT,
+  formatKey,
   pitchName,
   toMidiFile,
   GRID_OPTIONS,
@@ -16,7 +17,7 @@ import {
   ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
-import { setComputerKeyboard } from '../engine/computer-keyboard';
+import { pitchForOffset, scaleMapped, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
 import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MaddieElement } from './base';
 import { icons } from './icons';
@@ -642,22 +643,114 @@ export class MaddieFollowToggle extends ControlElement {
   }
 }
 
-/** Play notes from the computer keyboard. Shows the octave on the Z key while on. */
+/**
+ * Play notes from the computer keyboard. Shows the Z key's note while on.
+ * Hover for options: map keys to every semitone, or to the key's scale only.
+ */
 @customElement('maddie-keys-toggle')
 export class MaddieKeysToggle extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    css`
+      .pop.keys {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        min-width: 250px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .hint {
+        color: var(--_text-faint);
+        font-size: 11.5px;
+        font-weight: 500;
+        white-space: normal;
+      }
+      .switch-label {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        font-size: 12px;
+      }
+      button.switch {
+        width: 30px;
+        min-width: 30px;
+        height: 18px;
+        padding: 0;
+        border-radius: 999px;
+        background: var(--_surface-2);
+        box-shadow: inset 0 0 0 1px var(--_border);
+      }
+      button.switch::before {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--_text-muted);
+        transition:
+          transform var(--_motion-fast) var(--_ease),
+          background-color var(--_motion-fast) var(--_ease);
+      }
+      button.switch[aria-checked='true'] {
+        background: var(--_accent);
+        box-shadow: none;
+      }
+      button.switch[aria-checked='true']::before {
+        background: var(--_accent-text);
+        transform: translateX(12px);
+      }
+      button.switch:hover {
+        background: var(--_hover);
+      }
+      button.switch[aria-checked='true']:hover {
+        background: var(--_accent);
+      }
+      button.switch:active {
+        transform: none;
+      }
+    `,
+  ];
+
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
     const on = ed.view.computerKeyboard;
-    return html`<button
-      class=${on ? 'with-chip' : ''}
-      aria-pressed=${on}
-      aria-label="Computer keyboard"
-      data-tip=${tip(on ? 'Keyboard input · Z row plays from here · +/− octave' : 'Play notes from your keyboard', '`')}
-      @click=${() => setComputerKeyboard(ed, !on)}
-    >
-      ${icons.keyboard}${on ? html`<span class="chip">${pitchName(ed.view.keyboardBase)}</span>` : nothing}
-    </button>`;
+    const scaleOn = ed.view.keyboardScale;
+    const key = ed.key;
+    const z = pitchForOffset(ed, 0);
+    const mapped = scaleMapped(ed);
+    return html`<div class="pop-wrap">
+      <button class=${on ? 'with-chip' : ''} aria-pressed=${on} aria-label="Computer keyboard" @click=${() => setComputerKeyboard(ed, !on)}>
+        ${icons.keyboard}${on && z !== null ? html`<span class="chip">${pitchName(z)}</span>` : nothing}
+      </button>
+      <div class="pop keys" role="group" aria-label="Keyboard input options">
+        <span class="pop-title">Keyboard input<kbd>\`</kbd></span>
+        <div class="row">
+          <span class="switch-label">
+            Scale notes only
+            <span class="hint">${key ? `Keys follow ${formatKey(key)}` : 'Set a key to use this'}</span>
+          </span>
+          <button
+            class="switch"
+            role="switch"
+            aria-checked=${scaleOn}
+            aria-label="Scale notes only"
+            ?disabled=${!key}
+            @click=${() => setKeyboardScale(ed, !scaleOn)}
+          ></button>
+        </div>
+        <span class="hint">${mapped ? 'Each key steps up the scale · Z = tonic' : 'Each key steps up a semitone'}</span>
+        <span class="hint"><kbd>+</kbd> <kbd>−</kbd> change octave</span>
+      </div>
+    </div>`;
   }
 }
 
