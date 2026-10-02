@@ -1,7 +1,9 @@
 import { css, html, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import {
+  downloadMidi,
   formatBBT,
+  toMidiFile,
   GRID_OPTIONS,
   pitchClassName,
   SCALE_IDS,
@@ -103,6 +105,10 @@ export const controlStyles = css`
     height: 16px;
     margin: 0 3px;
     background: var(--_border);
+  }
+  button.export {
+    padding: 0 10px 0 8px;
+    color: var(--_text);
   }
   .value {
     font-variant-numeric: tabular-nums;
@@ -599,6 +605,36 @@ export class MaddieZoom extends ControlElement {
   }
 }
 
+// ── Export ──────────────────────────────────────────────────────────
+
+/**
+ * Downloads the doc as a Standard MIDI File.
+ * @fires maddie-export - Cancelable. `detail: { bytes, filename }`. Call `preventDefault()` to handle the file yourself.
+ */
+@customElement('maddie-export')
+export class MaddieExport extends ControlElement {
+  /** Download name. `.mid` is added if missing. */
+  @property() filename = 'maddie.mid';
+
+  private export() {
+    const ed = this.ed;
+    if (!ed) return;
+    const bytes = toMidiFile(ed.doc);
+    const go = this.dispatchEvent(
+      new CustomEvent('maddie-export', { detail: { bytes, filename: this.filename }, bubbles: true, composed: true, cancelable: true }),
+    );
+    if (go) downloadMidi(ed.doc, this.filename);
+  }
+
+  render() {
+    if (!this.ed) return nothing;
+    const empty = this.ed.notes().length === 0;
+    return html`<button class="export" ?disabled=${empty} aria-label="Export MIDI" data-tip=${tip('Export .mid', `${modKeyLabel} ⇧ E`)} @click=${() => this.export()}>
+      ${icons.download}<span>Export</span>
+    </button>`;
+  }
+}
+
 // ── Toolbar ─────────────────────────────────────────────────────────
 
 /** The default toolbar. Every piece is also usable on its own. */
@@ -673,6 +709,10 @@ export class MaddieToolbar extends MaddieElement {
         <maddie-history></maddie-history>
       </div>
       <div class="divider"></div>
+      <div class="group" part="group export">
+        <maddie-export></maddie-export>
+      </div>
+      <div class="divider"></div>
       <div class="group" part="group zoom">
         <maddie-zoom></maddie-zoom>
         <slot name="end"></slot>
@@ -694,5 +734,6 @@ declare global {
     'maddie-history': MaddieHistory;
     'maddie-zoom': MaddieZoom;
     'maddie-toolbar': MaddieToolbar;
+    'maddie-export': MaddieExport;
   }
 }

@@ -1,4 +1,4 @@
-import type { Editor } from '../core';
+import { downloadMidi, type Editor } from '../core';
 import { Engine } from './engine';
 
 export type Action = (editor: Editor) => void;
@@ -75,6 +75,7 @@ export const actions: Record<string, Action> = {
   toolVelocity: (e) => e.setView({ tool: 'velocity' }),
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
+  exportMidi: (e) => e.notes().length && downloadMidi(e.doc),
 };
 
 export type Keymap = Record<string, string | Action>;
@@ -118,6 +119,7 @@ export const defaultKeymap: Keymap = {
   g: 'toolVelocity',
   s: 'toggleSnap',
   'mod+l': 'toggleLoop',
+  'mod+shift+e': 'exportMidi',
 };
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);

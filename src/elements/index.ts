@@ -19,6 +19,7 @@ export {
   MaddieTempo,
   MaddieHistory,
   MaddieZoom,
+  MaddieExport,
 } from './controls';
 export { MaddieElement } from './base';
 export { tokens } from './tokens';

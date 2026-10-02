@@ -43,6 +43,19 @@ el.output = {
 };
 ```
 
+## Export MIDI
+
+The toolbar has an **Export** button (`⌘⇧E`). Or do it in code:
+
+```js
+import { toMidiFile, downloadMidi } from '@tasteee/maddie/core';
+
+const bytes = toMidiFile(el.doc); // Uint8Array, Standard MIDI File type 1
+downloadMidi(el.doc, 'my-loop.mid'); // browser download
+```
+
+`<maddie-export>` fires a cancelable `maddie-export` event with `{ bytes, filename }`, so you can upload instead of downloading.
+
 ## Compose your own
 
 ```html
