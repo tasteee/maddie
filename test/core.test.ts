@@ -221,3 +221,42 @@ describe('computer keyboard mapping', () => {
     expect(pitchForOffset(ed, 1)).toBe(37);
   });
 });
+
+describe('pitch nudge through folds', () => {
+  const setup = (fold: 'scale' | 'used') => {
+    const ed = createEditor();
+    ed.transact('key', (tx) => tx.setMeta('key', { root: 0, scale: 'major' })); // C major
+    ed.setView({ fold });
+    return ed;
+  };
+  it('scale fold: steps to the next scale note', () => {
+    const ed = setup('scale');
+    const [n] = ed.commands.add([{ pitch: 64, start: 0, duration: 120, velocity: 0.8 }]); // E4
+    ed.commands.nudgePitch([n.id], 1);
+    expect(ed.getNote(n.id)!.pitch).toBe(65); // F4
+    ed.commands.nudgePitch([n.id], 1);
+    expect(ed.getNote(n.id)!.pitch).toBe(67); // G4, skips F♯
+  });
+  it('scale fold: an off-scale note steps onto the scale', () => {
+    const ed = setup('scale');
+    const [n] = ed.commands.add([{ pitch: 61, start: 0, duration: 120, velocity: 0.8 }]); // C♯4
+    ed.commands.nudgePitch([n.id], 1);
+    expect(ed.getNote(n.id)!.pitch).toBe(62);
+    ed.commands.nudgePitch([n.id], -1);
+    expect(ed.getNote(n.id)!.pitch).toBe(60);
+  });
+  it('used fold: moves between used rows, blocked at the edge', () => {
+    const ed = setup('used');
+    const [a, , c] = ed.commands.add([
+      { pitch: 60, start: 0, duration: 120, velocity: 0.8 },
+      { pitch: 67, start: 0, duration: 120, velocity: 0.8 },
+      { pitch: 72, start: 480, duration: 120, velocity: 0.8 },
+    ]);
+    ed.commands.nudgePitch([a.id], 1);
+    expect(ed.getNote(a.id)!.pitch).toBe(67);
+    // Top row selected with another: nothing has room above, so nothing moves.
+    ed.commands.nudgePitch([a.id, c.id], 1);
+    expect(ed.getNote(a.id)!.pitch).toBe(67);
+    expect(ed.getNote(c.id)!.pitch).toBe(72);
+  });
+});
