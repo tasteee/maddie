@@ -1,6 +1,7 @@
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import {
+  detectKey,
   downloadMidi,
   formatBBT,
   formatKey,
@@ -409,6 +410,14 @@ export class MaddieKeySelect extends ControlElement {
     const setScale = (e: Event) => {
       ed.commands.setKey({ root: key?.root ?? 0, scale: (e.target as HTMLSelectElement).value as ScaleId });
     };
+    const notes = ed.notes().filter((n) => !n.muted);
+    const auto = () => {
+      const guess = detectKey(notes);
+      if (!guess) return;
+      ed.commands.setKey(guess.key);
+      const pct = Math.round(guess.fit * 100);
+      this.engine?.toast(guess.outside ? `Key: ${formatKey(guess.key)} · ${pct}% fits, ${guess.outside} notes outside` : `Key: ${formatKey(guess.key)} · every note fits`);
+    };
     return html`
       <label class="select" data-tip="Key">
         ${icons.music}<span class="value">${key ? pitchClassName(key.root) : 'No key'}</span>
@@ -426,6 +435,9 @@ export class MaddieKeySelect extends ControlElement {
             </select>
           </label>`
         : nothing}
+      <button aria-label="Detect key" data-tip=${notes.length ? 'Detect key and scale from the notes' : 'Add notes to detect the key'} ?disabled=${!notes.length} @click=${auto}>
+        ${icons.wand}<span>Auto</span>
+      </button>
     `;
   }
 }

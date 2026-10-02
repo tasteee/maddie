@@ -3,6 +3,8 @@ import {
   barsInRange,
   buildRowMap,
   createEditor,
+  detectKey,
+  formatKey,
   formatBBT,
   fromMidiVelocity,
   gridTicks,
@@ -15,6 +17,7 @@ import {
   toMidiVelocity,
   transposeDegrees,
 } from '../src/core';
+import { demoSong } from '../playground/demo-song';
 
 const PPQ = 960;
 
@@ -279,5 +282,41 @@ describe('pitch nudge audition', () => {
     vi.advanceTimersByTime(500);
     expect(log).toEqual(['off 62', 'off 66', 'off 69']);
     vi.useRealTimers();
+  });
+});
+
+describe('detectKey', () => {
+  const mk = (pitches: number[], dur = 480) => pitches.map((pitch, i) => ({ pitch, start: i * dur, duration: dur }));
+
+  it('finds C major from a C major scale and cadence', () => {
+    const g = detectKey(mk([60, 62, 64, 65, 67, 69, 71, 72, 67, 60]))!;
+    expect(formatKey(g.key)).toBe('C Major');
+    expect(g.fit).toBe(1);
+  });
+
+  it('finds A minor from the relative minor notes', () => {
+    const g = detectKey(mk([45, 57, 60, 64, 62, 60, 59, 57, 52, 57]))!;
+    expect(formatKey(g.key)).toBe('A Minor');
+  });
+
+  it('prefers harmonic minor when the raised 7th shows up', () => {
+    const g = detectKey(mk([45, 57, 59, 60, 62, 64, 65, 68, 69, 64, 57]))!;
+    expect(formatKey(g.key)).toBe('A Harmonic Minor');
+    expect(g.outside).toBe(0);
+  });
+
+  it('picks the closest scale when nothing fits perfectly', () => {
+    const g = detectKey(mk([60, 62, 64, 65, 67, 69, 71, 72, 60, 61]))!;
+    expect(g.key.root).toBe(0);
+    expect(g.outside).toBe(1);
+    expect(g.fit).toBeLessThan(1);
+  });
+
+  it('finds C minor in the demo song (not its relative major)', () => {
+    expect(formatKey(detectKey(demoSong())!.key)).toBe('C Minor');
+  });
+
+  it('returns null with no notes', () => {
+    expect(detectKey([])).toBeNull();
   });
 });
