@@ -814,19 +814,28 @@ export class MaddiePianoRoll extends CanvasElement {
     const key = ed.key;
     const highlight = ed.view.scaleHighlight && key;
 
-    // Rows.
+    // Rows. One meaning per shade: with a key shown, rows mark the scale (out = darker, root = tinted)
+    // and the keyboard alone shows black/white. Without a key, rows mark black keys.
     ctx.fillStyle = p['row-white'];
     ctx.fillRect(0, 0, w, h);
+    const rootTint = withAlpha(p.scale, p.dark ? 0.13 : 0.075);
     for (const pitch of rows.pitches()) {
       const y = (rows.rowOf(pitch, now) - v.scrollRow) * rh;
       if (y > h || y + rh < 0) continue;
       const alpha = rows.alphaOf(pitch, now);
       if (alpha <= 0.01) continue;
-      const out = highlight && !inScale(pitch, key);
-      const black = isBlackKey(pitch);
-      if (out || black) {
+      const fill = highlight
+        ? !inScale(pitch, key)
+          ? p['row-out']
+          : pitchClass(pitch) === key.root
+            ? rootTint
+            : null
+        : isBlackKey(pitch)
+          ? p['row-black']
+          : null;
+      if (fill) {
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = out ? p['row-out'] : p['row-black'];
+        ctx.fillStyle = fill;
         ctx.fillRect(0, y, w, rh);
         ctx.globalAlpha = 1;
       }
