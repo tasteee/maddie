@@ -85,6 +85,7 @@ export const actions: Record<string, Action> = {
   toggleMetronome: (e) => e.transport.setMetronome({ enabled: !e.transport.metronome.enabled }),
   toggleMasterMute: (e) => e.setVolume({ muted: !e.volume.muted }),
   toggleFollow: (e) => e.setView({ follow: !e.view.follow }),
+  toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel }),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
   exportMidi: (e) => e.notes().length && downloadMidi(e.doc),
 };
@@ -134,6 +135,7 @@ export const defaultKeymap: Keymap = {
   'mod+l': 'toggleLoop',
   c: 'toggleMetronome',
   f: 'toggleFollow',
+  h: 'toggleChords',
   'shift+m': 'toggleMasterMute',
   'mod+shift+e': 'exportMidi',
 };

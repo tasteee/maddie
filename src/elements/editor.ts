@@ -3,7 +3,7 @@ import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 
 /**
- * The full editor: two toolbar rows, ruler, keyboard, piano roll, velocity lane, selection bar.
+ * The full editor: two toolbar rows, ruler, keyboard, piano roll, velocity lane, chords panel, selection bar.
  * Every region is a slot, so you can replace any piece.
  */
 @customElement('maddie-editor')
@@ -31,12 +31,12 @@ export class MaddieEditor extends MaddieRoot {
         flex: 1;
         min-height: 0;
         display: grid;
-        grid-template-columns: var(--_keyboard-width) minmax(0, 1fr);
+        grid-template-columns: var(--_keyboard-width) minmax(0, 1fr) auto;
         grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-height);
         grid-template-areas:
-          'corner ruler'
-          'keys roll'
-          'label lane';
+          'corner ruler chords'
+          'keys roll chords'
+          'label lane chords';
       }
       .corner {
         grid-area: corner;
@@ -71,6 +71,9 @@ export class MaddieEditor extends MaddieRoot {
       maddie-velocity-lane {
         grid-area: lane;
       }
+      maddie-chords {
+        grid-area: chords;
+      }
     `,
   ];
 
@@ -88,6 +91,7 @@ export class MaddieEditor extends MaddieRoot {
           <maddie-piano-roll part="piano-roll"></maddie-piano-roll>
           <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
+          <maddie-chords part="chords"></maddie-chords>
         </div>
         <slot name="inspector"><maddie-inspector part="inspector"></maddie-inspector></slot>
         <slot name="footer"></slot>

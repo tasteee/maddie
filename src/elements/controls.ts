@@ -379,6 +379,23 @@ export class MaddieSnapToggle extends ControlElement {
 
 // ── Key, scale lock, fold ───────────────────────────────────────────
 
+/** Open the chords panel: chords that fit the key, drag them onto the grid. */
+@customElement('maddie-chords-toggle')
+export class MaddieChordsToggle extends ControlElement {
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    return html`<button
+      aria-pressed=${ed.view.chordsPanel}
+      aria-label="Chords"
+      data-tip=${tip('Chords that fit the key', 'H')}
+      @click=${() => ed.setView({ chordsPanel: !ed.view.chordsPanel })}
+    >
+      ${icons.chords}<span>Chords</span>
+    </button>`;
+  }
+}
+
 @customElement('maddie-key-select')
 export class MaddieKeySelect extends ControlElement {
   render() {
@@ -1095,6 +1112,7 @@ export class MaddieEditbar extends MaddieElement {
       <div class="group" part="group key">
         <maddie-key-select></maddie-key-select>
         <maddie-scale-lock></maddie-scale-lock>
+        <maddie-chords-toggle></maddie-chords-toggle>
       </div>
       <div class="divider"></div>
       <div class="group" part="group fold"><maddie-fold-select></maddie-fold-select></div>
@@ -1170,6 +1188,7 @@ declare global {
     'maddie-loop-toggle': MaddieLoopToggle;
     'maddie-follow-toggle': MaddieFollowToggle;
     'maddie-keys-toggle': MaddieKeysToggle;
+    'maddie-chords-toggle': MaddieChordsToggle;
     'maddie-tempo': MaddieTempo;
     'maddie-history': MaddieHistory;
     'maddie-zoom': MaddieZoom;

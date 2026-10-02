@@ -28,6 +28,21 @@ export interface Motion {
 
 type Renderer = (now: number) => void;
 
+/** A chord being dragged from the chords panel onto the grid. */
+export interface ChordDrag {
+  /** Root pitch class. */
+  root: number;
+  /** Semitones above the root (already inverted). */
+  intervals: readonly number[];
+  name: string;
+  clientX: number;
+  clientY: number;
+  /** Set by the piano roll while the chord is over the grid. */
+  overGrid: boolean;
+}
+
+export type ChordDragPhase = 'move' | 'drop' | 'cancel';
+
 export interface Toast {
   message: string;
   kind: 'info' | 'error';
@@ -60,6 +75,9 @@ export class Engine {
   gridChangedAt = -Infinity;
   private renderers = new Set<Renderer>();
   private toastListeners = new Set<(t: Toast) => void>();
+  /** The chord being dragged from the chords panel, if any. */
+  chordDrag: ChordDrag | null = null;
+  private chordListeners = new Set<(drag: ChordDrag, phase: ChordDragPhase) => void>();
   private scheduled = false;
 
   private constructor(readonly editor: Editor) {
@@ -127,6 +145,17 @@ export class Engine {
   onToast(listener: (t: Toast) => void): () => void {
     this.toastListeners.add(listener);
     return () => this.toastListeners.delete(listener);
+  }
+
+  /** Chords panel → piano roll. The roll previews on `move` and places on `drop`. */
+  chordDragEvent(drag: ChordDrag, phase: ChordDragPhase) {
+    this.chordDrag = phase === 'move' ? drag : null;
+    this.chordListeners.forEach((l) => l(drag, phase));
+  }
+
+  onChordDrag(listener: (drag: ChordDrag, phase: ChordDragPhase) => void): () => void {
+    this.chordListeners.add(listener);
+    return () => this.chordListeners.delete(listener);
   }
 
   setHover(id: NoteId | null) {

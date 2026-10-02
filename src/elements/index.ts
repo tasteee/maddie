@@ -6,6 +6,7 @@ export { MaddiePianoRoll } from './piano-roll';
 export { MaddieKeyboard } from './keyboard';
 export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
+export { MaddieChords } from './chords';
 export { MaddieInspector, MaddieScrub, MaddieRangeScrub } from './inspector';
 export {
   MaddieToolbar,
@@ -26,6 +27,7 @@ export {
   MaddieLoopToggle,
   MaddieFollowToggle,
   MaddieKeysToggle,
+  MaddieChordsToggle,
   MaddieTopbar,
   MaddieEditbar,
 } from './controls';
