@@ -9,18 +9,20 @@ export class RowLayout {
 
   constructor(public map: RowMap) {}
 
-  update(map: RowMap, dur: number, now: number) {
-    if (map === this.map) return;
+  /** Returns true if the rows actually changed. */
+  update(map: RowMap, dur: number, now: number): boolean {
+    if (map === this.map) return false;
     const same =
       map.length === this.map.length && map.rows.every((r, i) => r.pitch === this.map.rows[i].pitch && r.inScale === this.map.rows[i].inScale);
     if (same) {
       this.map = map;
-      return;
+      return false;
     }
     this.prev = dur > 0 ? this.map : null;
     this.map = map;
     this.t0 = now;
     this.dur = dur;
+    return true;
   }
 
   private progress(now: number) {

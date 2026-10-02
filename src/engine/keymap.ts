@@ -78,6 +78,7 @@ export const actions: Record<string, Action> = {
   toolVelocity: (e) => e.setView({ tool: 'velocity' }),
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
   toggleMetronome: (e) => e.transport.setMetronome({ enabled: !e.transport.metronome.enabled }),
+  toggleMasterMute: (e) => e.setVolume({ muted: !e.volume.muted }),
   toggleFollow: (e) => e.setView({ follow: !e.view.follow }),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
   exportMidi: (e) => e.notes().length && downloadMidi(e.doc),
@@ -126,6 +127,7 @@ export const defaultKeymap: Keymap = {
   'mod+l': 'toggleLoop',
   c: 'toggleMetronome',
   f: 'toggleFollow',
+  'shift+m': 'toggleMasterMute',
   'mod+shift+e': 'exportMidi',
 };
 

@@ -97,14 +97,16 @@ export class Engine {
     const { editor } = this;
     const prev = this.rows.map;
     const next = editor.rowMap;
-    this.rows.update(next, dur, now);
+    if (!this.rows.update(next, dur, now)) return;
     const v = editor.view;
     const h = this.viewport.height;
     if (v.scrollRow === null || !h) return;
     const half = h / v.rowHeight / 2;
-    const pitch = prev.pitchAt(v.scrollRow + half);
+    const center = v.scrollRow + half;
+    const pitch = prev.pitchAt(center);
+    const frac = center - Math.floor(center);
     const max = Math.max(0, next.length - h / v.rowHeight);
-    const target = Math.max(0, Math.min(max, next.virtual[pitch] - half));
+    const target = Math.max(0, Math.min(max, next.virtual[pitch] + frac - half));
     if (Math.abs(target - v.scrollRow) > 0.01) editor.setView({ scrollRow: target }, { animate: dur > 0 });
   }
 

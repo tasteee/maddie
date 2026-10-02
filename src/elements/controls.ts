@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   downloadMidi,
   formatBBT,
+  pitchName,
   toMidiFile,
   GRID_OPTIONS,
   pitchClassName,
@@ -15,6 +16,7 @@ import {
   ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
+import { setComputerKeyboard } from '../engine/computer-keyboard';
 import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MaddieElement } from './base';
 import { icons } from './icons';
@@ -131,6 +133,141 @@ export const controlStyles = css`
     background: var(--_raised);
     color: var(--_text);
     box-shadow: 0 0 0 1px var(--_border);
+  }
+  .segmented.text button {
+    padding: 0 10px;
+    font-weight: 500;
+  }
+  .seg-label {
+    margin: 0 6px 0 2px;
+    color: var(--_text-faint);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  button.with-chip {
+    gap: 6px;
+    padding: 0 8px 0 7px;
+  }
+  .chip {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--_accent);
+    color: var(--_accent-text);
+    font: 600 10.5px var(--_font-mono);
+  }
+  /* Popover (hover / focus): sits under its button, never over the grid's content area for long. */
+  .pop-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--_raised);
+    color: var(--_text);
+    box-shadow:
+      0 0 0 1px var(--_border),
+      0 10px 30px -8px rgb(0 0 0 / 0.25);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -4px);
+    transition:
+      opacity var(--_motion-fast) var(--_ease) 140ms,
+      transform var(--_motion-fast) var(--_ease) 140ms;
+  }
+  .pop::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -10px;
+    height: 10px;
+  }
+  .pop-wrap:hover .pop,
+  .pop-wrap:focus-within .pop {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+    transition-delay: 0ms;
+  }
+  .pop-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  kbd {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--_surface-2);
+    color: var(--_text-muted);
+    font: 500 10.5px var(--_font-mono);
+  }
+  .pop-value {
+    min-width: 4ch;
+    text-align: right;
+    color: var(--_text-muted);
+    font: 500 11.5px var(--_font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .slider {
+    width: 120px;
+    height: 16px;
+    margin: 0;
+    background: transparent;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    --fill: calc(var(--v) * 100%);
+  }
+  .slider:focus-visible {
+    outline: 2px solid var(--_focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 4px;
+    background: linear-gradient(to right, var(--_text) var(--fill), var(--_surface-2) var(--fill));
+  }
+  .slider::-moz-range-track {
+    height: 4px;
+    border-radius: 4px;
+    background: var(--_surface-2);
+  }
+  .slider::-moz-range-progress {
+    height: 4px;
+    border-radius: 4px;
+    background: var(--_text);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: var(--_text);
+    box-shadow: 0 0 0 2px var(--_raised);
+    transition: transform var(--_motion-fast) var(--_ease);
+  }
+  .slider::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--_text);
+  }
+  .slider:active::-webkit-slider-thumb {
+    transform: scale(1.15);
   }
   /* Tooltips: label + shortcut, after a short delay. */
   [data-tip]::after {
@@ -292,30 +429,39 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLDS: Array<{ value: FoldMode; label: string }> = [
-  { value: 'none', label: 'Unfolded' },
-  { value: 'scale', label: 'Fold to scale' },
-  { value: 'used', label: 'Fold to notes' },
+const FOLDS: Array<{ value: FoldMode; label: string; tip: string }> = [
+  { value: 'none', label: 'Off', tip: 'Show every row' },
+  { value: 'scale', label: 'Scale', tip: 'Only rows in the key (plus rows with notes)' },
+  { value: 'used', label: 'Notes', tip: 'Only rows that have notes' },
 ];
 
+/** Fold rows: one click between Off · Scale · Notes. */
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    const folded = ed.view.fold !== 'none';
-    return html`<label class="select" data-tip="Fold rows" style=${folded ? 'background: var(--_surface-2)' : ''}>
-      ${icons.fold}<span class="value">${folded ? (ed.view.fold === 'scale' ? 'Scale' : 'Notes') : 'Fold'}</span>
-      <span class="chev">${icons.chevron}</span>
-      <select aria-label="Fold" @change=${(e: Event) => ed.setView({ fold: (e.target as HTMLSelectElement).value as FoldMode }, { animate: true })}>
-        ${FOLDS.map((f) => html`<option value=${f.value} ?selected=${ed.view.fold === f.value} ?disabled=${f.value === 'scale' && !ed.key}>${f.label}</option>`)}
-      </select>
-    </label>`;
+    return html`<span class="seg-label" id="fold-label">Fold</span>
+      <div class="segmented text" role="radiogroup" aria-labelledby="fold-label">
+        ${FOLDS.map(
+          (f) => html`<button
+            role="radio"
+            aria-checked=${ed.view.fold === f.value}
+            aria-pressed=${ed.view.fold === f.value}
+            ?disabled=${f.value === 'scale' && !ed.key}
+            data-tip=${f.value === 'scale' && !ed.key ? 'Set a key first' : f.tip}
+            @click=${() => ed.setView({ fold: f.value }, { animate: true })}
+          >
+            ${f.label}
+          </button>`,
+        )}
+      </div>`;
   }
 }
 
 // ── Transport ───────────────────────────────────────────────────────
 
+/** Play/stop (from the marker), back to start, and the position readout. */
 @customElement('maddie-transport')
 export class MaddieTransport extends ControlElement {
   static styles = [
@@ -328,24 +474,19 @@ export class MaddieTransport extends ControlElement {
         border-radius: 999px;
         background: var(--_accent);
         color: var(--_accent-text);
-        margin-right: 4px;
+        margin-right: 2px;
       }
-      .play:hover {
-        background: color-mix(in oklab, var(--_accent) 84%, var(--_bg));
-        color: var(--_accent-text);
-      }
+      .play:hover,
       .play[aria-pressed='true'] {
-        background: var(--_accent);
+        background: color-mix(in oklab, var(--_accent) 84%, var(--_bg));
         color: var(--_accent-text);
       }
       .position {
         display: inline-flex;
-        align-items: baseline;
-        gap: 1px;
-        min-width: 74px;
-        height: 30px;
         align-items: center;
         justify-content: center;
+        min-width: 74px;
+        height: 30px;
         padding: 0 10px;
         margin-left: 4px;
         border-radius: var(--_radius-sm);
@@ -358,68 +499,6 @@ export class MaddieTransport extends ControlElement {
       }
       .dot {
         color: var(--_text-faint);
-      }
-      .volume {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        width: 56px;
-        height: 30px;
-        margin: 0 4px 0 -2px;
-        transition: opacity var(--_motion-fast) var(--_ease);
-      }
-      .volume.off {
-        opacity: 0.4;
-      }
-      .volume input {
-        width: 100%;
-        height: 16px;
-        margin: 0;
-        background: transparent;
-        appearance: none;
-        -webkit-appearance: none;
-        cursor: pointer;
-        --fill: calc(var(--v) * 100%);
-      }
-      .volume input:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-        border-radius: 4px;
-      }
-      .volume input::-webkit-slider-runnable-track {
-        height: 3px;
-        border-radius: 3px;
-        background: linear-gradient(to right, var(--_text) var(--fill), var(--_surface-2) var(--fill));
-      }
-      .volume input::-moz-range-track {
-        height: 3px;
-        border-radius: 3px;
-        background: var(--_surface-2);
-      }
-      .volume input::-moz-range-progress {
-        height: 3px;
-        border-radius: 3px;
-        background: var(--_text);
-      }
-      .volume input::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 11px;
-        height: 11px;
-        margin-top: -4px;
-        border-radius: 50%;
-        background: var(--_text);
-        box-shadow: 0 0 0 2px var(--_surface);
-        transition: transform var(--_motion-fast) var(--_ease);
-      }
-      .volume input::-moz-range-thumb {
-        width: 11px;
-        height: 11px;
-        border: 0;
-        border-radius: 50%;
-        background: var(--_text);
-      }
-      .volume input:active::-webkit-slider-thumb {
-        transform: scale(1.2);
       }
     `,
   ];
@@ -453,53 +532,132 @@ export class MaddieTransport extends ControlElement {
       <button class="play" aria-pressed=${t.playing} aria-label=${t.playing ? 'Stop' : 'Play'} data-tip=${tip(t.playing ? 'Stop · back to marker' : 'Play from marker', 'Space')} @click=${() => t.toggle()}>
         ${t.playing ? icons.stop : icons.play}
       </button>
-      <button aria-label="Rewind" data-tip=${tip('Back to start', '↵')} @click=${() => {
+      <button aria-label="Back to start" data-tip=${tip('Back to start', '↵')} @click=${() => {
         t.stop();
-        if (t.state === 'stopped' && t.position !== 0) t.stop();
+        if (t.position !== 0) t.stop();
       }}>${icons.rewind}</button>
-      <button
-        aria-pressed=${t.metronome.enabled}
-        aria-label="Metronome"
-        data-tip=${tip('Metronome', 'C')}
-        @click=${() => t.setMetronome({ enabled: !t.metronome.enabled })}
-      >
-        ${icons.metronome}
-      </button>
-      <label class="volume ${t.metronome.enabled ? '' : 'off'}" data-tip="Metronome volume">
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          aria-label="Metronome volume"
-          .value=${String(t.metronome.volume)}
-          style=${`--v: ${t.metronome.volume}`}
-          @input=${(e: Event) => t.setMetronome({ volume: Number((e.target as HTMLInputElement).value), enabled: true })}
-        />
-      </label>
-      <button
-        aria-pressed=${ed.view.follow}
-        aria-label="Follow playhead"
-        data-tip=${tip('Follow playhead', 'F')}
-        @click=${() => ed.setView({ follow: !ed.view.follow })}
-      >
-        ${icons.follow}
-      </button>
-      <button
-        aria-pressed=${t.loop.enabled}
-        aria-label="Loop"
-        data-tip=${tip('Loop · drag the ruler to set', `${modKeyLabel} L`)}
-        @click=${() => {
-          if (t.loop.end <= t.loop.start) t.setLoop({ start: 0, end: ed.ppq * 4 * 4 });
-          t.setLoop({ enabled: !t.loop.enabled });
-        }}
-      >
-        ${icons.loop}
-      </button>
       <span class="position" aria-label="Position" role="timer">
         ${bar}<span class="dot">.</span>${beat}<span class="dot">.</span>${six}
       </span>
     `;
+  }
+}
+
+/** Shared: an icon toggle with a slider popover underneath (hover or focus to reveal). */
+function popToggle(opts: {
+  icon: unknown;
+  label: string;
+  shortcut: string;
+  on: boolean;
+  value: number;
+  onToggle: () => void;
+  onValue: (v: number) => void;
+}) {
+  const pct = Math.round(opts.value * 100);
+  return html`<div class="pop-wrap">
+    <button aria-pressed=${opts.on} aria-label=${opts.label} @click=${opts.onToggle}>${opts.icon}</button>
+    <div class="pop" role="group" aria-label=${`${opts.label} volume`}>
+      <span class="pop-title">${opts.label}<kbd>${opts.shortcut}</kbd></span>
+      <input
+        class="slider"
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        aria-label=${`${opts.label} volume`}
+        .value=${String(opts.value)}
+        style=${`--v: ${opts.value}`}
+        @input=${(e: Event) => opts.onValue(Number((e.target as HTMLInputElement).value))}
+      />
+      <span class="pop-value">${pct}%</span>
+    </div>
+  </div>`;
+}
+
+/** Metronome on/off; hover for volume. */
+@customElement('maddie-metronome')
+export class MaddieMetronome extends ControlElement {
+  render() {
+    const t = this.ed?.transport;
+    if (!t) return nothing;
+    return popToggle({
+      icon: icons.metronome,
+      label: 'Metronome',
+      shortcut: 'C',
+      on: t.metronome.enabled,
+      value: t.metronome.volume,
+      onToggle: () => t.setMetronome({ enabled: !t.metronome.enabled }),
+      onValue: (volume) => t.setMetronome({ volume, enabled: true }),
+    });
+  }
+}
+
+/** Mute toggle; hover for master volume. */
+@customElement('maddie-volume')
+export class MaddieVolume extends ControlElement {
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const { level, muted } = ed.volume;
+    return popToggle({
+      icon: muted || level === 0 ? icons.mute : icons.volume,
+      label: muted ? 'Unmute' : 'Volume',
+      shortcut: '⇧M',
+      on: false,
+      value: muted ? 0 : level,
+      onToggle: () => ed.setVolume({ muted: !muted }),
+      onValue: (v) => ed.setVolume({ level: v, muted: v === 0 }),
+    });
+  }
+}
+
+@customElement('maddie-loop-toggle')
+export class MaddieLoopToggle extends ControlElement {
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const t = ed.transport;
+    return html`<button
+      aria-pressed=${t.loop.enabled}
+      aria-label="Loop"
+      data-tip=${tip('Loop · drag the ruler to set', `${modKeyLabel} L`)}
+      @click=${() => {
+        if (t.loop.end <= t.loop.start) t.setLoop({ start: 0, end: ed.ppq * 4 * 4 });
+        t.setLoop({ enabled: !t.loop.enabled });
+      }}
+    >
+      ${icons.loop}
+    </button>`;
+  }
+}
+
+@customElement('maddie-follow-toggle')
+export class MaddieFollowToggle extends ControlElement {
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    return html`<button aria-pressed=${ed.view.follow} aria-label="Follow playhead" data-tip=${tip('Follow playhead', 'F')} @click=${() => ed.setView({ follow: !ed.view.follow })}>
+      ${icons.follow}
+    </button>`;
+  }
+}
+
+/** Play notes from the computer keyboard. Shows the octave on the Z key while on. */
+@customElement('maddie-keys-toggle')
+export class MaddieKeysToggle extends ControlElement {
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const on = ed.view.computerKeyboard;
+    return html`<button
+      class=${on ? 'with-chip' : ''}
+      aria-pressed=${on}
+      aria-label="Computer keyboard"
+      data-tip=${tip(on ? 'Keyboard input · Z row plays from here · +/− octave' : 'Play notes from your keyboard', '`')}
+      @click=${() => setComputerKeyboard(ed, !on)}
+    >
+      ${icons.keyboard}${on ? html`<span class="chip">${pitchName(ed.view.keyboardBase)}</span>` : nothing}
+    </button>`;
   }
 }
 
@@ -700,7 +858,7 @@ export class MaddieZoom extends ControlElement {
   }
 }
 
-// ── Export ──────────────────────────────────────────────────────────
+// ── Import / export ─────────────────────────────────────────────────
 
 /**
  * Downloads the doc as a Standard MIDI File.
@@ -723,14 +881,11 @@ export class MaddieExport extends ControlElement {
 
   render() {
     if (!this.ed) return nothing;
-    const empty = this.ed.notes().length === 0;
-    return html`<button class="export" ?disabled=${empty} aria-label="Export MIDI" data-tip=${tip('Export .mid', `${modKeyLabel} ⇧ E`)} @click=${() => this.export()}>
-      ${icons.download}<span>Export</span>
+    return html`<button ?disabled=${this.ed.notes().length === 0} aria-label="Export MIDI" data-tip=${tip('Export .mid', `${modKeyLabel} ⇧ E`)} @click=${() => this.export()}>
+      ${icons.download}
     </button>`;
   }
 }
-
-// ── Import ──────────────────────────────────────────────────────────
 
 /**
  * Opens a .mid file and replaces the notes (undoable). Drag & drop onto the roll works too.
@@ -740,65 +895,104 @@ export class MaddieExport extends ControlElement {
 export class MaddieImport extends ControlElement {
   render() {
     if (!this.ed) return nothing;
-    return html`<button class="export" aria-label="Import MIDI" data-tip=${tip('Import .mid · or drop on the grid', `${modKeyLabel} O`)} @click=${() => pickMidiFile(this.ed!, this)}>
-      ${icons.upload}<span>Import</span>
+    return html`<button aria-label="Import MIDI" data-tip=${tip('Import .mid · or drop on the grid', `${modKeyLabel} O`)} @click=${() => pickMidiFile(this.ed!, this)}>
+      ${icons.upload}
     </button>`;
   }
 }
 
-// ── Toolbar ─────────────────────────────────────────────────────────
+// ── Toolbars ────────────────────────────────────────────────────────
 
-/** The default toolbar. Every piece is also usable on its own. */
-@customElement('maddie-toolbar')
-export class MaddieToolbar extends MaddieElement {
+const barStyles = css`
+  :host {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--_toolbar-height);
+    padding: 0 10px;
+    background: var(--_surface);
+    border-bottom: 1px solid var(--_border);
+    box-sizing: border-box;
+    min-width: 0;
+    color: var(--_text);
+    position: relative;
+    z-index: 3;
+  }
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+  }
+  .divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--_border);
+    flex: none;
+  }
+  .spacer {
+    flex: 1;
+    min-width: 8px;
+  }
+`;
+
+/** Top row: global things. Transport, tempo, sound, keyboard input, files. */
+@customElement('maddie-topbar')
+export class MaddieTopbar extends MaddieElement {
   static styles = [
     tokens,
+    barStyles,
     css`
       :host {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        height: var(--_toolbar-height);
-        padding: 0 10px;
-        background: var(--_surface);
-        border-bottom: 1px solid var(--_border);
-        box-sizing: border-box;
-        min-width: 0;
-      }
-      .group {
-        display: flex;
-        align-items: center;
-        gap: 2px;
-        min-width: 0;
-      }
-      .divider {
-        width: 1px;
-        height: 18px;
-        margin: 0 4px;
-        background: var(--_border);
-        flex: none;
-      }
-      .spacer {
-        flex: 1;
-        min-width: 8px;
-      }
-      .center {
-        gap: 6px;
-      }
-      @container (max-width: 860px) {
-        .hide-narrow {
-          display: none;
-        }
+        z-index: 4;
       }
     `,
   ];
-
   render() {
     return html`
-      <div class="group" part="group tools">
+      <div class="group" part="group transport">
         <slot name="start"></slot>
-        <maddie-tool-select exportparts="button"></maddie-tool-select>
+        <maddie-transport></maddie-transport>
+        <maddie-tempo></maddie-tempo>
       </div>
+      <div class="divider"></div>
+      <div class="group" part="group sound">
+        <maddie-metronome></maddie-metronome>
+        <maddie-volume></maddie-volume>
+      </div>
+      <div class="divider"></div>
+      <div class="group" part="group playback">
+        <maddie-loop-toggle></maddie-loop-toggle>
+        <maddie-follow-toggle></maddie-follow-toggle>
+        <maddie-keys-toggle></maddie-keys-toggle>
+      </div>
+      <div class="spacer"></div>
+      <div class="group" part="group file">
+        <maddie-import></maddie-import>
+        <maddie-export></maddie-export>
+        <slot name="end"></slot>
+      </div>
+    `;
+  }
+}
+
+/** Second row: tools that change the grid below. Tools, grid, key, fold, history, zoom. */
+@customElement('maddie-editbar')
+export class MaddieEditbar extends MaddieElement {
+  static styles = [
+    tokens,
+    barStyles,
+    css`
+      :host {
+        height: var(--maddie-editbar-height, 46px);
+        background: var(--_surface);
+      }
+    `,
+  ];
+  render() {
+    return html`
+      <div class="group" part="group tools"><maddie-tool-select></maddie-tool-select></div>
       <div class="divider"></div>
       <div class="group" part="group grid">
         <maddie-grid-select></maddie-grid-select>
@@ -808,27 +1002,63 @@ export class MaddieToolbar extends MaddieElement {
       <div class="group" part="group key">
         <maddie-key-select></maddie-key-select>
         <maddie-scale-lock></maddie-scale-lock>
-        <maddie-fold-select></maddie-fold-select>
-      </div>
-      <div class="spacer"></div>
-      <div class="group center" part="group transport">
-        <maddie-transport></maddie-transport>
-        <maddie-tempo></maddie-tempo>
-      </div>
-      <div class="spacer"></div>
-      <div class="group" part="group history">
-        <maddie-history></maddie-history>
       </div>
       <div class="divider"></div>
-      <div class="group" part="group file">
-        <maddie-import></maddie-import>
-        <maddie-export></maddie-export>
-      </div>
+      <div class="group" part="group fold"><maddie-fold-select></maddie-fold-select></div>
+      <div class="spacer"></div>
+      <div class="group" part="group history"><maddie-history></maddie-history></div>
       <div class="divider"></div>
-      <div class="group" part="group zoom">
-        <maddie-zoom></maddie-zoom>
-        <slot name="end"></slot>
-      </div>
+      <div class="group" part="group zoom"><maddie-zoom></maddie-zoom></div>
+    `;
+  }
+}
+
+/**
+ * Both rows. The edit row uses the inverse color scheme, so the two read as
+ * distinct layers: global on top, grid tools right above the grid.
+ */
+@customElement('maddie-toolbar')
+export class MaddieToolbar extends MaddieElement {
+  static styles = [
+    tokens,
+    css`
+      :host {
+        display: block;
+        position: relative;
+        z-index: 3;
+      }
+      .sentinel {
+        position: absolute;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        visibility: hidden;
+        color: light-dark(#000, #fff);
+        transition: color 1ms;
+      }
+    `,
+  ];
+
+  /** `inverse` (default): edit row flips light/dark. `same`: both rows match. */
+  @property({ attribute: 'edit-row' }) editRow: 'inverse' | 'same' = 'inverse';
+  @state() private scheme: 'light' | 'dark' = 'light';
+
+  protected firstUpdated() {
+    this.readScheme();
+  }
+
+  private readScheme = () => {
+    const s = this.renderRoot.querySelector('.sentinel');
+    if (!s) return;
+    this.scheme = getComputedStyle(s).color.includes('255') ? 'dark' : 'light';
+  };
+
+  render() {
+    const inverse = this.editRow === 'inverse' ? (this.scheme === 'dark' ? 'light' : 'dark') : this.scheme;
+    return html`
+      <span class="sentinel" aria-hidden="true" @transitionrun=${this.readScheme}></span>
+      <maddie-topbar part="topbar"><slot name="start" slot="start"></slot><slot name="end" slot="end"></slot></maddie-topbar>
+      <maddie-editbar part="editbar" style=${`color-scheme: ${inverse}`}></maddie-editbar>
     `;
   }
 }
@@ -842,11 +1072,18 @@ declare global {
     'maddie-scale-lock': MaddieScaleLock;
     'maddie-fold-select': MaddieFoldSelect;
     'maddie-transport': MaddieTransport;
+    'maddie-metronome': MaddieMetronome;
+    'maddie-volume': MaddieVolume;
+    'maddie-loop-toggle': MaddieLoopToggle;
+    'maddie-follow-toggle': MaddieFollowToggle;
+    'maddie-keys-toggle': MaddieKeysToggle;
     'maddie-tempo': MaddieTempo;
     'maddie-history': MaddieHistory;
     'maddie-zoom': MaddieZoom;
-    'maddie-toolbar': MaddieToolbar;
     'maddie-export': MaddieExport;
     'maddie-import': MaddieImport;
+    'maddie-topbar': MaddieTopbar;
+    'maddie-editbar': MaddieEditbar;
+    'maddie-toolbar': MaddieToolbar;
   }
 }

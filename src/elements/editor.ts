@@ -3,7 +3,7 @@ import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 
 /**
- * The full editor: toolbar, ruler, keyboard, piano roll, velocity lane, selection bar.
+ * The full editor: two toolbar rows, ruler, keyboard, piano roll, velocity lane, selection bar.
  * Every region is a slot, so you can replace any piece.
  */
 @customElement('maddie-editor')

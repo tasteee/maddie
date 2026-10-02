@@ -11,10 +11,24 @@ const audioContext = new AudioContext();
 const piano = SplendidGrandPiano(audioContext, { volume: 100 });
 editorEl.audioContext = audioContext;
 
+// Live notes (computer keyboard) have no duration: keep their stop functions for note-off.
+const held = new Map<number, (time?: number) => void>();
 const output: Output = {
-  noteOn: (e) => piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), time: e.time, duration: e.duration }),
-  noteOff: () => {}, // duration handles release
+  noteOn: (e) => {
+    const stop = piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), time: e.time || undefined, duration: e.duration });
+    if (e.duration === undefined) {
+      if (audioContext.state !== 'running') audioContext.resume();
+      held.get(e.pitch)?.();
+      held.set(e.pitch, stop);
+    }
+  },
+  noteOff: (e) => {
+    if (e.duration !== undefined) return; // scheduled notes release on their own
+    held.get(e.pitch)?.();
+    held.delete(e.pitch);
+  },
   allNotesOff: () => piano.stop(),
+  setVolume: (v) => (piano.output.volume = Math.round(v * 127)),
   audition: (e) => {
     if (audioContext.state !== 'running') audioContext.resume();
     piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), duration: e.duration });

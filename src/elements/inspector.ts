@@ -1,6 +1,6 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { createId, GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type Editor, type Note } from '../core';
+import { createId, GRID_OPTIONS, gridTicks, pitchName, remapVelocities, toMidiVelocity, type Editor, type Note } from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
@@ -187,6 +187,206 @@ export class MaddieScrub extends LitElement {
 }
 
 /**
+ * A low–high pair you can drag end by end, or type into.
+ * Drag either number on its own · double-click to type `100` or `20-40`.
+ *
+ * @fires range-start - `detail: { which }`
+ * @fires range-input - live, `detail: { lo, hi, which }`
+ * @fires range-end
+ * @fires range-commit - typed value, `detail: { lo, hi }`
+ */
+@customElement('maddie-range-scrub')
+export class MaddieRangeScrub extends LitElement {
+  static styles = [
+    tokens,
+    css`
+      :host {
+        display: inline-flex;
+      }
+      .field {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 6px 0 9px;
+        border-radius: var(--_radius-sm);
+        background: var(--_surface-2);
+        color: var(--_text);
+        font-size: 12px;
+        font-weight: 500;
+        user-select: none;
+      }
+      .label {
+        color: var(--_text-muted);
+      }
+      .num {
+        min-width: 2.6ch;
+        padding: 2px 4px;
+        border-radius: 5px;
+        text-align: center;
+        font: 500 12px var(--_font-mono);
+        font-variant-numeric: tabular-nums;
+        cursor: ns-resize;
+        touch-action: none;
+        transition: background-color var(--_motion-fast) var(--_ease);
+      }
+      .num:hover,
+      .num.active {
+        background: color-mix(in oklab, var(--_text) 10%, transparent);
+      }
+      .num:focus-visible {
+        outline: 2px solid var(--_focus);
+        outline-offset: 0;
+      }
+      .dash {
+        color: var(--_text-faint);
+      }
+      input {
+        width: 7ch;
+        padding: 2px 4px;
+        border: 0;
+        border-radius: 5px;
+        background: var(--_bg);
+        color: var(--_text);
+        font: 500 12px var(--_font-mono);
+        outline: 2px solid var(--_focus);
+      }
+      :host([disabled]) .field {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+    `,
+  ];
+
+  @property({ type: Number }) lo = 0;
+  @property({ type: Number }) hi = 0;
+  @property({ type: Number }) min = 0;
+  @property({ type: Number }) max = 127;
+  @property() label = '';
+  @property({ type: Boolean, reflect: true }) disabled = false;
+  @state() private editing = false;
+  @state() private active: 'lo' | 'hi' | 'both' | null = null;
+
+  private emit(type: string, detail: unknown) {
+    this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+  }
+
+  private clamp = (v: number) => Math.max(this.min, Math.min(this.max, Math.round(v)));
+
+  private next(which: 'lo' | 'hi' | 'both', value: number) {
+    if (which === 'both') return { lo: value, hi: value };
+    if (which === 'lo') return { lo: Math.min(value, this.hi), hi: this.hi };
+    return { lo: this.lo, hi: Math.max(value, this.lo) };
+  }
+
+  private onDown(e: PointerEvent, which: 'lo' | 'hi' | 'both') {
+    if (e.button !== 0) return;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const start = which === 'hi' ? this.hi : this.lo;
+    let moved = false;
+    this.active = which;
+    this.emit('range-start', { which });
+    const move = (ev: PointerEvent) => {
+      const d = ev.clientX - x0 - (ev.clientY - y0);
+      if (!moved && Math.abs(d) < 2) return;
+      moved = true;
+      const v = this.clamp(start + d * ((this.max - this.min) / 220) * (ev.shiftKey ? 0.2 : 1));
+      const r = this.next(which, v);
+      this.emit('range-input', { ...r, which });
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      this.active = null;
+      this.emit('range-end', { which });
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+  }
+
+  private onKey(e: KeyboardEvent, which: 'lo' | 'hi' | 'both') {
+    const dir = e.key === 'ArrowUp' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowDown' || e.key === 'ArrowLeft' ? -1 : 0;
+    if (dir) {
+      e.preventDefault();
+      e.stopPropagation();
+      const v = this.clamp((which === 'hi' ? this.hi : this.lo) + dir * (e.shiftKey ? 10 : 1));
+      this.emit('range-start', { which });
+      this.emit('range-input', { ...this.next(which, v), which });
+      this.emit('range-end', { which });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.startEditing();
+    }
+  }
+
+  private async startEditing() {
+    this.editing = true;
+    await this.updateComplete;
+    const input = this.renderRoot.querySelector('input');
+    input?.focus();
+    input?.select();
+  }
+
+  /** "100" → 100–100 · "20-40", "20 40", "20–40", "40,20" → 20–40. */
+  static parse(text: string): [number, number] | null {
+    const nums = text.match(/\d+(\.\d+)?/g)?.map(Number);
+    if (!nums?.length || nums.length > 2) return null;
+    const [a, b = a] = nums;
+    return [Math.min(a, b), Math.max(a, b)];
+  }
+
+  private commit = (e: Event) => {
+    if (!this.editing) return;
+    this.editing = false;
+    const r = MaddieRangeScrub.parse((e.target as HTMLInputElement).value);
+    if (r) this.emit('range-commit', { lo: this.clamp(r[0]), hi: this.clamp(r[1]) });
+  };
+
+  render() {
+    const single = this.lo === this.hi;
+    const num = (which: 'lo' | 'hi' | 'both', value: number, label: string) =>
+      html`<span
+        class="num ${this.active === which ? 'active' : ''}"
+        tabindex=${this.disabled ? -1 : 0}
+        role="spinbutton"
+        aria-label=${label}
+        aria-valuenow=${value}
+        aria-valuemin=${this.min}
+        aria-valuemax=${this.max}
+        @pointerdown=${(e: PointerEvent) => this.onDown(e, which)}
+        @keydown=${(e: KeyboardEvent) => this.onKey(e, which)}
+        >${this.disabled ? '—' : value}</span
+      >`;
+    return html`<span
+      class="field"
+      title="Drag either number · double-click to type 100 or 20-40"
+      @dblclick=${() => this.startEditing()}
+    >
+      ${this.label ? html`<span class="label">${this.label}</span>` : nothing}
+      ${this.editing
+        ? html`<input
+            .value=${single ? String(this.lo) : `${this.lo}-${this.hi}`}
+            aria-label=${`${this.label}: a number or a range like 20-40`}
+            @keydown=${(e: KeyboardEvent) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') this.editing = false;
+            }}
+            @blur=${this.commit}
+          />`
+        : single
+          ? num('both', this.lo, this.label)
+          : html`${num('lo', this.lo, `${this.label} low`)}<span class="dash">–</span>${num('hi', this.hi, `${this.label} high`)}`}
+    </span>`;
+  }
+}
+
+/**
  * The selection bar. Always visible, fixed height, never over the notes.
  * Controls dim when nothing is selected, so nothing moves around.
  */
@@ -290,7 +490,7 @@ export class MaddieInspector extends MaddieElement {
   @state() private strength = 100;
   @state() private humanizeTiming = 20;
   @state() private humanizeVelocity = 10;
-  private velocityGesture: { id: string; notes: Note[]; start: number } | null = null;
+  private velocityGesture: { id: string; notes: Note[] } | null = null;
 
   protected attach(editor: Editor, _engine: Engine) {
     const update = () => this.requestUpdate();
@@ -310,21 +510,19 @@ export class MaddieInspector extends MaddieElement {
   }
 
   private onVelocityStart = () => {
-    const notes = this.notes;
-    const avg = notes.reduce((s, n) => s + n.velocity, 0) / Math.max(1, notes.length);
-    this.velocityGesture = { id: createId(), notes, start: avg };
+    this.velocityGesture = { id: createId(), notes: this.notes };
   };
 
-  private onVelocityInput = (e: CustomEvent<{ value: number }>) => {
+  /** Live drag: refit the notes captured at drag start into the new range. */
+  private onVelocityInput = (e: CustomEvent<{ lo: number; hi: number }>) => {
     const ed = this.ed;
     const g = this.velocityGesture;
     if (!ed || !g) return;
-    const delta = this.fromVel(e.detail.value) - g.start;
-    ed.commands.update(
-      g.notes.map((n) => ({ id: n.id, velocity: Math.max(0, Math.min(1, n.velocity + delta)) })),
-      'Change velocity',
-      { gestureId: g.id },
-    );
+    ed.commands.update(remapVelocities(g.notes, this.fromVel(e.detail.lo), this.fromVel(e.detail.hi)), 'Change velocity', { gestureId: g.id });
+  };
+
+  private onVelocityCommit = (e: CustomEvent<{ lo: number; hi: number }>) => {
+    this.ed?.commands.setVelocityRange(undefined, this.fromVel(e.detail.lo), this.fromVel(e.detail.hi));
   };
 
   private quantize() {
@@ -362,9 +560,8 @@ export class MaddieInspector extends MaddieElement {
     const vels = notes.map((n) => this.vel(n.velocity));
     const lo = Math.min(...pitches);
     const hi = Math.max(...pitches);
-    const vLo = Math.min(...vels);
-    const vHi = Math.max(...vels);
-    const avg = empty ? 0 : Math.round(vels.reduce((a, b) => a + b, 0) / vels.length);
+    const vLo = empty ? 0 : Math.min(...vels);
+    const vHi = empty ? 0 : Math.max(...vels);
     const currentGrid = GRID_OPTIONS.find((o) => o.value === ed.view.grid)?.label ?? ed.view.grid;
     const qLabel = this.quantizeGrid === 'current' ? currentGrid : (GRID_OPTIONS.find((o) => o.value === this.quantizeGrid)?.label ?? this.quantizeGrid);
 
@@ -377,17 +574,18 @@ export class MaddieInspector extends MaddieElement {
       </div>
 
       <div class="group" part="group velocity">
-        <maddie-scrub
+        <maddie-range-scrub
           label="Velocity"
-          .value=${avg}
+          .lo=${vLo}
+          .hi=${vHi}
           .min=${0}
           .max=${this.velocityDisplay === 'midi' ? 127 : 100}
-          .placeholder=${empty ? '—' : vLo === vHi ? undefined : `${vLo}–${vHi}`}
           ?disabled=${empty}
-          @scrub-start=${this.onVelocityStart}
-          @scrub-input=${this.onVelocityInput}
-          @scrub-end=${() => (this.velocityGesture = null)}
-        ></maddie-scrub>
+          @range-start=${this.onVelocityStart}
+          @range-input=${this.onVelocityInput}
+          @range-end=${() => (this.velocityGesture = null)}
+          @range-commit=${this.onVelocityCommit}
+        ></maddie-range-scrub>
       </div>
 
       <div class="group" part="group quantize">
@@ -433,6 +631,7 @@ export class MaddieInspector extends MaddieElement {
 declare global {
   interface HTMLElementTagNameMap {
     'maddie-scrub': MaddieScrub;
+    'maddie-range-scrub': MaddieRangeScrub;
     'maddie-inspector': MaddieInspector;
   }
 }

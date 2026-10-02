@@ -43,12 +43,17 @@ el.output = {
 };
 ```
 
-## Transport
+## Controls
 
-- **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid.
-- **Enter** / the rewind button goes back to the start.
-- **Metronome:** toggle with **C**, volume slider next to it. A short built-in click plays unless your `output` has a `click(e)` method.
-- **Follow playhead:** toggle with **F** (off by default).
+Two toolbar rows. The **top row** is global: play/stop, back to start, position, tempo, metronome, volume, loop, follow, keyboard input, import/export. The **edit row** (inverse colors) changes the grid: tools, grid/snap, key/scale lock, fold, undo/redo, row height, zoom.
+
+- **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid. **Enter** goes back to the start.
+- **Loop:** drag anywhere on the ruler to draw a loop; drag its ends to resize; click the loop bar to toggle it.
+- **Metronome** (**C**) and **volume** (**⇧M** mutes): click to toggle, hover for a volume slider. The metronome uses `output.click(e)` if present, else a short built-in click. Volume uses `output.setVolume(v)` if present, else scales velocity.
+- **Follow playhead:** **F** (off by default).
+- **Fold:** `Off · Scale · Notes`, one click each.
+- **Keyboard input:** **`** toggles. The Z row plays from C2; each key to the right is a semitone up and each row above continues from the one below. **+ / −** shift octaves (Z wraps C6 → C0). Letter shortcuts are paused while it's on.
+- **Velocity (selection bar):** drag either end of `55 – 65` on its own; the notes in between rescale. Double-click to type `100` (all) or `20-40` (rescale; equal velocities become a ramp).
 - `global-shortcuts` attribute: handle shortcuts even when focus is on `<body>` (for full-page editors).
 
 ## Import / export MIDI

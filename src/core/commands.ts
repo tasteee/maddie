@@ -104,6 +104,14 @@ export class Commands {
     );
   }
 
+  /**
+   * Fit velocities into [lo, hi] (0–1), keeping each note's relative position.
+   * If the notes all share one velocity, they ramp from lo to hi in time order.
+   */
+  setVelocityRange(ids: Ids, lo: number, hi: number, opts?: TransactOptions) {
+    this.update(remapVelocities(this.notesOf(ids), lo, hi), 'Change velocity', opts);
+  }
+
   /** By semitones, or by scale degrees (needs a key). */
   transpose(ids: Ids, by: { semitones: number } | { degrees: number }, opts?: TransactOptions) {
     const key = this.editor.key;
@@ -248,6 +256,22 @@ export class Commands {
   setKey(key: Key | null) {
     this.editor.transact('Change key', (tx) => tx.setMeta('key', key));
   }
+}
+
+/** Velocity changes that fit `notes` into [lo, hi]. Pure: use with `commands.update`. */
+export function remapVelocities(notes: readonly Note[], lo: number, hi: number): Array<{ id: NoteId; velocity: number }> {
+  if (!notes.length) return [];
+  const a = clampVelocity(Math.min(lo, hi));
+  const b = clampVelocity(Math.max(lo, hi));
+  const vs = notes.map((n) => n.velocity);
+  const min = Math.min(...vs);
+  const max = Math.max(...vs);
+  if (max - min < 1e-6) {
+    if (notes.length === 1 || a === b) return notes.map((n) => ({ id: n.id, velocity: a === b ? a : (a + b) / 2 }));
+    const order = [...notes].sort((x, y) => x.start - y.start || x.pitch - y.pitch);
+    return order.map((n, i) => ({ id: n.id, velocity: a + ((b - a) * i) / (order.length - 1) }));
+  }
+  return notes.map((n) => ({ id: n.id, velocity: a + ((n.velocity - min) / (max - min)) * (b - a) }));
 }
 
 function normalize(n: Note): Note {

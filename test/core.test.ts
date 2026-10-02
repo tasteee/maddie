@@ -8,6 +8,7 @@ import {
   gridTicks,
   nearestInScale,
   parseKey,
+  remapVelocities,
   secondsToTicks,
   snapTick,
   ticksToSeconds,
@@ -168,3 +169,31 @@ describe('editor', () => {
     expect(ed.getNote(notes[0].id)!.start).toBe(960);
   });
 });
+
+describe('velocity range', () => {
+  const n = (id: string, velocity: number, start = 0) => ({ id, pitch: 60, start, duration: 1, velocity });
+  it('rescales a spread into the new range', () => {
+    const out = remapVelocities([n('a', 0.4), n('b', 0.5), n('c', 0.6)], 0.4, 0.5);
+    expect(out.map((c) => +c.velocity.toFixed(3))).toEqual([0.4, 0.45, 0.5]);
+  });
+  it('ramps equal velocities by time', () => {
+    const out = remapVelocities([n('b', 0.5, 2), n('a', 0.5, 1), n('c', 0.5, 3)], 0.2, 0.4);
+    expect(Object.fromEntries(out.map((c) => [c.id, +c.velocity.toFixed(3)]))).toEqual({ a: 0.2, b: 0.3, c: 0.4 });
+  });
+  it('sets a single value', () => {
+    expect(remapVelocities([n('a', 0.1), n('b', 0.9)], 0.7, 0.7).map((c) => c.velocity)).toEqual([0.7, 0.7]);
+  });
+});
+
+describe('computer keyboard', () => {
+  it('wraps octaves C6 → C0 and back', async () => {
+    const { stepOctave, KEY_OFFSETS } = await import('../src/engine/computer-keyboard');
+    expect(stepOctave(36, 1)).toBe(48);
+    expect(stepOctave(84, 1)).toBe(12);
+    expect(stepOctave(12, -1)).toBe(84);
+    expect(KEY_OFFSETS.get('KeyZ')).toBe(0);
+    expect(KEY_OFFSETS.get('KeyX')).toBe(1);
+    expect(KEY_OFFSETS.get('KeyA')).toBe(10); // row above continues where Z row ended
+  });
+});
+

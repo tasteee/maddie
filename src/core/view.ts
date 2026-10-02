@@ -33,6 +33,10 @@ export interface ViewState {
   /** Insert / paste position. */
   cursor: Tick;
   noteColor: NoteColorMode;
+  /** Play notes from the computer keyboard (Z row = `keyboardBase`). */
+  computerKeyboard: boolean;
+  /** Pitch on the Z key. C0 (12) … C6 (84). */
+  keyboardBase: number;
 }
 
 export const DEFAULT_VIEW: ViewState = {
@@ -51,6 +55,8 @@ export const DEFAULT_VIEW: ViewState = {
   noteVelocity: 0.8,
   cursor: 0,
   noteColor: 'pitch',
+  computerKeyboard: false,
+  keyboardBase: 36,
 };
 
 export const ZOOM_LIMITS = {
