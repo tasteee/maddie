@@ -545,8 +545,7 @@ export class MaddieInspector extends MaddieElement {
   private transpose(semitones: number) {
     const ed = this.ed;
     if (!ed) return;
-    if (ed.view.scaleLock && ed.key && Math.abs(semitones) === 1) ed.commands.transpose(undefined, { degrees: semitones });
-    else ed.commands.transpose(undefined, { semitones });
+    ed.commands.nudgePitch(undefined, semitones);
   }
 
   render() {
@@ -557,6 +556,8 @@ export class MaddieInspector extends MaddieElement {
     this.toggleAttribute('empty', empty);
 
     const pitches = notes.map((n) => n.pitch);
+    const folded = ed.view.fold === 'scale' || ed.view.fold === 'used';
+    const step = folded ? 'a row' : ed.view.scaleLock && ed.key ? 'a scale step' : 'a semitone';
     const vels = notes.map((n) => this.vel(n.velocity));
     const lo = Math.min(...pitches);
     const hi = Math.max(...pitches);
@@ -613,8 +614,8 @@ export class MaddieInspector extends MaddieElement {
       <div class="group" part="group transpose">
         <span class="title">Transpose</span>
         <button class="num" aria-label="Octave down" data-tip="Octave down   ⇧ ↓" @click=${() => this.transpose(-12)}>−12</button>
-        <button class="num" aria-label="Down" data-tip=${ed.view.scaleLock && ed.key ? 'Down a scale step   ↓' : 'Down a semitone   ↓'} @click=${() => this.transpose(-1)}>−1</button>
-        <button class="num" aria-label="Up" data-tip=${ed.view.scaleLock && ed.key ? 'Up a scale step   ↑' : 'Up a semitone   ↑'} @click=${() => this.transpose(1)}>+1</button>
+        <button class="num" aria-label="Down" data-tip=${`Down ${step}   ↓`} @click=${() => this.transpose(-1)}>−1</button>
+        <button class="num" aria-label="Up" data-tip=${`Up ${step}   ↑`} @click=${() => this.transpose(1)}>+1</button>
         <button class="num" aria-label="Octave up" data-tip="Octave up   ⇧ ↑" @click=${() => this.transpose(12)}>+12</button>
       </div>
 

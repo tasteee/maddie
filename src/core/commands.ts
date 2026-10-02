@@ -112,8 +112,22 @@ export class Commands {
     this.update(remapVelocities(this.notesOf(ids), lo, hi), 'Change velocity', opts);
   }
 
-  /** By semitones, or by scale degrees (needs a key). */
-  transpose(ids: Ids, by: { semitones: number } | { degrees: number }, opts?: TransactOptions) {
+  /**
+   * Arrow-key pitch move. With a fold on, one step = one visible row
+   * (scale fold: scale rows only), and nothing moves if any note has no row left.
+   * Otherwise a step is a scale degree (scale lock) or a semitone. Octaves are always 12 semitones.
+   */
+  nudgePitch(ids: Ids, steps: number, opts?: TransactOptions) {
+    const { view, key } = this.editor;
+    if (Math.abs(steps) !== 1) return this.transpose(ids, { semitones: steps }, opts);
+    if (view.fold === 'scale' || view.fold === 'used') return this.transpose(ids, { rows: steps }, opts);
+    if (view.scaleLock && key) return this.transpose(ids, { degrees: steps }, opts);
+    this.transpose(ids, { semitones: steps }, opts);
+  }
+
+  /** By semitones, by scale degrees (needs a key), or by visible rows of the current fold. */
+  transpose(ids: Ids, by: { semitones: number } | { degrees: number } | { rows: number }, opts?: TransactOptions) {
+    if ('rows' in by) return this.transposeRows(ids, by.rows, opts);
     const key = this.editor.key;
     const notes = this.notesOf(ids);
     if ('degrees' in by && key) {
@@ -126,6 +140,32 @@ export class Commands {
       const semis = 'semitones' in by ? by.semitones : by.degrees;
       this.move(ids, { pitches: semis }, opts);
     }
+  }
+
+  /** Move each note `rows` rows through the fold. All or nothing: blocked if any note runs out of rows. */
+  private transposeRows(ids: Ids, rows: number, opts?: TransactOptions) {
+    const notes = this.notesOf(ids);
+    if (!notes.length || !rows) return;
+    const { view, key, rowMap } = this.editor;
+    const scaleOnly = view.fold === 'scale' && !!key;
+    // Ascending pitches the notes may land on.
+    const lanes = rowMap.rows
+      .filter((r) => !scaleOnly || r.inScale)
+      .map((r) => r.pitch)
+      .sort((a, b) => a - b);
+    const changes: Array<{ id: NoteId; pitch: number }> = [];
+    for (const n of notes) {
+      const i = lanes.indexOf(n.pitch);
+      let target: number;
+      // A note off the lanes (e.g. out of scale) steps to the nearest lane in that direction first.
+      if (i >= 0) target = i + rows;
+      else if (rows > 0) target = lanes.findIndex((p) => p > n.pitch) + rows - 1;
+      else target = lanes.filter((p) => p < n.pitch).length - 1 + rows + 1;
+      const pitch = lanes[target];
+      if (target < 0 || pitch === undefined || (rows > 0 ? pitch <= n.pitch : pitch >= n.pitch)) return;
+      changes.push({ id: n.id, pitch });
+    }
+    this.update(changes, 'Transpose', opts);
   }
 
   quantize(ids?: Ids, { grid, strength = 1, ends = false }: { grid?: number; strength?: number; ends?: boolean } = {}, opts?: TransactOptions) {

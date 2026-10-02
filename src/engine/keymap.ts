@@ -30,8 +30,7 @@ const nudge = (editor: Editor, dir: -1 | 1) => {
 
 const pitchNudge = (editor: Editor, steps: number) => {
   if (!editor.selection.size) return;
-  if (editor.view.scaleLock && editor.key && Math.abs(steps) === 1) editor.commands.transpose(undefined, { degrees: steps });
-  else editor.commands.transpose(undefined, { semitones: steps });
+  editor.commands.nudgePitch(undefined, steps);
 };
 
 const resizeBy = (editor: Editor, dir: -1 | 1) => {
