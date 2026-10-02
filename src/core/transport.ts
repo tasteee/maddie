@@ -237,6 +237,9 @@ export class Transport {
   }
 
   private tickAtAnchor(anchor: Anchor, time: number): Tick {
+    // Exact at the anchor: the seconds → ticks round trip can land a hair past it,
+    // which would skip notes starting right on the play marker or loop start.
+    if (time <= anchor.time) return anchor.tick;
     const { tempo, ppq } = this.editor.meta;
     return secondsToTicks(ticksToSeconds(anchor.tick, tempo, ppq) + (time - anchor.time), tempo, ppq);
   }
