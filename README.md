@@ -48,6 +48,7 @@ el.output = {
 Two toolbar rows. The **top row** is global: play/stop, back to start, position, tempo, metronome, volume, loop, follow, keyboard input, import/export. The **edit row** (inverse colors) changes the grid: tools, grid/snap, key/scale lock, fold, undo/redo, row height, zoom.
 
 - **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid. **Enter** goes back to the start.
+- **← / →** with nothing selected step the play marker to the previous / next grid line (with notes selected, they nudge the notes).
 - **Loop:** drag anywhere on the ruler to draw a loop; drag its ends to resize; click the loop bar to toggle it.
 - **Metronome** (**C**) and **volume** (**⇧M** mutes): click to toggle, hover for a volume slider. The metronome uses `output.click(e)` if present, else a short built-in click. Volume uses `output.setVolume(v)` if present, else scales velocity.
 - **Follow playhead:** **F** (off by default).

@@ -54,6 +54,9 @@ const engines = new WeakMap<Editor, Engine>();
  * Shared, per-editor render state: animations, drag preview, display view.
  * Every element that draws asks the engine where things are *right now*.
  */
+/** Note position tweens run at half the base motion, so edits land snappy. */
+const NOTE_MOTION = 0.5;
+
 export class Engine {
   static for(editor: Editor): Engine {
     let e = engines.get(editor);
@@ -94,7 +97,7 @@ export class Engine {
           if (p.op === 'remove' && !e.gestureId) this.notes.markDying(p.note, now);
           if (p.op === 'remove' && e.gestureId) this.notes.forget(p.note.id);
         }
-        this.notes.nextDuration = e.gestureId ? 0 : this.motion.medium;
+        this.notes.nextDuration = e.gestureId ? 0 : this.motion.medium * NOTE_MOTION;
         this.reflowRows(this.motion.slow, now);
       }
       this.invalidate();
@@ -184,7 +187,7 @@ export class Engine {
 
   setPreview(preview: Partial<Preview>, glide = false) {
     this.preview = { overrides: new Map(), added: [], hidden: new Set(), ...preview };
-    this.notes.nextDuration = glide ? this.motion.glide : 0;
+    this.notes.nextDuration = glide ? this.motion.glide * NOTE_MOTION : 0;
     this.invalidate();
   }
 
