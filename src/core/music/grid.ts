@@ -65,3 +65,9 @@ export function snapTick(
   const n = mode === 'floor' ? Math.floor(steps) : mode === 'ceil' ? Math.ceil(steps) : Math.round(steps);
   return Math.round(anchor + n * grid);
 }
+
+/** The next grid line past `tick` in a direction. Off-grid ticks land on the nearest line that way. */
+export function stepGrid(tick: Tick, grid: number, sigs: readonly TimeSigEvent[], dir: -1 | 1): Tick {
+  const line = snapTick(tick, grid, sigs, dir < 0 ? 'ceil' : 'floor');
+  return Math.max(0, snapTick(line + dir * grid, grid, sigs));
+}
