@@ -2,6 +2,7 @@
 
 A framework-agnostic, browser-based MIDI editor library.
 Ships as **web components**, built on a **headless core**.
+Package: `@tasteee/maddie`. Tags: `maddie-*`. Desktop first.
 
 ---
 
@@ -22,7 +23,7 @@ Ships as **web components**, built on a **headless core**.
 │ 1. Core          document · commands · history · selection    │
 │                  view · snap · scale · transport  (no DOM)    │
 └──────────────────────────────────────────────────────────────┘
-          Audio outputs (pluggable): synth · Web MIDI · custom
+          Output (pluggable): emits MIDI note events — consumer makes the sound
 ```
 
 Each layer only depends on the layers below it.
@@ -31,7 +32,7 @@ Each layer only depends on the layers below it.
 | --------------------------------------- | ------------------- |
 | A working editor in 3 lines             | `<maddie-editor>`   |
 | Own layout, own toolbar, our roll       | Elements in `<maddie-root>` |
-| Own renderer (WebGL, React Native, etc) | `maddie/core` only  |
+| Own renderer (WebGL, React Native, etc) | `@tasteee/maddie/core` only  |
 
 **Benefits**
 - One code path. The preset dogfoods the pieces, so the pieces stay good.
@@ -77,7 +78,7 @@ This split is the most important rule in the codebase. It is what makes undo, co
 
 ---
 
-## 3. Core (`maddie/core`) — no DOM
+## 3. Core (`@tasteee/maddie/core`) — no DOM
 
 ### 3.1 Document model
 
@@ -92,7 +93,7 @@ interface Note {
   pitch: number;               // 0–127
   start: Tick;
   duration: Tick;
-  velocity: number;            // 0–127 (MIDI 1). See open questions.
+  velocity: number;            // 0–1 float. See §3.1.1.
   channel?: number;            // 0–15
   muted?: boolean;
   data?: Record<string, unknown>; // consumer payload, round-tripped untouched
@@ -118,6 +119,21 @@ interface Track {
 - Multi-track from day one. The editor edits one track; others can render as **ghost notes** (read-only).
 - `data` lets consumers attach anything (ids from their DB, lyrics, articulations).
 
+#### 3.1.1 Velocity is a 0–1 float
+
+- Matches Web Audio gain, Tone.js, and MIDI 2.0 (16-bit velocity). No precision lost.
+- Relative edits are clean: `+0.05`, `× 0.8`.
+- Conversion helpers at the edges only:
+
+```ts
+import { toMidiVelocity, fromMidiVelocity } from '@tasteee/maddie/core';
+toMidiVelocity(0.8)    // → 102  (round(v * 127), clamped 1–127 so note-on never becomes note-off)
+fromMidiVelocity(102)  // → 0.803
+```
+
+- UI can display either: `velocity-display="percent" | "midi"` (default `midi`, musicians read 0–127).
+- `.mid` import/export converts automatically.
+
 ### 3.2 Store
 
 ```ts
@@ -141,10 +157,10 @@ editor.subscribe(selector, callback)  // fine-grained
 Every edit is a named, serializable command. Commands produce **patches**; history stores inverse patches.
 
 ```ts
-editor.commands.addNotes([{ pitch: 60, start: 0, duration: 480, velocity: 100 }]);
+editor.commands.addNotes([{ pitch: 60, start: 0, duration: 480, velocity: 0.8 }]);
 editor.commands.moveNotes(ids, { ticks: 240, pitches: 1 });
 editor.commands.resizeNotes(ids, { edge: 'end', ticks: 120 });
-editor.commands.setVelocity(ids, { mode: 'relative', value: -10 });
+editor.commands.setVelocity(ids, { mode: 'relative', value: -0.08 });
 editor.commands.deleteNotes(ids);
 editor.commands.quantize(ids, { grid: '1/16', strength: 1, swing: 0 });
 editor.commands.transpose(ids, { semitones: 12 } | { scaleDegrees: 2 });
@@ -289,7 +305,7 @@ idle ──down──▶ pressed ──move>3px──▶ dragging:{move|resizeSt
 
 **Tools:** `select`, `draw`, `erase`, `slice`, `velocity`. Draw tool on empty space = click to place, drag to set length.
 
-Pointer Events + `setPointerCapture`. Works with mouse, pen, touch. Pinch = zoom, two-finger pan = scroll.
+Pointer Events + `setPointerCapture`. **Desktop first:** mouse, trackpad (pinch = zoom, two-finger = scroll), pen. Pointer Events keep touch possible later without a rewrite, but touch is not a v1 target.
 
 **Smart defaults that make it feel premium:**
 - New notes inherit the **last used length and velocity**.
@@ -307,7 +323,7 @@ editor.keymap = {
   ...defaultKeymap,
   'mod+d': 'duplicate',
   'q': 'quantize',
-  'alt+arrowup': ['setVelocity', { mode: 'relative', value: 8 }],
+  'alt+arrowup': ['setVelocity', { mode: 'relative', value: 0.05 }],
 };
 ```
 
@@ -315,7 +331,7 @@ Full keyboard editing: arrows move cursor/selection by grid, `shift+arrow` resiz
 
 ---
 
-## 5. Elements (`maddie/elements`)
+## 5. Elements (`@tasteee/maddie/elements`)
 
 ### 5.1 Element list
 
@@ -390,16 +406,19 @@ All `CustomEvent`, `bubbles: true, composed: true`, prefixed `maddie-`.
 
 ### 5.6 Base class
 
-- Small **Lit** base for DOM chrome elements (reactive props, templating, attribute handling, ~5kb). Canvas elements use the same base but draw via the engine.
-- **Benefits:** standard, well-known, tiny, fast.
-- **Risks:** one runtime dep. Alternative: a ~1kb in-house base. Decide before writing elements (see open questions).
+**Decided: Lit.** All elements extend one `MaddieElement extends LitElement` base that handles: context lookup, `.editor` property, `subscribe` cleanup on disconnect, theme bridge.
+
+- Chrome elements (toolbar, controls, inspector) render with Lit templates.
+- Canvas elements (roll, keyboard, ruler, lanes) use Lit only for the shell; the engine draws.
+- **Benefits:** standard, well-known, tiny (~5kb), fast, great TS decorators.
+- **Risks:** one runtime dep. Lit is a `dependency`, not bundled, so apps already using Lit share one copy.
 
 ### 5.7 Registration
 
 ```js
-import 'maddie/elements';                    // defines all, side effect
-import 'maddie/elements/piano-roll';         // define one
-import { defineMaddie } from 'maddie/elements';
+import '@tasteee/maddie/elements';             // defines all, side effect
+import '@tasteee/maddie/elements/piano-roll';  // define one
+import { defineMaddie } from '@tasteee/maddie/elements';
 defineMaddie({ prefix: 'acme' });            // <acme-piano-roll>, avoids tag collisions
 ```
 
@@ -409,16 +428,15 @@ Safe double-define (no throw if already registered with same class).
 
 ## 6. Playback — who owns what
 
-**We own the clock. The consumer owns the sound (with good defaults).**
+**We own the clock. We dispatch MIDI. The consumer makes the sound.**
 
-The playhead, follow-mode, loop region, note highlighting, and the ruler all need a clock. That's UI behavior, so it belongs to us. What *makes sound* varies wildly per app, so that's pluggable.
+No built-in synth. The playhead, follow-mode, loop region, note highlighting, and ruler all need a clock, so that's ours. Sound varies wildly per app, so we only emit note events.
 
 ```
-Transport (core)  ── schedules ──▶  Output (pluggable)
-   play/stop/seek/loop                 ├─ SynthOutput    (maddie/audio, tiny poly synth)
-   tempo map → seconds                 ├─ WebMidiOutput  (maddie/audio, hardware/DAW)
-   lookahead scheduler                 ├─ callback       (consumer: Tone.js, samplers…)
-                                       └─ none           (silent, visual only)
+Transport (core) ── schedules ──▶ note events
+   play/stop/seek/loop               ├─ editor.output.noteOn/noteOff   (scheduled, sample-accurate time)
+   tempo map → seconds               ├─ maddie-noteon / maddie-noteoff DOM events (for UI, logging)
+   lookahead scheduler               └─ nothing set → silent, visual only
 ```
 
 ### 6.1 Transport
@@ -426,32 +444,76 @@ Transport (core)  ── schedules ──▶  Output (pluggable)
 ```ts
 editor.transport.play(); .stop(); .pause(); .seek(tick);
 editor.transport.loop = { start: 0, end: 3840, enabled: true };
-editor.transport.metronome = true;
 editor.transport.position   // subscribable tick
 editor.transport.state      // 'stopped' | 'playing' | 'paused'
 ```
 
-- **Lookahead scheduler** on the `AudioContext` clock (25ms timer, ~100ms horizon). Rock solid timing, not `setTimeout` timing.
+- **Lookahead scheduler** on an `AudioContext` clock (25ms timer, ~100ms horizon). Rock solid timing, not `setTimeout` timing.
+- Uses the consumer's `AudioContext` if given (`createEditor({ audioContext })`), so scheduled times line up with their instrument. Otherwise creates one lazily on first play.
 - Reads the **tempo map**, so tempo changes mid-song are correct.
 - Edits during playback are picked up on the next scheduling window.
 - Playhead position = `transport.tickAt(audioCtx.currentTime - outputLatency)` per frame.
+- Metronome is an event too (`onTick` of beat/bar) — consumer decides if it clicks.
 
 ### 6.2 Output interface
 
+The scheduler calls these **ahead of time** with an exact `AudioContext` time. DOM events are too late and too jittery for audio, so audio goes through `output`, not events.
+
 ```ts
 interface Output {
-  noteOn(note: Note, time: number): void;   // time = AudioContext seconds
-  noteOff(note: Note, time: number): void;
-  allNotesOff(): void;
-  audition?(pitch: number, velocity: number): void;  // preview while editing
+  noteOn(e: NoteEvent): void;
+  noteOff(e: NoteEvent): void;
+  allNotesOff(): void;                 // stop, seek, loop wrap
+  audition?(e: NoteEvent): void;       // preview while editing (place, drag pitch, click key)
 }
 
-editor.output = new SynthOutput();          // default in <maddie-editor>
-editor.output = new WebMidiOutput(port);
-editor.output = { noteOn: (n, t) => sampler.triggerAttack(n.pitch, t), ... };
+interface NoteEvent {
+  note: Note;          // full note, incl. consumer `data`
+  pitch: number;       // 0–127
+  velocity: number;    // 0–1
+  time: number;        // AudioContext seconds; 0 = now (audition)
+  duration?: number;   // seconds, on noteOn — lets sample players skip noteOff
+}
 ```
 
-### 6.3 External clock (consumer owns time)
+Adapters stay tiny. Web MIDI, for example:
+
+```ts
+const midiOut = (port: MIDIOutput, ctx: AudioContext): Output => {
+  const at = (t: number) => performance.now() + (t - ctx.currentTime) * 1000;
+  return {
+    noteOn:  e => port.send([0x90, e.pitch, toMidiVelocity(e.velocity)], at(e.time)),
+    noteOff: e => port.send([0x80, e.pitch, 0], at(e.time)),
+    allNotesOff: () => port.send([0xb0, 123, 0]),
+  };
+};
+```
+
+We may ship `webMidiOutput()` later as a ~20-line helper. Not v1.
+
+### 6.3 Demo / POC: smplr Splendid Grand Piano
+
+The playground (not the library) wires up [smplr](https://github.com/danigb/smplr):
+
+```ts
+import { SplendidGrandPiano } from 'smplr';
+
+const audioContext = new AudioContext();
+const piano = new SplendidGrandPiano(audioContext);
+const editor = document.querySelector('maddie-editor').editor;
+
+editor.audioContext = audioContext;   // share the clock
+editor.output = {
+  noteOn: e => piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), time: e.time, duration: e.duration }),
+  noteOff: () => {},                  // duration already handles release
+  allNotesOff: () => piano.stop(),
+  audition: e => piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), duration: 0.4 }),
+};
+```
+
+`smplr` is a playground `devDependency` only. The library never imports it.
+
+### 6.4 External clock (consumer owns time)
 
 For apps that already have a transport (a DAW, Tone.js):
 
@@ -464,8 +526,8 @@ editor.transport = externalTransport({
 
 The editor then only **follows**: renders the playhead, never schedules notes.
 
-**Benefits:** zero-config sound for demos; full control for real apps; one timing source.
-**Risks:** AudioContext autoplay policy. Mitigation: resume on first user gesture inside the editor, expose `editor.transport.ready()`.
+**Benefits:** library has zero audio deps; consumers use any instrument; one timing source.
+**Risks:** a bare `<maddie-editor>` is silent. Mitigation: docs lead with the 8-line smplr recipe; dev-mode logs a one-time hint on first play with no output.
 
 ---
 
@@ -513,7 +575,7 @@ The preset re-exports all child parts (`exportparts`) so deep pieces are styleab
 - **`unstyled` attribute:** drops all visual CSS, keeps layout + behavior.
 - **Global style injection:** `maddie.adoptStyles(cssSheet)` adds a stylesheet to every Maddie shadow root.
 - **Canvas hooks:** `noteStyle`, `renderNote` (see §4.2).
-- **Headless:** skip elements entirely, use `maddie/core`.
+- **Headless:** skip elements entirely, use `@tasteee/maddie/core`.
 
 All built-in CSS lives in `@layer maddie` so any consumer CSS wins without `!important`.
 
@@ -542,7 +604,7 @@ All built-in CSS lives in `@layer maddie` so any consumer CSS wins without `!imp
 | Quantize / transpose / paste | Notes tween to new positions, slight stagger by time | 180ms + ≤60ms stagger |
 | Grid / zoom changes subdivision | Lines crossfade, never pop | 150ms |
 | Keyboard zoom (`+`/`-`) | Smooth viewport tween, anchored | 180ms, ease-out |
-| Pinch / ctrl-wheel zoom | Direct, 1:1 (rule 1) | — |
+| Trackpad pinch / ctrl-wheel zoom | Direct, 1:1 (rule 1) | — |
 | Fold toggle | Rows collapse/expand; notes and keys travel with their rows | 220ms, ease-in-out |
 | Scale highlight on | Out-of-scale rows dim | 150ms |
 | Selection | Outline fades in | 80ms |
@@ -567,7 +629,6 @@ All built-in CSS lives in `@layer maddie` so any consumer CSS wins without `!imp
 | Idle CPU | 0 (no rAF when idle) |
 | Core bundle | < 15kb gz |
 | Elements + engine | < 35kb gz |
-| Synth output | < 4kb gz, separate entry |
 
 Techniques: spatial index, visible-range culling, layered canvases, dirty flags, structural sharing, batched commits, no layout reads during frames.
 
@@ -588,15 +649,16 @@ Techniques: spatial index, visible-range culling, layered canvases, dirty flags,
 **One package, subpath exports.** Framework wrappers as separate tiny packages.
 
 ```
-maddie
-├─ maddie/core          store, model, commands, snap, scale, transport (no DOM)
-├─ maddie/elements      all custom elements (+ per-element subpaths)
-├─ maddie/audio         SynthOutput, WebMidiOutput
-├─ maddie/midi          .mid import/export (SMF 0/1)
-├─ maddie/themes/*.css  optional extra themes
-└─ custom-elements.json manifest for IDEs, docs, wrapper generation
+@tasteee/maddie
+├─ @tasteee/maddie/core          store, model, commands, snap, scale, transport (no DOM)
+├─ @tasteee/maddie/elements      all custom elements (+ per-element subpaths)
+├─ @tasteee/maddie/midi          .mid import/export (SMF 0/1)
+├─ @tasteee/maddie/themes/*.css  optional extra themes
+└─ custom-elements.json          manifest for IDEs, docs, wrapper generation
 
-@maddie/react   @maddie/vue   @maddie/svelte   (generated from the manifest)
+@tasteee/maddie-react   @tasteee/maddie-vue   @tasteee/maddie-svelte   (generated from the manifest)
+
+Dependencies: lit. That's it. No audio deps.
 ```
 
 - ESM only, TypeScript source, `sideEffects` set so unused elements tree-shake.
@@ -612,7 +674,7 @@ maddie
 - Playground + docs site with live, editable examples for each piece.
 
 ```html
-<script type="module" src="https://cdn.jsdelivr.net/npm/maddie/elements"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@tasteee/maddie/elements"></script>
 <maddie-editor grid="1/16" scale="C minor" tempo="120"></maddie-editor>
 ```
 
@@ -628,9 +690,9 @@ maddie
 | Rendering | Maddie | tokens, parts, hooks, or headless |
 | Layout | Preset: Maddie. Pieces: consumer | yes |
 | Clock / transport | Maddie | yes, external transport |
-| Sound | Consumer, with built-in defaults | yes, `Output` |
+| Sound | Consumer (we dispatch note events) | — |
 | Persistence | Consumer (via `maddie-change`) | — |
-| MIDI file I/O | Maddie (`maddie/midi`) | optional |
+| MIDI file I/O | Maddie (`@tasteee/maddie/midi`) | optional |
 | Collaboration | Consumer, via patches | — |
 
 ---
@@ -653,17 +715,16 @@ src/
     animation/
     keymap/
   elements/       one folder per element
-  audio/          synth, webmidi
   midi/           smf parse/write
   themes/
 test/
   core/           vitest, pure
   e2e/            playwright: gestures, a11y, visual regression
   perf/           benchmarks with 20k/50k notes
-playground/
+playground/       demo app, smplr Splendid Grand Piano as the output
 ```
 
-Tooling: TypeScript strict, Vite (lib mode + playground), Vitest, Playwright, Changesets, CEM analyzer.
+Tooling: pnpm, TypeScript strict, Vite (lib mode + playground), Vitest, Playwright, Changesets, CEM analyzer.
 
 ---
 
@@ -672,18 +733,20 @@ Tooling: TypeScript strict, Vite (lib mode + playground), Vitest, Playwright, Ch
 1. **Core:** doc model, commands, history, snap, scale/RowMap, viewport. 100% unit tested.
 2. **Roll MVP:** `<maddie-root>` + `<maddie-piano-roll>` + `<maddie-keyboard>`. Place, select, move, resize, delete, marquee, zoom, scroll.
 3. **Feel pass:** motion system, theme bridge, light/dark, hit zones, auto-scroll, keymap.
-4. **Playback:** transport, scheduler, `SynthOutput`, ruler with seek + loop, playhead.
+4. **Playback:** transport, scheduler, `Output` + note events, ruler with seek + loop, playhead. Playground plays through smplr.
 5. **Lanes + controls:** velocity lane, toolbar controls, inspector, `<maddie-editor>` preset.
 6. **Music tools:** quantize, transpose, scale lock, fold modes, clipboard, humanize.
-7. **Ecosystem:** MIDI file I/O, Web MIDI out, framework wrappers, docs site.
-8. **Later:** CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas worker, collab adapter.
+7. **Ecosystem:** MIDI file I/O, `webMidiOutput()` helper, framework wrappers, docs site.
+8. **Later:** touch/tablet editing, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas worker, collab adapter.
 
 ---
 
-## 15. Open questions
+## 15. Decisions log
 
-1. **Velocity range:** 0–127 integers (MIDI 1, familiar) or 0–1 floats (MIDI 2 / high-res ready)? Recommendation: 0–127 in the public API, store as float internally later if needed.
-2. **Lit or in-house base class?** Recommendation: Lit.
-3. **Package name / tag prefix:** `maddie` / `maddie-*`?
-4. **Default sound:** ship `SynthOutput` on by default in `<maddie-editor>`, or silent until an output is set? Recommendation: on, with a `muted` attribute.
-5. **Touch priority:** full tablet editing in v1, or desktop-first with touch in v1.x?
+| Question | Decision |
+| --- | --- |
+| Velocity range | **0–1 float.** Helpers convert to/from 0–127 at the edges. |
+| Base class | **Lit.** |
+| Built-in sound | **None.** We dispatch note events via `Output`. Demo uses smplr Splendid Grand Piano. |
+| Platform priority | **Desktop first.** Touch later. |
+| Package / tags | **`@tasteee/maddie`**, tags `maddie-*` (prefix configurable). |
