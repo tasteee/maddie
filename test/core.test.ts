@@ -159,6 +159,17 @@ describe('editor', () => {
     expect(ed.getNote(a.id)!.pitch).toBe(64);
   });
 
+  it('stretches the selection as one block', () => {
+    const ed = createEditor();
+    const notes = ed.commands.add([0, 1, 2, 3].map((i) => note(60, 960 + i * 240)));
+    ed.commands.stretch(undefined, 2);
+    expect(notes.map((n) => ed.getNote(n.id)!.start)).toEqual([960, 1440, 1920, 2400]);
+    expect(notes.map((n) => ed.getNote(n.id)!.duration)).toEqual([480, 480, 480, 480]);
+    ed.commands.stretch(undefined, 0.5);
+    expect(notes.map((n) => ed.getNote(n.id)!.start)).toEqual([960, 1200, 1440, 1680]);
+    expect(notes.map((n) => ed.getNote(n.id)!.duration)).toEqual([240, 240, 240, 240]);
+  });
+
   it('humanizes within bounds', () => {
     const ed = createEditor();
     const notes = ed.commands.add(Array.from({ length: 20 }, (_, i) => note(60, 960 + i * 240)));
@@ -344,6 +355,25 @@ describe('transport', () => {
         expect(played[0], `${bpm} bpm, marker at ${start}`).toBe(start);
       }
     }
+    vi.useRealTimers();
+  });
+
+  it('jumps while playing, keeping the marker when asked', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    const ed = createEditor({ audioContext });
+    ed.transport.seek(PPQ);
+    await ed.transport.play();
+    ed.transport.seek(PPQ * 8, { marker: false });
+    expect(ed.transport.playing).toBe(true);
+    expect(ed.transport.marker).toBe(PPQ);
+    (audioContext as { currentTime: number }).currentTime = 2;
+    expect(ed.transport.position).toBeGreaterThan(PPQ * 8);
+    ed.transport.seek(ed.transport.marker); // back to where play started
+    expect(ed.transport.playing).toBe(true);
+    ed.transport.stop();
+    expect(ed.transport.position).toBe(PPQ);
     vi.useRealTimers();
   });
 });

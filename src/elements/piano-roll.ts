@@ -388,23 +388,24 @@ export class MaddiePianoRoll extends CanvasElement {
     return this.begin(e, this.marqueeGesture(e));
   };
 
-  /** Marker before the last click-seek, so a double-click can put it back. */
+  /** Marker (or play position) before the last click-seek, so a double-click can put it back. */
   private seekUndo: { tick: number; at: number } | null = null;
 
+  /** Stopped: move the marker. Playing: jump playback there and keep going; the marker stays where play started. */
   private clickSeek(tick: number) {
-    const ed = this.ed!;
+    const t = this.ed!.transport;
     const now = performance.now();
     // The second click of a double-click keeps the first one's "before".
-    if (!this.seekUndo || now - this.seekUndo.at > 500) this.seekUndo = { tick: ed.transport.marker, at: now };
+    if (!this.seekUndo || now - this.seekUndo.at > 500) this.seekUndo = { tick: t.playing ? t.position : t.marker, at: now };
     else this.seekUndo.at = now;
-    ed.transport.seek(tick);
+    t.seek(tick, { marker: !t.playing });
   }
 
   private onDoubleClick = (e: MouseEvent) => {
     const ed = this.ed;
     if (!ed || ed.view.tool !== 'select') return;
     // Double-click isn't a marker click: undo the seek its first click made.
-    if (this.seekUndo && performance.now() - this.seekUndo.at < 500 && !ed.transport.playing) ed.transport.seek(this.seekUndo.tick);
+    if (this.seekUndo && performance.now() - this.seekUndo.at < 500) ed.transport.seek(this.seekUndo.tick, { marker: !ed.transport.playing });
     this.seekUndo = null;
     const { x, y } = this.local(e);
     const hit = this.hitTest(x, y);
@@ -683,8 +684,8 @@ export class MaddiePianoRoll extends CanvasElement {
       up: () => {
         if (dragging) return;
         if (!initial.length) ed.clearSelection();
-        // A plain click on empty grid moves the play marker (when stopped), like a DAW timeline.
-        if (!ed.transport.playing) this.clickSeek(this.snap(this.tickAt(origin.x), down, 'floor'));
+        // A plain click on empty grid moves the play marker, or jumps playback there while playing.
+        this.clickSeek(this.snap(this.tickAt(origin.x), down, 'floor'));
       },
       cancel: () => ed.select(initial),
     };

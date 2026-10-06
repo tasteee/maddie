@@ -92,6 +92,22 @@ export class Commands {
     );
   }
 
+  /**
+   * Scale the selection in time, like resizing it as one block.
+   * Starts spread out from the first note and durations scale by the same `factor`,
+   * so gaps and overlaps keep their shape. 2 = double, 0.5 = half.
+   */
+  stretch(ids: Ids, factor: number, opts?: TransactOptions) {
+    const notes = this.notesOf(ids);
+    if (!notes.length || !(factor > 0) || factor === 1) return;
+    const anchor = Math.min(...notes.map((n) => n.start));
+    this.update(
+      notes.map((n) => ({ id: n.id, start: anchor + (n.start - anchor) * factor, duration: n.duration * factor })),
+      factor > 1 ? 'Stretch notes' : 'Squash notes',
+      opts,
+    );
+  }
+
   /** `absolute`: set to value. `relative`: add value. `scale`: multiply by value. */
   setVelocity(ids: Ids, { mode = 'absolute', value }: { mode?: 'absolute' | 'relative' | 'scale'; value: number }, opts?: TransactOptions) {
     this.update(

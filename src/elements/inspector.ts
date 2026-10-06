@@ -619,6 +619,12 @@ export class MaddieInspector extends MaddieElement {
         <button class="num" aria-label="Octave up" data-tip="Octave up   ⇧ ↑" @click=${() => this.transpose(12)}>+12</button>
       </div>
 
+      <div class="group" part="group length">
+        <span class="title">Length</span>
+        <button class="num" aria-label="Half length" data-tip="Half length · keeps spacing   ⌥ ⇧ ←" @click=${() => ed.commands.stretch(undefined, 0.5)}>×½</button>
+        <button class="num" aria-label="Double length" data-tip="Double length · keeps spacing   ⌥ ⇧ →" @click=${() => ed.commands.stretch(undefined, 2)}>×2</button>
+      </div>
+
       <div class="group" part="group actions">
         <button aria-label="Legato" data-tip="Legato · extend to next note   L" @click=${() => ed.commands.legato()}>${icons.legato}</button>
         <button aria-label="Mute" data-tip="Mute   M" @click=${() => ed.commands.toggleMute()}>${icons.mute}</button>
