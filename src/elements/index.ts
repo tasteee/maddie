@@ -27,11 +27,13 @@ export {
   MaddieLoopToggle,
   MaddieFollowToggle,
   MaddieKeysToggle,
+  MaddieMidiToggle,
   MaddieChordsToggle,
   MaddieTopbar,
   MaddieEditbar,
 } from './controls';
 export { importMidiFile, pickMidiFile } from './midi-io';
+export { MidiInput, setMidiInput, setMidiDevice, type MidiDevice } from '../engine/midi-input';
 export { MaddieElement } from './base';
 export { tokens } from './tokens';
 export { actions, defaultKeymap, type Keymap, type Action } from '../engine/keymap';

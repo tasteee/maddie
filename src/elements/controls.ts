@@ -20,6 +20,7 @@ import {
 import type { Engine } from '../engine/engine';
 import { pitchForOffset, scaleMapped, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
 import { modKeyLabel, rowZoomBy } from '../engine/keymap';
+import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
 import { MaddieElement } from './base';
 import { icons } from './icons';
 import { pickMidiFile } from './midi-io';
@@ -530,6 +531,29 @@ export class MaddieTransport extends ControlElement {
       .dot {
         color: var(--_text-faint);
       }
+      .record {
+        color: var(--_record);
+      }
+      .record:hover {
+        color: var(--_record);
+      }
+      .record[aria-pressed='true'] {
+        color: var(--_record);
+        background: color-mix(in oklab, var(--_record) 16%, transparent);
+      }
+      .record[aria-pressed='true'] .icon {
+        animation: pulse 1s var(--_ease) infinite alternate;
+      }
+      @keyframes pulse {
+        to {
+          opacity: 0.35;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .record[aria-pressed='true'] .icon {
+          animation: none;
+        }
+      }
     `,
   ];
 
@@ -557,10 +581,26 @@ export class MaddieTransport extends ControlElement {
     const ed = this.ed;
     if (!ed) return nothing;
     const t = ed.transport;
+    const rec = ed.recorder;
     const [bar, beat, six] = this.position.split('.');
+    const record = () => {
+      if (!rec.recording && !ed.view.computerKeyboard && !ed.view.midiInput) {
+        this.engine?.toast('Turn on keyboard or MIDI input to play while recording');
+      }
+      rec.toggle();
+    };
     return html`
       <button class="play" aria-pressed=${t.playing} aria-label=${t.playing ? 'Stop' : 'Play'} data-tip=${tip(t.playing ? 'Stop · back to marker' : 'Play from marker', 'Space')} @click=${() => t.toggle()}>
         ${t.playing ? icons.stop : icons.play}
+      </button>
+      <button
+        class="record"
+        aria-pressed=${rec.recording}
+        aria-label=${rec.recording ? 'Stop recording' : 'Record'}
+        data-tip=${tip(rec.recording ? 'Stop recording' : 'Record from marker', 'R')}
+        @click=${record}
+      >
+        ${icons.record}
       </button>
       <button aria-label="Back to start" data-tip=${tip('Back to start', '↵')} @click=${() => {
         t.stop();
@@ -778,6 +818,81 @@ export class MaddieKeysToggle extends ControlElement {
         </div>
         <span class="hint">${mapped ? 'Each key steps up the scale · Z = tonic' : 'Each key steps up a semitone'}</span>
         <span class="hint"><kbd>+</kbd> <kbd>−</kbd> change octave</span>
+      </div>
+    </div>`;
+  }
+}
+
+/**
+ * Play notes from a MIDI controller. Hover to pick the device.
+ * Turning it on asks the browser for MIDI access and turns the computer keyboard off.
+ */
+@customElement('maddie-midi-toggle')
+export class MaddieMidiToggle extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    css`
+      .pop.midi {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        min-width: 230px;
+      }
+      .hint {
+        color: var(--_text-faint);
+        font-size: 11.5px;
+        font-weight: 500;
+        white-space: normal;
+      }
+      .select.device {
+        justify-content: space-between;
+        background: var(--_surface-2);
+      }
+      .device .value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 180px;
+      }
+    `,
+  ];
+
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    this.track(MidiInput.for(editor).onChange(() => this.requestUpdate()));
+  }
+
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const midi = MidiInput.for(ed);
+    const on = ed.view.midiInput;
+    const devices = midi.devices;
+    const current = devices.find((d) => d.id === ed.view.midiDevice);
+    const hint =
+      midi.status === 'unsupported'
+        ? "This browser can't read MIDI devices"
+        : midi.status === 'denied'
+          ? 'MIDI access was blocked'
+          : midi.status !== 'ready'
+            ? 'Click the button to connect'
+            : devices.length
+              ? 'Notes play and record like keys'
+              : 'No devices found · plug one in';
+    return html`<div class="pop-wrap">
+      <button aria-pressed=${on} aria-label="MIDI input" @click=${() => setMidiInput(ed, !on)}>${icons.midi}</button>
+      <div class="pop midi" role="group" aria-label="MIDI input options">
+        <span class="pop-title">MIDI input</span>
+        ${midi.status === 'ready' && devices.length
+          ? html`<label class="select device">
+              <span class="value">${current?.name ?? 'All devices'}</span><span class="chev">${icons.chevron}</span>
+              <select aria-label="MIDI device" @change=${(e: Event) => setMidiDevice(ed, (e.target as HTMLSelectElement).value || null)}>
+                <option value="" ?selected=${!current}>All devices</option>
+                ${devices.map((d) => html`<option value=${d.id} ?selected=${d.id === current?.id}>${d.name}</option>`)}
+              </select>
+            </label>`
+          : nothing}
+        <span class="hint">${hint}</span>
       </div>
     </div>`;
   }
@@ -1088,6 +1203,7 @@ export class MaddieTopbar extends MaddieElement {
         <maddie-loop-toggle></maddie-loop-toggle>
         <maddie-follow-toggle></maddie-follow-toggle>
         <maddie-keys-toggle></maddie-keys-toggle>
+        <maddie-midi-toggle></maddie-midi-toggle>
       </div>
       <div class="spacer"></div>
       <div class="group" part="group file">
@@ -1200,6 +1316,7 @@ declare global {
     'maddie-loop-toggle': MaddieLoopToggle;
     'maddie-follow-toggle': MaddieFollowToggle;
     'maddie-keys-toggle': MaddieKeysToggle;
+    'maddie-midi-toggle': MaddieMidiToggle;
     'maddie-chords-toggle': MaddieChordsToggle;
     'maddie-tempo': MaddieTempo;
     'maddie-history': MaddieHistory;

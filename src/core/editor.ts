@@ -5,6 +5,7 @@ import { buildRowMap, type RowMap } from './music/rowmap';
 import { NoteIndex } from './notes';
 import type { Output } from './output';
 import { invertPatches, type MetaKey, type MetaValues, type Patch } from './patches';
+import { Recorder } from './recorder';
 import { Transport } from './transport';
 import type { MaddieDoc, Note, NoteId, Tick, Track } from './types';
 import { DEFAULT_VIEW, ZOOM_LIMITS, type ViewState } from './view';
@@ -87,6 +88,8 @@ interface Tx {
 export class Editor extends Emitter<EditorEvents> {
   readonly history: History;
   readonly transport: Transport;
+  /** Records live notes while the transport plays. */
+  readonly recorder: Recorder;
   readonly commands: Commands;
   output: Output | null;
   audioContext: AudioContext | null;
@@ -117,6 +120,7 @@ export class Editor extends Emitter<EditorEvents> {
     this._view = { ...DEFAULT_VIEW, ...options.view };
     this.history = new History(options.historyLimit);
     this.transport = new Transport(this);
+    this.recorder = new Recorder(this);
     this.commands = new Commands(this);
     this.output = options.output ?? null;
     this.audioContext = options.audioContext ?? null;
@@ -333,11 +337,12 @@ export class Editor extends Emitter<EditorEvents> {
     return this.output?.setVolume ? v : v * this.volume.level;
   }
 
-  /** Start a held note (computer keyboard, on-screen keys). */
+  /** Start a held note (computer keyboard, MIDI input). Recorded while `recorder.recording`. */
   liveNoteOn(pitch: number, velocity = this._view.noteVelocity) {
     this.liveNoteOff(pitch);
     const note: Note = { id: `live-${pitch}`, pitch, start: 0, duration: 0, velocity };
     this.live.set(pitch, note);
+    this.recorder.noteOn(pitch, velocity);
     if (!this.output || this.volume.muted) return;
     this.output.noteOn({ note, pitch, velocity: this.outVelocity(velocity), time: 0 });
   }
@@ -346,6 +351,7 @@ export class Editor extends Emitter<EditorEvents> {
     const note = this.live.get(pitch);
     if (!note) return;
     this.live.delete(pitch);
+    this.recorder.noteOff(pitch);
     this.output?.noteOff({ note, pitch, velocity: 0, time: 0 });
   }
 
