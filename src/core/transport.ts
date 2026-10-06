@@ -123,14 +123,18 @@ export class Transport {
     this.emit();
   }
 
-  seek(tick: Tick) {
+  /**
+   * Jump to `tick`. While playing, playback carries on from there.
+   * `marker: false` (playing only) leaves the marker where play started, so stop still returns to it.
+   */
+  seek(tick: Tick, { marker = true }: { marker?: boolean } = {}) {
     tick = Math.max(0, tick);
     if (this.state === 'playing') {
       this.editor.output?.allNotesOff();
       const time = this.audioContext.currentTime + 0.02;
       this.anchors = [{ time, tick }];
       this.scheduledUntil = time;
-      this.returnTo = tick;
+      if (marker) this.returnTo = tick;
     } else {
       this.stoppedAt = tick;
       this.returnTo = tick;

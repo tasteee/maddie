@@ -357,6 +357,25 @@ describe('transport', () => {
     }
     vi.useRealTimers();
   });
+
+  it('jumps while playing, keeping the marker when asked', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    const ed = createEditor({ audioContext });
+    ed.transport.seek(PPQ);
+    await ed.transport.play();
+    ed.transport.seek(PPQ * 8, { marker: false });
+    expect(ed.transport.playing).toBe(true);
+    expect(ed.transport.marker).toBe(PPQ);
+    (audioContext as { currentTime: number }).currentTime = 2;
+    expect(ed.transport.position).toBeGreaterThan(PPQ * 8);
+    ed.transport.seek(ed.transport.marker); // back to where play started
+    expect(ed.transport.playing).toBe(true);
+    ed.transport.stop();
+    expect(ed.transport.position).toBe(PPQ);
+    vi.useRealTimers();
+  });
 });
 
 describe('arrow keys without a selection', () => {

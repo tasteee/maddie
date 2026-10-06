@@ -602,10 +602,17 @@ export class MaddieTransport extends ControlElement {
       >
         ${icons.record}
       </button>
-      <button aria-label="Back to start" data-tip=${tip('Back to start', '↵')} @click=${() => {
-        t.stop();
-        if (t.position !== 0) t.stop();
-      }}>${icons.rewind}</button>
+      <button
+        aria-label=${t.playing ? 'Back to marker' : 'Back to start'}
+        data-tip=${t.playing ? 'Back to marker · double-click: to start' : tip('Back to start', '↵')}
+        @click=${() => {
+          // Playing: jump back to where play started and keep going.
+          if (t.playing) return t.seek(t.marker);
+          t.stop();
+          if (t.position !== 0) t.stop();
+        }}
+        @dblclick=${() => t.playing && t.seek(0)}
+      >${icons.rewind}</button>
       <span class="position" aria-label="Position" role="timer">
         ${bar}<span class="dot">.</span>${beat}<span class="dot">.</span>${six}
       </span>
