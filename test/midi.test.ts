@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEditor, fromMidiFile, parseKey, toMidiFile } from '../src/core';
+import { createEditor, exportFilename, fromMidiFile, parseKey, toMidiFile } from '../src/core';
 
 /** Minimal SMF reader, just enough to check what we wrote. */
 function readMidi(bytes: Uint8Array) {
@@ -144,5 +144,13 @@ describe('midi import', () => {
 
   it('rejects non-MIDI input', () => {
     expect(() => fromMidiFile(new Uint8Array([1, 2, 3]))).toThrow('Not a MIDI file');
+  });
+});
+
+describe('export filename', () => {
+  it('is [key]-[scale]-[bpm]-DDMMYYYY-HHMM', () => {
+    const date = new Date(2026, 9, 6, 9, 5);
+    expect(exportFilename({ key: parseKey('C# harmonic minor'), tempo: [{ tick: 0, bpm: 124 }] }, date)).toBe('C#-HarmonicMinor-124-06102026-0905.mid');
+    expect(exportFilename({ key: null, tempo: [{ tick: 0, bpm: 90.5 }] }, date)).toBe('90.5-06102026-0905.mid');
   });
 });

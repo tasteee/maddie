@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   detectKey,
   downloadMidi,
+  exportFilename,
   formatBBT,
   formatKey,
   pitchName,
@@ -1110,17 +1111,18 @@ export class MaddieZoom extends ControlElement {
  */
 @customElement('maddie-export')
 export class MaddieExport extends ControlElement {
-  /** Download name. `.mid` is added if missing. */
-  @property() filename = 'maddie.mid';
+  /** Download name. `.mid` is added if missing. Default: `[key]-[scale]-[bpm]-DDMMYYYY-HHMM.mid`. */
+  @property() filename = '';
 
   private export() {
     const ed = this.ed;
     if (!ed) return;
     const bytes = toMidiFile(ed.doc);
+    const filename = this.filename || exportFilename(ed.doc);
     const go = this.dispatchEvent(
-      new CustomEvent('maddie-export', { detail: { bytes, filename: this.filename }, bubbles: true, composed: true, cancelable: true }),
+      new CustomEvent('maddie-export', { detail: { bytes, filename }, bubbles: true, composed: true, cancelable: true }),
     );
-    if (go) downloadMidi(ed.doc, this.filename);
+    if (go) downloadMidi(ed.doc, filename);
   }
 
   render() {

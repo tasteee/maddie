@@ -80,7 +80,7 @@ const parsed = fromMidiFile(bytes); // just parse: { notes, tempo, timeSignature
 downloadMidi(el.doc, 'my-loop.mid'); // browser download
 ```
 
-`<maddie-export>` fires a cancelable `maddie-export` event with `{ bytes, filename }`, so you can upload instead of downloading.
+`<maddie-export>` names files `[key]-[scale]-[bpm]-DDMMYYYY-HHMM.mid` (set `filename` to override). It fires a cancelable `maddie-export` event with `{ bytes, filename }`, so you can upload instead of downloading.
 
 ## Compose your own
 
