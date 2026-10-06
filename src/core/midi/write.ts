@@ -1,3 +1,5 @@
+import { pitchClassName } from '../music/pitch';
+import { SCALES } from '../music/scale';
 import { toMidiVelocity } from '../music/velocity';
 import type { Key, MaddieDoc } from '../types';
 
@@ -86,8 +88,20 @@ export function toMidiFile(doc: MaddieDoc, { skipMuted = true, tracks }: MidiExp
   return new Uint8Array([...header, ...chunks.flat()]);
 }
 
+/**
+ * Default export name: `[key]-[scale]-[bpm]-DDMMYYYY-HHMM.mid`, e.g. `C#-Minor-124-06102026-1305.mid`.
+ * Key and scale are left out when the doc has no key.
+ */
+export function exportFilename(doc: Pick<MaddieDoc, 'key' | 'tempo'>, date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const bpm = Math.round((doc.tempo[0]?.bpm ?? 120) * 100) / 100;
+  const stamp = `${pad(date.getDate())}${pad(date.getMonth() + 1)}${date.getFullYear()}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+  const key = doc.key ? [pitchClassName(doc.key.root).replace('♯', '#'), SCALES[doc.key.scale].name.replace(/\s+/g, '')] : [];
+  return `${[...key, bpm, stamp].join('-')}.mid`;
+}
+
 /** Browser helper: download the doc as a .mid file. */
-export function downloadMidi(doc: MaddieDoc, filename = 'maddie.mid', options?: MidiExportOptions) {
+export function downloadMidi(doc: MaddieDoc, filename = exportFilename(doc), options?: MidiExportOptions) {
   const blob = new Blob([toMidiFile(doc, options) as BlobPart], { type: 'audio/midi' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
