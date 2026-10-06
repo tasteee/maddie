@@ -159,6 +159,17 @@ describe('editor', () => {
     expect(ed.getNote(a.id)!.pitch).toBe(64);
   });
 
+  it('stretches the selection as one block', () => {
+    const ed = createEditor();
+    const notes = ed.commands.add([0, 1, 2, 3].map((i) => note(60, 960 + i * 240)));
+    ed.commands.stretch(undefined, 2);
+    expect(notes.map((n) => ed.getNote(n.id)!.start)).toEqual([960, 1440, 1920, 2400]);
+    expect(notes.map((n) => ed.getNote(n.id)!.duration)).toEqual([480, 480, 480, 480]);
+    ed.commands.stretch(undefined, 0.5);
+    expect(notes.map((n) => ed.getNote(n.id)!.start)).toEqual([960, 1200, 1440, 1680]);
+    expect(notes.map((n) => ed.getNote(n.id)!.duration)).toEqual([240, 240, 240, 240]);
+  });
+
   it('humanizes within bounds', () => {
     const ed = createEditor();
     const notes = ed.commands.add(Array.from({ length: 20 }, (_, i) => note(60, 960 + i * 240)));

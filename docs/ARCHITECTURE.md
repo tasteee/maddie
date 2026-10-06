@@ -169,7 +169,7 @@ editor.commands.setTempo({ tick: 0, bpm: 128 });
 
 Built-in command set (v1):
 
-- **Notes:** add, delete, move, resize (start/end), split, glue, duplicate, mute, set velocity, legato, transpose, quantize, humanize
+- **Notes:** add, delete, move, resize (start/end), stretch (×2 / ×½ as a block), split, glue, duplicate, mute, set velocity, legato, transpose, quantize, humanize
 - **Clipboard:** copy, cut, paste (at cursor / playhead), duplicate-after
 - **Doc:** set tempo, set time signature, set key/scale
 - **Custom:** `editor.registerCommand(name, fn)` — consumers add their own, get undo for free
@@ -327,7 +327,7 @@ editor.keymap = {
 };
 ```
 
-Full keyboard editing: arrows move cursor/selection by grid, `shift+arrow` resize, `alt+arrow` velocity, `Enter` insert at cursor, `Delete`, `mod+z/shift+z`, `mod+a`, `mod+c/x/v`, `space` play/stop, `+/-` zoom.
+Full keyboard editing: arrows move cursor/selection by grid, `shift+arrow` resize, `alt+shift+←/→` halve/double length, `alt+arrow` velocity, `Enter` insert at cursor, `Delete`, `mod+z/shift+z`, `mod+a`, `mod+c/x/v`, `space` play/stop, `+/-` zoom.
 
 ---
 
@@ -620,7 +620,7 @@ Batch edits for the selection live in a fixed bar under the velocity lane, never
 
 - Always visible, fixed height: no layout shift, no covering what you're dragging.
 - Empty selection → controls dim in place (muscle memory stays valid).
-- Contents: count + pitch range · velocity scrub (relative, shows ranges like `65–127`) · quantize (grid + strength) · humanize (timing % of grid, velocity %) · transpose (±1 follows scale lock, ±12) · legato / mute / duplicate / delete.
+- Contents: count + pitch range · velocity scrub (relative, shows ranges like `65–127`) · quantize (grid + strength) · humanize (timing % of grid, velocity %) · transpose (±1 follows scale lock, ±12) · length (×½ / ×2, keeps spacing) · legato / mute / duplicate / delete.
 - Values are `<maddie-scrub>` controls: drag, ⇧ for fine, double-click to type, arrows to nudge.
 - Standalone element: put it in a sidebar instead by slotting your own layout.
 
