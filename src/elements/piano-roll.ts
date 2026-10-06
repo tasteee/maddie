@@ -916,6 +916,15 @@ export class MaddiePianoRoll extends CanvasElement {
       drawNote(note, display, { selected: false, hovered: false, playing: 0 });
     }
 
+    // Notes being recorded: grow from their start to the playhead.
+    if (ed.recorder.recording) {
+      for (const r of ed.recorder.held) {
+        const note: Note = { id: `rec-${r.pitch}`, pitch: r.pitch, start: r.start, duration: 0, velocity: r.velocity };
+        const duration = Math.max(1, pos - r.start);
+        drawNote(note, { start: r.start, duration, pitch: r.pitch, velocity: r.velocity, alpha: 1, scale: 1 }, { selected: false, hovered: false, playing: 1 });
+      }
+    }
+
     // Draw-tool ghost.
     const g = this.hover.ghost;
     if (g && !dragging) {

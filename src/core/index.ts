@@ -6,6 +6,7 @@ export * from './history';
 export * from './notes';
 export * from './output';
 export * from './transport';
+export * from './recorder';
 export * from './view';
 export * from './music/pitch';
 export * from './music/scale';

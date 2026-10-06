@@ -48,6 +48,7 @@ export const tokens = css`
 
     --_playhead: var(--maddie-playhead, var(--_text));
     --_loop: var(--maddie-loop, var(--_text-muted));
+    --_record: var(--maddie-record, light-dark(#e5484d, #ff6369));
     --_key-white: var(--maddie-key-white, light-dark(#ffffff, #1b1b21));
     --_key-black: var(--maddie-key-black, light-dark(#2b2b33, #050507));
     --_key-out: var(--maddie-key-out-of-scale, light-dark(#e4e4ea, #101014));
@@ -102,6 +103,7 @@ export const PALETTE_TOKENS = [
   'note-text',
   'playhead',
   'loop',
+  'record',
   'key-white',
   'key-black',
   'key-out',

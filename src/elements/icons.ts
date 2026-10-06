@@ -33,6 +33,8 @@ export const icons = {
   metronome: icon(svg`<path d="M5.4 13.5h5.2L9 2.75H7L5.4 13.5Z"/><path d="M8 10.5 12 4.5"/><path d="M5.9 10.5h4.2" opacity=".6"/>`),
   volume: icon(svg`<path d="M2.75 6.25v3.5h2.5L8.5 12.5v-9L5.25 6.25h-2.5Z"/><path d="M10.75 6a2.75 2.75 0 0 1 0 4M12.5 4.25a5.25 5.25 0 0 1 0 7.5"/>`),
   keyboard: icon(svg`<rect x="1.75" y="4" width="12.5" height="8" rx="1.75"/><path d="M4.25 6.75h.01M6.75 6.75h.01M9.25 6.75h.01M11.75 6.75h.01M5.25 9.5h5.5"/>`),
+  record: icon(svg`<circle cx="8" cy="8" r="4.25" fill="currentColor" stroke="none"/>`),
+  midi: icon(svg`<circle cx="8" cy="8" r="5.75"/><path d="M8 4.6h.01M5 6.3h.01M11 6.3h.01M5.6 9.6h.01M10.4 9.6h.01" stroke-width="1.9"/><path d="M7 13.5v-1.5h2v1.5"/>`),
   chevron: icon(svg`<path d="m4.75 6.25 3.25 3.25 3.25-3.25"/>`),
   chords: icon(svg`<rect x="3" y="2.5" width="10" height="2.75" rx=".9"/><rect x="3" y="6.63" width="10" height="2.75" rx=".9"/><rect x="3" y="10.75" width="10" height="2.75" rx=".9"/>`),
   wand: icon(svg`<path d="M2.75 13.25 10 6"/><path d="M11.5 1.75v2M11.5 6.25v2M8.25 5h2M12.75 5h2M9.5 3l.6.6M12.9 6.4l.6.6M13.5 3l-.6.6"/>`),

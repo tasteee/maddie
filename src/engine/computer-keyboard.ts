@@ -111,9 +111,10 @@ export function releaseAll(editor: Editor) {
   engine.invalidate();
 }
 
+/** Turn computer-keyboard input on or off. On turns MIDI input off (one input mode at a time). */
 export function setComputerKeyboard(editor: Editor, on: boolean) {
   if (!on) releaseAll(editor);
-  editor.setView({ computerKeyboard: on });
+  editor.setView(on ? { computerKeyboard: true, midiInput: false } : { computerKeyboard: false });
 }
 
 export function setKeyboardScale(editor: Editor, on: boolean) {

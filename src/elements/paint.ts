@@ -149,7 +149,8 @@ export function drawPlayhead(ctx: CanvasRenderingContext2D, editor: Editor, v: D
   const pos = editor.transport.position;
   if (!editor.transport.playing && pos <= 0) return;
   const x = (pos - v.scrollTick) * v.pxPerTick;
-  ctx.fillStyle = editor.transport.playing ? p.playhead : withAlpha(p.playhead, 0.55);
+  const color = editor.recorder.recording ? p.record : p.playhead;
+  ctx.fillStyle = editor.transport.playing ? color : withAlpha(color, 0.55);
   ctx.fillRect(Math.round(x) - 0.75, 0, 1.5, height);
 }
 

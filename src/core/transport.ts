@@ -155,6 +155,7 @@ export class Transport {
   }
 
   private halt(state: TransportState) {
+    this.editor.recorder.finish(this.position);
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.anchors = [];

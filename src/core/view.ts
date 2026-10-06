@@ -39,6 +39,10 @@ export interface ViewState {
   keyboardBase: number;
   /** Computer keys play only the key's scale notes (Z = tonic) instead of every semitone. */
   keyboardScale: boolean;
+  /** Play notes from a MIDI controller. Off when `computerKeyboard` is on, and the other way round. */
+  midiInput: boolean;
+  /** MIDI input device id to listen to. `null` = every device. */
+  midiDevice: string | null;
   /** Show the chords panel (drag chords that fit the key onto the grid). */
   chordsPanel: boolean;
 }
@@ -62,6 +66,8 @@ export const DEFAULT_VIEW: ViewState = {
   computerKeyboard: false,
   keyboardBase: 36,
   keyboardScale: false,
+  midiInput: false,
+  midiDevice: null,
   chordsPanel: false,
 };
 
