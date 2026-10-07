@@ -2,6 +2,7 @@ import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type Tool, type FoldMode, type NoteColorMode } from '../core';
 import { Engine } from '../engine/engine';
+import { OutputRouter, type SoundChoice } from '../engine/output-router';
 import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
 import { computerKeyDown, computerKeyUp, releaseAll } from '../engine/computer-keyboard';
@@ -128,6 +129,17 @@ export class MaddieRoot extends LitElement {
   set output(out: Output | null) {
     this.editor.output = out;
     this.editor.setVolume({});
+  }
+
+  /**
+   * Sounds the output dropdown can pick (a sampler, a synth). A MIDI output choice is added for you.
+   * Setting this makes Maddie choose `output`, so leave `output` alone when you use it.
+   */
+  get sounds(): SoundChoice[] {
+    return OutputRouter.for(this.editor).sounds;
+  }
+  set sounds(sounds: SoundChoice[]) {
+    OutputRouter.for(this.editor).setSounds(sounds);
   }
 
   get audioContext(): AudioContext | null {

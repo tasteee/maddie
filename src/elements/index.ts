@@ -26,13 +26,14 @@ export {
   MaddieVolume,
   MaddieLoopToggle,
   MaddieFollowToggle,
-  MaddieKeysToggle,
-  MaddieMidiToggle,
+  MaddieInput,
+  MaddieOutput,
   MaddieChordsToggle,
   MaddieTopbar,
   MaddieEditbar,
 } from './controls';
 export { importMidiFile, pickMidiFile } from './midi-io';
+export { OutputRouter, createMidiOutput, MIDI_SOURCE, type SoundChoice, type MidiPort } from '../engine/output-router';
 export { MidiInput, setMidiInput, setMidiDevice, type MidiDevice } from '../engine/midi-input';
 export { MaddieElement } from './base';
 export { tokens } from './tokens';

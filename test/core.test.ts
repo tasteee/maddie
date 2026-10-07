@@ -435,3 +435,21 @@ describe('arrow keys without a selection', () => {
     expect(first().start + first().duration).toBe(g * 3);
   });
 });
+
+describe('output router', () => {
+  it('picks the host sound and applies it as the editor output', async () => {
+    const { OutputRouter } = await import('../src/engine/output-router');
+    const ed = createEditor();
+    const mk = () => ({ noteOn() {}, noteOff() {}, allNotesOff() {} });
+    const a = mk();
+    const b = mk();
+    const router = OutputRouter.for(ed);
+    router.setSounds([
+      { id: 'a', label: 'A', output: a },
+      { id: 'b', label: 'B', output: b },
+    ]);
+    expect(ed.output).toBe(a);
+    router.selectSound('b');
+    expect(ed.output).toBe(b);
+  });
+});

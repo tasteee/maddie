@@ -53,29 +53,3 @@ maddie-editor::part(frame) {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
 }
-
-.output {
-  max-width: 160px;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-overflow: ellipsis;
-}
-.output:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.output:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 1px;
-}
-.output option {
-  background: var(--page);
-  color: var(--ink);
-}

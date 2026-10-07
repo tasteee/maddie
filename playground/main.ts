@@ -2,7 +2,6 @@ import { SplendidGrandPiano } from 'smplr';
 import { toMidiVelocity, type Output } from '../src/core';
 import '../src/elements';
 import { DEMO_TEMPO, demoSong } from './demo-song';
-import { createMidiOutput, midiPorts, requestMidi } from './midi-output';
 
 const editorEl = document.querySelector('maddie-editor')!;
 const editor = editorEl.editor;
@@ -35,41 +34,7 @@ const pianoOutput: Output = {
     piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), duration: e.duration });
   },
 };
-editorEl.output = pianoOutput;
-
-// ── Output picker: built-in piano or a MIDI port ────────────────────
-const outputSelect = document.getElementById('output') as HTMLSelectElement;
-const PIANO = 'piano';
-let midiAccess: MIDIAccess | null = null;
-
-const fillOutputs = () => {
-  const current = outputSelect.value || PIANO;
-  outputSelect.replaceChildren(new Option('Piano (built-in)', PIANO));
-  for (const p of midiAccess ? midiPorts(midiAccess) : []) outputSelect.add(new Option(p.name, p.id));
-  outputSelect.value = [...outputSelect.options].some((o) => o.value === current) ? current : PIANO;
-  applyOutput();
-};
-
-const applyOutput = () => {
-  const port = midiAccess?.outputs.get(outputSelect.value);
-  piano.stop();
-  editorEl.output = port ? createMidiOutput(port, audioContext) : pianoOutput;
-};
-
-outputSelect.addEventListener('change', applyOutput);
-// Device list needs MIDI permission: ask on first interaction with the picker.
-outputSelect.addEventListener(
-  'pointerdown',
-  async () => {
-    midiAccess = await requestMidi();
-    if (!midiAccess) return;
-    midiAccess.onstatechange = fillOutputs;
-    fillOutputs();
-  },
-  { once: true },
-);
-if (!navigator.requestMIDIAccess) outputSelect.hidden = true;
-fillOutputs();
+editorEl.sounds = [{ id: 'piano', label: 'Piano (built-in)', output: pianoOutput }];
 
 // ── Content ─────────────────────────────────────────────────────────
 editorEl.notes = demoSong();

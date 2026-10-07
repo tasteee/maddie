@@ -37,9 +37,9 @@ export interface ViewState {
   computerKeyboard: boolean;
   /** Pitch on the Z key. C0 (12) … C6 (84). */
   keyboardBase: number;
-  /** Computer keys play only the key's scale notes (Z = tonic) instead of every semitone. */
+  /** Play only the key's scale notes. Computer keys step through the scale (Z = tonic); MIDI notes snap to the nearest scale note. */
   keyboardScale: boolean;
-  /** Play notes from a MIDI controller. Off when `computerKeyboard` is on, and the other way round. */
+  /** Play notes from a MIDI controller. Can be on together with `computerKeyboard`. */
   midiInput: boolean;
   /** MIDI input device id to listen to. `null` = every device. */
   midiDevice: string | null;
