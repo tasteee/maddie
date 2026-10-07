@@ -995,7 +995,6 @@ export class MaddieEditbar extends MaddieElement {
       <div class="group" part="group key">
         <maddie-key-select></maddie-key-select>
         <maddie-scale-lock></maddie-scale-lock>
-        <maddie-chords-toggle></maddie-chords-toggle>
       </div>
       <z-separator vertical></z-separator>
       <div class="group" part="group fold"><maddie-fold-select></maddie-fold-select></div>

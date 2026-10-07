@@ -381,8 +381,108 @@ export class MaddieChords extends MaddieElement {
   }
 }
 
+/**
+ * A manila-folder tab on the right edge of the editor. Click it to slide the chords panel out.
+ * Sits inside a positioned parent (the editor grid). It rides the panel's left edge while open.
+ */
+@customElement('maddie-chords-tab')
+export class MaddieChordsTab extends MaddieElement {
+  static styles = [
+    tokens,
+    css`
+      :host {
+        position: absolute;
+        top: 50%;
+        right: 0;
+        z-index: 3;
+        transform: translateY(-50%);
+        transition: right var(--_motion-medium) var(--_ease);
+      }
+      :host([open]) {
+        right: var(--maddie-chords-width, 280px);
+      }
+      button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--space-xs);
+        margin: 0;
+        padding: var(--space-md) var(--space-xs);
+        font: inherit;
+        font-size: var(--font-size-caption);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--_text-muted);
+        background-color: var(--_surface);
+        background-image: var(--material-surface);
+        border: 1px solid var(--_border);
+        border-right: none;
+        border-radius: var(--_radius) 0 0 var(--_radius);
+        box-shadow: -2px 0 6px rgb(0 0 0 / 0.12);
+        cursor: pointer;
+        user-select: none;
+        -webkit-user-select: none;
+        /* Tucked in so only part of the tab peeks over the edge. */
+        translate: 4px 0;
+        transition:
+          translate var(--_motion-fast) var(--_ease),
+          color var(--_motion-fast) var(--_ease);
+      }
+      button:hover,
+      button:focus-visible {
+        translate: 0 0;
+        color: var(--_text);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--_accent);
+        outline-offset: -2px;
+      }
+      :host([open]) button {
+        translate: 1px 0;
+        color: var(--_accent);
+        /* Covers the panel's left border so the tab and panel read as one piece. */
+        border-right: none;
+      }
+      .label {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+      }
+      svg {
+        width: 16px;
+        height: 16px;
+        transform: rotate(90deg);
+      }
+    `,
+  ];
+
+  protected attach(editor: Editor, _engine: Engine) {
+    const update = () => {
+      this.toggleAttribute('open', editor.view.chordsPanel);
+      this.requestUpdate();
+    };
+    update();
+    this.track(editor.on('view', update));
+  }
+
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const open = ed.view.chordsPanel;
+    return html`<button
+      type="button"
+      aria-label="Chords"
+      aria-expanded=${open ? 'true' : 'false'}
+      title="Chords that fit the key   H"
+      @click=${() => ed.setView({ chordsPanel: !open })}
+    >
+      ${icons.chords}<span class="label">Chords</span>
+    </button>`;
+  }
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     'maddie-chords': MaddieChords;
+    'maddie-chords-tab': MaddieChordsTab;
   }
 }
