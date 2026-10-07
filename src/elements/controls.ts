@@ -952,14 +952,14 @@ export class MaddieTopbar extends MaddieElement {
         <maddie-tempo></maddie-tempo>
       </div>
       <z-separator vertical></z-separator>
-      <div class="group" part="group sound">
-        <maddie-input></maddie-input>
-        <maddie-output></maddie-output>
-      </div>
-      <z-separator vertical></z-separator>
       <div class="group" part="group playback">
         <maddie-loop-toggle></maddie-loop-toggle>
         <maddie-follow-toggle></maddie-follow-toggle>
+      </div>
+      <z-separator vertical></z-separator>
+      <div class="group" part="group sound">
+        <maddie-input></maddie-input>
+        <maddie-output></maddie-output>
       </div>
       <div class="spacer"></div>
       <div class="group" part="group file">
@@ -979,7 +979,7 @@ export class MaddieEditbar extends MaddieElement {
     barStyles,
     css`
       :host {
-        height: var(--maddie-editbar-height, 64px);
+        height: var(--maddie-editbar-height, 56px);
         background-color: var(--maddie-editbar-bg, var(--color-neutral-1));
         background-image: none;
       }
