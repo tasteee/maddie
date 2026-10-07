@@ -728,108 +728,6 @@ function popToggle(opts: {
   </div>`;
 }
 
-/** Metronome on/off; hover for volume. The icon pulses on every click. */
-@customElement('maddie-metronome')
-export class MaddieMetronome extends ControlElement {
-  static styles = [
-    tokens,
-    controlStyles,
-    switchStyles,
-    css`
-      /* On is a filled button, off is a struck-through icon: readable at a glance. */
-      button.metro[aria-pressed='true'] {
-        background: var(--_accent);
-        color: var(--_accent-text);
-      }
-      button.metro[aria-pressed='true']:hover {
-        background: color-mix(in oklab, var(--_accent) 85%, var(--_text));
-      }
-      button.metro[aria-pressed='false'] {
-        color: var(--_text-faint);
-      }
-      .pop.metro {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-        min-width: 240px;
-      }
-      .volume {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .volume .slider {
-        flex: 1;
-        width: auto;
-      }
-    `,
-  ];
-
-  private timers = new Set<ReturnType<typeof setTimeout>>();
-
-  protected attach(editor: Editor, engine: Engine) {
-    super.attach(editor, engine);
-    const { transport } = editor;
-    this.track(
-      transport.onClick((e) => {
-        // Clicks are scheduled ahead on the audio clock: pulse when the sound lands.
-        const ctx = editor.audioContext;
-        const delay = ctx ? Math.max(0, (e.time - ctx.currentTime) * 1000) : 0;
-        const timer = setTimeout(() => {
-          this.timers.delete(timer);
-          this.pulse(e.accent);
-        }, delay);
-        this.timers.add(timer);
-      }),
-      () => this.timers.forEach(clearTimeout),
-    );
-  }
-
-  private pulse(accent: boolean) {
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const button = this.renderRoot.querySelector('button');
-    if (!button) return;
-    const color = getComputedStyle(this).getPropertyValue('--_accent') || 'currentColor';
-    button.animate(
-      [
-        { transform: `scale(${accent ? 1.3 : 1.15})`, color, backgroundColor: `color-mix(in oklab, ${color} ${accent ? 28 : 16}%, transparent)` },
-        { transform: 'scale(1)' },
-      ],
-      { duration: 160, easing: 'ease-out' },
-    );
-  }
-
-  render() {
-    const t = this.ed?.transport;
-    if (!t) return nothing;
-    const { enabled, volume } = t.metronome;
-    const toggle = () => t.setMetronome({ enabled: !enabled });
-    return html`<div class="pop-wrap">
-      <button class="metro" aria-pressed=${enabled} aria-label=${enabled ? 'Metronome on' : 'Metronome off'} @click=${toggle}>
-        ${enabled ? icons.metronome : icons.metronomeOff}
-      </button>
-      <div class="pop metro" role="group" aria-label="Metronome options">
-        <span class="pop-title">Metronome<kbd>C</kbd></span>
-        ${switchRow('Click on every beat', enabled ? 'On' : 'Off', enabled, toggle)}
-        <div class="volume">
-          <input
-            class="slider"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            aria-label="Metronome volume"
-            .value=${String(volume)}
-            style=${`--v: ${volume}`}
-            @input=${(e: Event) => t.setMetronome({ volume: Number((e.target as HTMLInputElement).value), enabled: true })}
-          />
-          <span class="pop-value">${Math.round(volume * 100)}%</span>
-        </div>
-      </div>
-    </div>`;
-  }
-}
-
 /** Mute toggle; hover for master volume. */
 @customElement('maddie-volume')
 export class MaddieVolume extends ControlElement {
@@ -975,14 +873,16 @@ export class MaddieInput extends ControlElement {
 }
 
 /**
- * Where notes sound: one of the host's sounds or a MIDI port, with master volume at the bottom.
- * The sound list comes from `<maddie-editor>.sounds`. With none, this is just the volume control.
+ * Where notes sound: one of the host's sounds or a MIDI port, master volume, and the metronome.
+ * The sound list comes from `<maddie-editor>.sounds`. With none, this is just volume and metronome.
+ * The button pulses on every metronome click, so it shows where to go to change it.
  */
 @customElement('maddie-output')
 export class MaddieOutput extends ControlElement {
   static styles = [
     tokens,
     controlStyles,
+    switchStyles,
     css`
       .pop.output {
         flex-direction: column;
@@ -1030,7 +930,54 @@ export class MaddieOutput extends ControlElement {
 
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
-    this.track(OutputRouter.for(editor).onChange(() => this.requestUpdate()));
+    const { transport } = editor;
+    this.track(
+      OutputRouter.for(editor).onChange(() => this.requestUpdate()),
+      transport.onClick((e) => {
+        // Clicks are scheduled ahead on the audio clock: pulse when the sound lands.
+        const ctx = editor.audioContext;
+        const delay = ctx ? Math.max(0, (e.time - ctx.currentTime) * 1000) : 0;
+        const timer = setTimeout(() => {
+          this.timers.delete(timer);
+          this.pulse(e.accent);
+        }, delay);
+        this.timers.add(timer);
+      }),
+      () => this.timers.forEach(clearTimeout),
+    );
+  }
+
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+
+  private pulse(accent: boolean) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const button = this.renderRoot.querySelector('button');
+    if (!button) return;
+    const color = getComputedStyle(this).getPropertyValue('--_accent') || 'currentColor';
+    button.animate(
+      [
+        { transform: `scale(${accent ? 1.3 : 1.15})`, color, backgroundColor: `color-mix(in oklab, ${color} ${accent ? 28 : 16}%, transparent)` },
+        { transform: 'scale(1)' },
+      ],
+      { duration: 160, easing: 'ease-out' },
+    );
+  }
+
+  private slider(label: string, value: number, onInput: (v: number) => void) {
+    return html`<div class="volume">
+      <input
+        class="slider"
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        aria-label=${label}
+        .value=${String(value)}
+        style=${`--v: ${value}`}
+        @input=${(e: Event) => onInput(Number((e.target as HTMLInputElement).value))}
+      />
+      <span class="pop-value">${Math.round(value * 100)}%</span>
+    </div>`;
   }
 
   private select(label: string, value: string, options: Array<{ id: string; name: string }>, onPick: (id: string) => void) {
@@ -1052,6 +999,7 @@ export class MaddieOutput extends ControlElement {
     const router = OutputRouter.for(ed);
     const { level, muted } = ed.volume;
     const value = muted ? 0 : level;
+    const metro = ed.transport.metronome;
     const midiOn = router.source === MIDI_SOURCE;
     const sources = [
       ...router.sounds.map((s) => ({ id: s.id, name: s.label })),
@@ -1073,23 +1021,13 @@ export class MaddieOutput extends ControlElement {
             : html`<span class="hint">No MIDI outputs found · plug one in</span>`
           : nothing}
         ${router.sounds.length ? html`<div class="rule"></div>` : nothing}
-        <div class="volume">
-          <input
-            class="slider"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            aria-label="Volume"
-            .value=${String(value)}
-            style=${`--v: ${value}`}
-            @input=${(e: Event) => {
-              const v = Number((e.target as HTMLInputElement).value);
-              ed.setVolume({ level: v, muted: v === 0 });
-            }}
-          />
-          <span class="pop-value">${Math.round(value * 100)}%</span>
+        <div class="field">
+          <span class="field-label">Volume</span>
+          ${this.slider('Volume', value, (v) => ed.setVolume({ level: v, muted: v === 0 }))}
         </div>
+        <div class="rule"></div>
+        ${switchRow('Metronome', 'Click on every beat', metro.enabled, () => ed.transport.setMetronome({ enabled: !metro.enabled }))}
+        ${this.slider('Metronome volume', metro.volume, (v) => ed.transport.setMetronome({ volume: v, enabled: true }))}
       </div>
     </div>`;
   }
@@ -1393,7 +1331,6 @@ export class MaddieTopbar extends MaddieElement {
       </div>
       <div class="divider"></div>
       <div class="group" part="group sound">
-        <maddie-metronome></maddie-metronome>
         <maddie-output></maddie-output>
       </div>
       <div class="divider"></div>
@@ -1508,7 +1445,6 @@ declare global {
     'maddie-scale-lock': MaddieScaleLock;
     'maddie-fold-select': MaddieFoldSelect;
     'maddie-transport': MaddieTransport;
-    'maddie-metronome': MaddieMetronome;
     'maddie-volume': MaddieVolume;
     'maddie-loop-toggle': MaddieLoopToggle;
     'maddie-follow-toggle': MaddieFollowToggle;
