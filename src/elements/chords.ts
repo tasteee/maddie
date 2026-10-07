@@ -412,13 +412,13 @@ export class MaddieChordsTab extends MaddieElement {
         font-size: var(--font-size-caption);
         font-weight: 600;
         letter-spacing: 0.04em;
-        color: var(--_text-muted);
-        background-color: var(--_surface);
-        background-image: var(--material-surface);
-        border: 1px solid var(--_border);
+        /* Inverted: the theme's text color as the fill, so the tab stands out on any theme. */
+        color: var(--_bg);
+        background-color: var(--_text);
+        border: 1px solid var(--_text);
         border-right: none;
         border-radius: var(--_radius) 0 0 var(--_radius);
-        box-shadow: -2px 0 6px rgb(0 0 0 / 0.12);
+        box-shadow: -2px 0 8px rgb(0 0 0 / 0.25);
         cursor: pointer;
         user-select: none;
         -webkit-user-select: none;
@@ -431,15 +431,13 @@ export class MaddieChordsTab extends MaddieElement {
       button:hover,
       button:focus-visible {
         translate: 0 0;
-        color: var(--_text);
       }
       button:focus-visible {
-        outline: 2px solid var(--_accent);
-        outline-offset: -2px;
+        outline: 2px solid var(--_focus);
+        outline-offset: 2px;
       }
       :host([open]) button {
         translate: 1px 0;
-        color: var(--_accent);
         /* Covers the panel's left border so the tab and panel read as one piece. */
         border-right: none;
       }
