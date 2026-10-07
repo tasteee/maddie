@@ -28,6 +28,7 @@ export class MaddieEditor extends MaddieRoot {
         box-sizing: border-box;
       }
       .grid {
+        position: relative;
         flex: 1;
         min-height: 0;
         display: grid;
@@ -91,6 +92,7 @@ export class MaddieEditor extends MaddieRoot {
           <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
           <maddie-chords part="chords"></maddie-chords>
+          <maddie-chords-tab part="chords-tab"></maddie-chords-tab>
         </div>
         <slot name="inspector"><maddie-inspector part="inspector"></maddie-inspector></slot>
         <slot name="footer"></slot>
