@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
-import { SplendidGrandPiano, Soundfont2 } from 'smplr';
-import { SoundFont2 } from 'soundfont2';
+import { SplendidGrandPiano, Soundfont, ElectricPiano } from 'smplr';
 import { toMidiVelocity, type Output } from '../src/core';
 import '@tasteee/zest/ink.css';
 import '@tasteee/zest/fonts.css';
@@ -68,37 +67,45 @@ const lazySound = (id: string, label: string, create: () => Output) => {
 
 const piano = SplendidGrandPiano(audioContext, { volume: 100 });
 
-// .sf2 files in playground/public/sounds. Add a file there and a line here.
-const SOUNDFONTS: [id: string, label: string, file: string][] = [
-  ['sf-harpsichord', 'Harpsichord (Campbell)', 'Campbells_Harpischord_tuned_1.SF2'],
-  ['sf-massive-strings', 'Massive Strings', '336_Massive_strings.sf2'],
-  ['sf-legato-strings', 'Legato Strings', '198_Legato_strings.sf2'],
-  ['sf-ensemble-violin', 'Ensemble Violin', 'ensemble violin.sf2'],
-  ['sf-dark-violins', 'Dark Violins', 'Dark Violins.sf2'],
-  ['sf-pizz-violins', 'Pizzicato Violins', 'Pizz Violins.sf2'],
-  ['sf-violin-langtons', 'Violin (Langtons)', '1115_Violin_Langtons_(617KB).sf2'],
-  ['sf-cello-legato', 'Cello Legato', 'Cello Legato.sf2'],
-  ['sf-cello-deep', 'Cello (Deep)', '1115_Cello_Deep.sf2'],
-  ['sf-cello-fitch', 'Cello (Fitch)', 'Fitch_MedCello.sf2'],
+// General MIDI sounds from smplr's Soundfont (MusyngKite kit). Each is fetched on first use.
+const GM_SOUNDS: [id: string, label: string, instrument: string][] = [
+  ['gm-nylon-guitar', 'Nylon Guitar', 'acoustic_guitar_nylon'],
+  ['gm-steel-guitar', 'Steel Guitar', 'acoustic_guitar_steel'],
+  ['gm-clean-guitar', 'Electric Guitar (Clean)', 'electric_guitar_clean'],
+  ['gm-bass', 'Acoustic Bass', 'acoustic_bass'],
+  ['gm-violin', 'Violin', 'violin'],
+  ['gm-cello', 'Cello', 'cello'],
+  ['gm-strings', 'String Ensemble', 'string_ensemble_1'],
+  ['gm-harp', 'Harp', 'orchestral_harp'],
+  ['gm-flute', 'Flute', 'flute'],
+  ['gm-trumpet', 'Trumpet', 'trumpet'],
+  ['gm-sax', 'Alto Sax', 'alto_sax'],
+  ['gm-organ', 'Church Organ', 'church_organ'],
+  ['gm-harpsichord', 'Harpsichord', 'harpsichord'],
+  ['gm-marimba', 'Marimba', 'marimba'],
 ];
 
-const soundfontOutput = (file: string): Output => {
-  const sampler = Soundfont2(audioContext, {
-    url: `${import.meta.env.BASE_URL}sounds/${encodeURIComponent(file)}`,
-    createSoundfont: (data) => new SoundFont2(data) as never,
-    volume: 100,
-  });
+const loaded = (player: { ready: Promise<void> }) => {
   let ready = false;
-  sampler.ready
-    .then(() => sampler.loadInstrument(sampler.instrumentNames[0]))
-    .then(() => (ready = true))
-    .catch((err) => console.error(`Could not load ${file}`, err));
-  return makeOutput(sampler, () => ready);
+  player.ready.then(() => (ready = true)).catch((err) => console.error('Could not load sound', err));
+  return () => ready;
+};
+
+const gmOutput = (instrument: string): Output => {
+  const player = Soundfont(audioContext, { instrument, kit: 'MusyngKite', volume: 100 });
+  return makeOutput(player, loaded(player));
+};
+
+const electricPianoOutput = (instrument: string): Output => {
+  const player = ElectricPiano(audioContext, { instrument, volume: 100 });
+  return makeOutput(player, loaded(player));
 };
 
 editorEl.sounds = [
-  { id: 'piano', label: 'Piano (built-in)', output: makeOutput(piano) },
-  ...SOUNDFONTS.map(([id, label, file]) => lazySound(id, label, () => soundfontOutput(file))),
+  { id: 'piano', label: 'Grand Piano', output: makeOutput(piano) },
+  lazySound('ep-pianet', 'Pianet T', () => electricPianoOutput('PianetT')),
+  lazySound('ep-wurlitzer', 'Wurlitzer', () => electricPianoOutput('WurlitzerEP200')),
+  ...GM_SOUNDS.map(([id, label, instrument]) => lazySound(id, label, () => gmOutput(instrument))),
 ];
 
 // ── Content ─────────────────────────────────────────────────────────
