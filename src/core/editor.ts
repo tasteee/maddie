@@ -371,25 +371,40 @@ export class Editor extends Emitter<EditorEvents> {
     else out.noteOn(e);
   }
 
-  private chord: { notes: Note[]; timer: ReturnType<typeof setTimeout> } | null = null;
+  private chord: { notes: Note[]; started: Set<Note>; timers: Array<ReturnType<typeof setTimeout>> } | null = null;
 
-  /** Play several pitches together for `seconds`. A new call cuts the previous one off. */
-  auditionChord(pitches: Iterable<number>, seconds = 0.5, velocity = this._view.noteVelocity) {
+  /**
+   * Play several pitches together for `seconds`. A new call cuts the previous one off.
+   * `humanize` strums the notes a few ms apart and gives each a random velocity (60–80 of 127).
+   */
+  auditionChord(pitches: Iterable<number>, seconds = 0.5, velocity = this._view.noteVelocity, { humanize = false } = {}) {
     this.stopChord();
     const out = this.output;
     if (!out || this.volume.muted) return;
-    const v = this.outVelocity(velocity);
-    const notes = [...new Set(pitches)].map((pitch): Note => ({ id: `chord-${pitch}`, pitch, start: 0, duration: 0, velocity }));
+    const notes = [...new Set(pitches)].map(
+      (pitch): Note => ({ id: `chord-${pitch}`, pitch, start: 0, duration: 0, velocity: humanize ? (60 + Math.random() * 20) / 127 : velocity }),
+    );
     if (!notes.length) return;
-    for (const note of notes) out.noteOn({ note, pitch: note.pitch, velocity: v, time: 0 });
-    this.chord = { notes, timer: setTimeout(() => this.stopChord(), seconds * 1000) };
+    const chord = { notes, started: new Set<Note>(), timers: [] as Array<ReturnType<typeof setTimeout>> };
+    this.chord = chord;
+    const start = (note: Note) => {
+      chord.started.add(note);
+      out.noteOn({ note, pitch: note.pitch, velocity: this.outVelocity(note.velocity), time: 0 });
+    };
+    for (const note of notes) {
+      const delay = humanize ? Math.random() * 40 : 0;
+      if (delay) chord.timers.push(setTimeout(() => start(note), delay));
+      else start(note);
+    }
+    chord.timers.push(setTimeout(() => this.stopChord(), seconds * 1000));
   }
 
   private stopChord() {
-    if (!this.chord) return;
-    clearTimeout(this.chord.timer);
-    for (const note of this.chord.notes) this.output?.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
+    const chord = this.chord;
+    if (!chord) return;
     this.chord = null;
+    chord.timers.forEach(clearTimeout);
+    for (const note of chord.started) this.output?.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
   }
 
   /** @internal Called by the transport scheduler. */

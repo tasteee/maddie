@@ -471,3 +471,26 @@ describe('metronome', () => {
     vi.useRealTimers();
   });
 });
+
+describe('chord audition', () => {
+  it('humanizes velocity to 60–80 and strums within 40ms, then releases every note', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const on: Array<{ pitch: number; velocity: number }> = [];
+    const off: number[] = [];
+    const ed = createEditor({
+      output: { noteOn: (e) => on.push({ pitch: e.pitch, velocity: e.velocity }), noteOff: (e) => off.push(e.pitch), allNotesOff: () => {} },
+    });
+    ed.setVolume({ level: 1 });
+    ed.auditionChord([60, 64, 67], 0.5, undefined, { humanize: true });
+    vi.advanceTimersByTime(41);
+    expect(on.map((n) => n.pitch).sort()).toEqual([60, 64, 67]);
+    for (const n of on) {
+      expect(n.velocity * 127).toBeGreaterThanOrEqual(59.99);
+      expect(n.velocity * 127).toBeLessThanOrEqual(80.01);
+    }
+    vi.advanceTimersByTime(500);
+    expect(off.sort()).toEqual([60, 64, 67]);
+    vi.useRealTimers();
+  });
+});
