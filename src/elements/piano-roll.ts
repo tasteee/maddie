@@ -27,6 +27,7 @@ import { icons } from './icons';
 import { importMidiFile } from './midi-io';
 import { drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
+import './zest';
 
 type Zone = 'body' | 'start' | 'end';
 
@@ -75,67 +76,31 @@ export class MaddiePianoRoll extends CanvasElement {
         background: var(--_row-white);
       }
       :host(:focus-visible) {
-        box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--_focus) 60%, transparent);
+        outline: 3px solid var(--_focus);
+        outline-offset: -3px;
       }
       .drop {
         position: absolute;
-        inset: 8px;
+        inset: var(--space-sm);
         display: grid;
         place-items: center;
-        border: 1.5px dashed color-mix(in oklab, var(--_text) 45%, transparent);
+        border: 2px dashed color-mix(in oklch, var(--_accent) 70%, transparent);
         border-radius: var(--_radius-sm);
-        background: color-mix(in oklab, var(--_bg) 78%, transparent);
-        backdrop-filter: blur(2px);
-        color: var(--_text);
-        font-size: 13px;
-        font-weight: 500;
+        background: color-mix(in oklch, var(--_bg) 78%, transparent);
         pointer-events: none;
         opacity: 0;
         transform: scale(0.985);
         transition:
           opacity var(--_motion-fast) var(--_ease),
-          transform var(--_motion-fast) var(--_ease);
+          transform var(--_motion-medium) var(--_ease);
       }
-      .drop span {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 14px;
-        border-radius: 999px;
-        background: var(--_surface);
-        box-shadow: 0 0 0 1px var(--_border);
+      .drop .icon {
+        width: 1rem;
+        height: 1rem;
       }
       :host([dropping]) .drop {
         opacity: 1;
         transform: none;
-      }
-      .toast {
-        position: absolute;
-        left: 50%;
-        bottom: 14px;
-        max-width: calc(100% - 32px);
-        padding: 7px 12px;
-        border-radius: 999px;
-        background: var(--_text);
-        color: var(--_bg);
-        font-size: 12px;
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        pointer-events: none;
-        opacity: 0;
-        transform: translate(-50%, 6px);
-        transition:
-          opacity var(--_motion-medium) var(--_ease),
-          transform var(--_motion-medium) var(--_ease);
-      }
-      .toast.show {
-        opacity: 1;
-        transform: translate(-50%, 0);
-      }
-      .toast.error::before {
-        content: '⚠  ';
       }
       .marquee {
         position: absolute;
@@ -159,8 +124,10 @@ export class MaddiePianoRoll extends CanvasElement {
 
   protected renderOverlay() {
     return html`<div class="marquee" part="marquee"></div>
-      <div class="drop" part="drop" aria-hidden="true"><span>${icons.upload} Drop a MIDI file to replace the notes</span></div>
-      <div class="toast" part="toast" role="status" aria-live="polite"></div>`;
+      <div class="drop" part="drop" aria-hidden="true">
+        <z-badge size="md" kind="soft" accent="dom"><span slot="prefix">${icons.upload}</span>Drop a MIDI file to replace the notes</z-badge>
+      </div>
+      <z-toast part="toast" position="bottom-center"></z-toast>`;
   }
 
   connectedCallback() {
@@ -183,7 +150,6 @@ export class MaddiePianoRoll extends CanvasElement {
   // ── Drag & drop MIDI ────────────────────────────────────────────
 
   private dragDepth = 0;
-  private toastTimer = 0;
 
   private hasFiles(e: DragEvent) {
     return [...(e.dataTransfer?.types ?? [])].includes('Files');
@@ -219,13 +185,9 @@ export class MaddiePianoRoll extends CanvasElement {
   };
 
   private showToast = ({ message, kind }: Toast) => {
-    const el = this.renderRoot.querySelector<HTMLElement>('.toast');
-    if (!el) return;
-    el.textContent = message;
-    el.classList.toggle('error', kind === 'error');
-    el.classList.add('show');
-    clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => el.classList.remove('show'), kind === 'error' ? 4000 : 2800);
+    this.renderRoot
+      .querySelector<HTMLElement & { push(t: { title: string; accent?: string; duration?: number }): number }>('z-toast')
+      ?.push({ title: message, accent: kind === 'error' ? 'error' : undefined, duration: kind === 'error' ? 4000 : 2800 });
   };
 
   protected firstUpdated() {

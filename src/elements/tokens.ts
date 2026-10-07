@@ -1,64 +1,72 @@
 import { css } from 'lit';
 
 /**
- * Design tokens. Public: `--maddie-*` (set them anywhere above the element).
+ * Design tokens. Maddie speaks Zest (`@tasteee/zest`): every `--_*` value resolves to a Zest semantic
+ * token (`--background`, `--card`, `--border`, `--purple`, …) that `ink.css` defines, so the editor follows
+ * whichever Zest theme (`data-theme` = dark, light, console, studio) is set on it or above it.
+ *
+ * Public: `--maddie-*` (set them anywhere above the element to override one value).
  * Internal: `--_*` (resolved per element, so overrides work at any level).
- * Light/dark via `light-dark()`, driven by `color-scheme` on <maddie-root>.
+ *
+ * Colors name a role, never a literal: `dom` is Zest's dominant accent (purple), `sub` its subordinate
+ * one (pink). `error` is left to destructive actions.
  */
 export const tokens = css`
   :host {
-    --_font: var(--maddie-font, 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
-    --_font-mono: var(--maddie-font-mono, 'DM Mono', ui-monospace, 'SF Mono', Menlo, monospace);
+    --_font: var(--maddie-font, var(--font-sans));
+    --_font-mono: var(--maddie-font-mono, var(--font-mono));
 
-    --_bg: var(--maddie-bg, light-dark(#ffffff, #0c0c0f));
-    --_surface: var(--maddie-surface, light-dark(#ffffff, #111115));
-    --_surface-2: var(--maddie-surface-2, light-dark(#f4f4f6, #19191f));
-    --_raised: var(--maddie-raised, light-dark(#ffffff, #26262e));
-    --_hover: var(--maddie-hover, light-dark(rgb(15 15 25 / 0.05), rgb(255 255 255 / 0.065)));
-    --_border: var(--maddie-border, light-dark(rgb(15 15 25 / 0.085), rgb(255 255 255 / 0.075)));
-    --_text: var(--maddie-text, light-dark(#111114, #f2f2f5));
-    --_text-muted: var(--maddie-text-muted, light-dark(#6c6c78, #8e8e9a));
-    --_text-faint: var(--maddie-text-faint, light-dark(#a6a6b0, #55555f));
+    --_bg: var(--maddie-bg, var(--background));
+    --_surface: var(--maddie-surface, var(--card));
+    --_surface-2: var(--maddie-surface-2, var(--background-light));
+    --_raised: var(--maddie-raised, var(--popover));
+    --_hover: var(--maddie-hover, color-mix(in oklch, var(--foreground) 8%, transparent));
+    --_border: var(--maddie-border, var(--border));
+    --_text: var(--maddie-text, var(--foreground));
+    --_text-muted: var(--maddie-text-muted, var(--muted-foreground));
+    --_text-faint: var(--maddie-text-faint, var(--secondary));
 
-    --_accent: var(--maddie-accent, light-dark(#111114, #f2f2f5));
-    --_accent-text: var(--maddie-accent-text, light-dark(#ffffff, #0c0c0f));
-    --_focus: var(--maddie-focus, var(--_accent));
+    /* Dominant accent: tools, toggles that are on, the marquee, the scale. */
+    --_accent: var(--maddie-accent, var(--purple));
+    --_accent-text: var(--maddie-accent-text, var(--on-accent));
+    --_focus: var(--maddie-focus, var(--focus-ring));
 
-    --_row-white: var(--maddie-row-white, light-dark(#ffffff, #121216));
-    --_row-black: var(--maddie-row-black, light-dark(#f7f7f9, #0e0e12));
-    --_row-out: var(--maddie-row-out-of-scale, light-dark(#e8e8ee, #08080a));
+    --_row-white: var(--maddie-row-white, color-mix(in oklch, var(--background) 95%, var(--foreground)));
+    --_row-black: var(--maddie-row-black, color-mix(in oklch, var(--background) 98%, var(--foreground)));
+    --_row-out: var(--maddie-row-out-of-scale, var(--background));
     /* Scale: tints the root row and marks in-scale keys. */
-    --_scale: var(--maddie-scale, light-dark(#4f46e5, #8f8aff));
-    --_line-bar: var(--maddie-line-bar, light-dark(rgb(15 15 25 / 0.17), rgb(255 255 255 / 0.15)));
-    --_line-beat: var(--maddie-line-beat, light-dark(rgb(15 15 25 / 0.085), rgb(255 255 255 / 0.075)));
-    --_line-sub: var(--maddie-line-sub, light-dark(rgb(15 15 25 / 0.04), rgb(255 255 255 / 0.035)));
-    --_line-row: var(--maddie-line-row, light-dark(rgb(15 15 25 / 0.035), rgb(255 255 255 / 0.028)));
+    --_scale: var(--maddie-scale, var(--purple));
+    --_line-bar: var(--maddie-line-bar, color-mix(in oklch, var(--foreground) 17%, transparent));
+    --_line-beat: var(--maddie-line-beat, color-mix(in oklch, var(--foreground) 8.5%, transparent));
+    --_line-sub: var(--maddie-line-sub, color-mix(in oklch, var(--foreground) 4%, transparent));
+    --_line-row: var(--maddie-line-row, color-mix(in oklch, var(--foreground) 3.5%, transparent));
 
-    --_note: var(--maddie-note, light-dark(#3a3a42, #c8c8d0));
-    --_note-selected: var(--maddie-note-selected, light-dark(#111114, #ffffff));
-    --_note-outline: var(--maddie-note-outline, light-dark(#111114, #ffffff));
-    --_note-text: var(--maddie-note-text, light-dark(#ffffff, #0c0c0f));
-    /* Pitch colors: hue sweeps low → high. Lightness/chroma default per theme (set to override). */
+    --_note: var(--maddie-note, color-mix(in oklch, var(--foreground) 42%, var(--background)));
+    --_note-selected: var(--maddie-note-selected, color-mix(in oklch, var(--foreground) 82%, var(--background)));
+    --_note-outline: var(--maddie-note-outline, var(--foreground));
+    --_note-text: var(--maddie-note-text, var(--background));
+    /* Pitch colors: hue sweeps low → high, dominant accent (purple) to subordinate (pink). Lightness/chroma default per theme (set to override). */
     --_pitch-lightness: var(--maddie-pitch-lightness, auto);
     --_pitch-chroma: var(--maddie-pitch-chroma, auto);
-    --_pitch-hue-low: var(--maddie-pitch-hue-low, 265);
-    --_pitch-hue-high: var(--maddie-pitch-hue-high, 15);
+    --_pitch-hue-low: var(--maddie-pitch-hue-low, 288);
+    --_pitch-hue-high: var(--maddie-pitch-hue-high, 361);
     --_note-min-opacity: var(--maddie-note-min-opacity, 0.42);
     --_note-radius: var(--maddie-note-radius, 3px);
 
-    --_playhead: var(--maddie-playhead, var(--_text));
-    --_loop: var(--maddie-loop, var(--_text-muted));
-    --_record: var(--maddie-record, light-dark(#e5484d, #ff6369));
-    --_key-white: var(--maddie-key-white, light-dark(#ffffff, #1b1b21));
-    --_key-black: var(--maddie-key-black, light-dark(#2b2b33, #050507));
-    --_key-out: var(--maddie-key-out-of-scale, light-dark(#e4e4ea, #101014));
+    /* The playhead and the record light are the subordinate accent. */
+    --_playhead: var(--maddie-playhead, var(--pink));
+    --_loop: var(--maddie-loop, var(--muted-foreground));
+    --_record: var(--maddie-record, var(--pink));
+    --_key-white: var(--maddie-key-white, var(--card));
+    --_key-black: var(--maddie-key-black, color-mix(in oklch, var(--background) 35%, black));
+    --_key-out: var(--maddie-key-out-of-scale, var(--background));
 
-    --_radius: var(--maddie-radius, 12px);
-    --_radius-sm: var(--maddie-radius-sm, 8px);
-    --_motion-fast: var(--maddie-motion-fast, 90ms);
-    --_motion-medium: var(--maddie-motion-medium, 150ms);
+    --_radius: var(--maddie-radius, var(--radius-lg));
+    --_radius-sm: var(--maddie-radius-sm, var(--radius-md));
+    --_motion-fast: var(--maddie-motion-fast, var(--duration-fast));
+    --_motion-medium: var(--maddie-motion-medium, var(--duration-move));
     --_motion-slow: var(--maddie-motion-slow, 220ms);
-    --_ease: var(--maddie-ease, cubic-bezier(0.2, 0.8, 0.2, 1));
+    --_ease: var(--maddie-ease, var(--easing-standard));
 
     --_keyboard-width: var(--maddie-keyboard-width, 64px);
     --_ruler-height: var(--maddie-ruler-height, 30px);

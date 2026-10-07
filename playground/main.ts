@@ -1,5 +1,8 @@
 import { SplendidGrandPiano } from 'smplr';
 import { toMidiVelocity, type Output } from '../src/core';
+import '@tasteee/zest/ink.css';
+import '@tasteee/zest/fonts.css';
+import { ZThemeSwitcher } from '@tasteee/zest/z-theme-switcher';
 import '../src/elements';
 import { DEMO_TEMPO, demoSong } from './demo-song';
 
@@ -43,27 +46,8 @@ editor.transport.setLoop({ start: 0, end: editor.ppq * 16, enabled: true });
 editor.setView({ pxPerTick: 0.075 });
 
 // ── Theme ───────────────────────────────────────────────────────────
-const themeBtn = document.getElementById('theme')!;
-const sun = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.25M8 13.25v1.25M1.5 8h1.25M13.25 8h1.25M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/></svg>`;
-const moon = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.75 5.75 0 0 1 6.5 2.5a5.75 5.75 0 1 0 7 7Z"/></svg>`;
-const stored = (() => {
-  try {
-    return localStorage.getItem('maddie-theme') as 'light' | 'dark' | null;
-  } catch {
-    return null;
-  }
-})();
-let theme: 'light' | 'dark' = stored ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-const applyTheme = () => {
-  document.documentElement.dataset.theme = theme;
-  editorEl.theme = theme;
-  themeBtn.innerHTML = theme === 'dark' ? sun : moon;
-};
-themeBtn.addEventListener('click', () => {
-  theme = theme === 'dark' ? 'light' : 'dark';
-  try {
-    localStorage.setItem('maddie-theme', theme);
-  } catch {}
-  applyTheme();
-});
-applyTheme();
+// Zest 0.8.1 defines <z-theme-switcher> in a shared chunk that bundlers drop as side-effect free, so define it from the export.
+if (!customElements.get('z-theme-switcher')) customElements.define('z-theme-switcher', ZThemeSwitcher);
+// Zest owns this: <z-theme-switcher> writes data-theme on <html>, and every token (and the canvas) follows it.
+const themes = document.querySelector<HTMLElement & { themes: string[] }>('z-theme-switcher')!;
+themes.themes = ['dark', 'light', 'console', 'studio'];

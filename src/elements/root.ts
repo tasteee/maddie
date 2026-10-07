@@ -9,6 +9,9 @@ import { computerKeyDown, computerKeyUp, releaseAll } from '../engine/computer-k
 import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
+/** Zest elements that handle their own keyboard input: the editor's shortcuts stay out of the way. */
+const OWN_KEYS = new Set(['z-select', 'z-number-input', 'z-input', 'z-slider', 'z-range', 'z-range-handle', 'z-switch', 'z-popover', 'z-badge']);
+
 const bool = (v: string | null) => v !== null && v !== 'false' && v !== 'off';
 
 export interface MaddieChangeDetail {
@@ -37,14 +40,7 @@ export class MaddieRoot extends LitElement {
       :host {
         display: block;
         outline: none;
-        color-scheme: light dark;
         color: var(--_text);
-      }
-      :host([theme='light']) {
-        color-scheme: light;
-      }
-      :host([theme='dark']) {
-        color-scheme: dark;
       }
     `,
   ];
@@ -63,7 +59,11 @@ export class MaddieRoot extends LitElement {
   @property({ attribute: 'scale-lock', converter: bool }) scaleLock?: boolean;
   /** `pitch` (default), `pitch-class`, or `mono`. */
   @property({ attribute: 'note-color' }) noteColor?: NoteColorMode;
-  @property({ reflect: true }) theme?: 'light' | 'dark' | 'auto';
+  /**
+   * A Zest theme for this editor alone: `dark`, `light`, `console` or `studio`. Sets `data-theme` on the element.
+   * Leave it unset to follow the page's `data-theme` (Zest's `<z-theme-switcher>` sets that on `<html>`).
+   */
+  @property() theme?: 'dark' | 'light' | 'console' | 'studio';
   /** Edits fire `maddie-beforechange` and are not applied. Apply them yourself. */
   @property({ type: Boolean }) controlled = false;
   /**
@@ -163,6 +163,10 @@ export class MaddieRoot extends LitElement {
   }
 
   protected willUpdate(changed: PropertyValues) {
+    if (changed.has('theme')) {
+      if (this.theme) this.dataset.theme = this.theme;
+      else delete this.dataset.theme;
+    }
     const ed = this.editor;
     const view: Parameters<Editor['setView']>[0] = {};
     if (changed.has('grid') && this.grid) view.grid = this.grid;
@@ -250,8 +254,8 @@ export class MaddieRoot extends LitElement {
       tag === 'TEXTAREA' ||
       target?.isContentEditable;
     if (textInput) return;
-    // Selects and sliders keep their own arrow keys.
-    if ((tag === 'SELECT' || tag === 'INPUT') && /^Arrow|^Page|^Home$|^End$/.test(e.key)) return;
+    // Zest fields (selects, sliders, switches, number inputs) and open popovers keep their own keys.
+    if (!e.metaKey && !e.ctrlKey && e.composedPath().some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
     if (computerKeyDown(this.editor, e)) {
       e.preventDefault();
       e.stopPropagation();
@@ -273,9 +277,12 @@ export class MaddieRoot extends LitElement {
   /** Pull motion durations from tokens (honours prefers-reduced-motion). */
   private readMotion() {
     const cs = getComputedStyle(this);
+    // Zest durations are in seconds (`0.12s`), Maddie's overrides in either unit.
     const ms = (name: string, fallback: number) => {
-      const v = parseFloat(cs.getPropertyValue(name));
-      return Number.isFinite(v) ? v : fallback;
+      const raw = cs.getPropertyValue(name).trim();
+      const v = parseFloat(raw);
+      if (!Number.isFinite(v)) return fallback;
+      return /[\d.]s$/.test(raw) ? v * 1000 : v;
     };
     const fast = ms('--_motion-fast', 90);
     this.engine.setMotion({

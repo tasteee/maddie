@@ -7,7 +7,7 @@ export { MaddieKeyboard } from './keyboard';
 export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
 export { MaddieChords } from './chords';
-export { MaddieInspector, MaddieScrub, MaddieRangeScrub } from './inspector';
+export { MaddieInspector } from './inspector';
 export {
   MaddieToolbar,
   MaddieToolSelect,

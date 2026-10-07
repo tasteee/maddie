@@ -59,14 +59,13 @@ export class MaddieEditor extends MaddieRoot {
         grid-area: label;
         display: flex;
         align-items: flex-start;
-        padding: 10px 10px 0;
+        padding: var(--space-sm) var(--space-sm) 0;
         background: var(--_surface);
         border-top: 1px solid var(--_border);
         border-right: 1px solid var(--_border);
-        color: var(--_text-faint);
-        font-size: 11px;
+        color: var(--_text-muted);
+        font-size: var(--font-size-caption);
         font-weight: 500;
-        letter-spacing: -0.005em;
       }
       maddie-velocity-lane {
         grid-area: lane;
