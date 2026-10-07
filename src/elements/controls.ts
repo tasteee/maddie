@@ -979,7 +979,9 @@ export class MaddieEditbar extends MaddieElement {
     barStyles,
     css`
       :host {
-        height: var(--maddie-editbar-height, 46px);
+        height: var(--maddie-editbar-height, 64px);
+        background-color: var(--maddie-editbar-bg, var(--color-neutral-1));
+        background-image: none;
       }
     `,
   ];
