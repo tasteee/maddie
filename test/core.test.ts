@@ -438,6 +438,30 @@ describe('arrow keys without a selection', () => {
   });
 });
 
+describe('mute keys', () => {
+  it('0 mutes and unmutes selected notes, like M', async () => {
+    const { handleKey } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
+    const press = (key: string, code: string) => handleKey(ed, { key, code } as KeyboardEvent);
+    expect(press('0', 'Digit0')).toBe(true);
+    expect(ed.notes()[0].muted).toBe(true);
+    expect(press('0', 'Digit0')).toBe(true);
+    expect(ed.notes()[0].muted).toBe(false);
+    press('m', 'KeyM');
+    expect(ed.notes()[0].muted).toBe(true);
+  });
+
+  it('0 does nothing without a selection', async () => {
+    const { handleKey } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
+    ed.select([]);
+    handleKey(ed, { key: '0', code: 'Digit0' } as KeyboardEvent);
+    expect(ed.notes()[0].muted).toBeFalsy();
+  });
+});
+
 describe('output router', () => {
   it('picks the host sound and applies it as the editor output', async () => {
     const { OutputRouter } = await import('../src/engine/output-router');
