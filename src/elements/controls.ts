@@ -22,6 +22,7 @@ import type { Engine } from '../engine/engine';
 import { pitchForOffset, scaleMapped, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
 import { modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
+import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
 import { MaddieElement } from './base';
 import { icons } from './icons';
 import { pickMidiFile } from './midi-io';
@@ -652,9 +653,43 @@ function popToggle(opts: {
   </div>`;
 }
 
-/** Metronome on/off; hover for volume. */
+/** Metronome on/off; hover for volume. The icon pulses on every click. */
 @customElement('maddie-metronome')
 export class MaddieMetronome extends ControlElement {
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    const { transport } = editor;
+    this.track(
+      transport.onClick((e) => {
+        // Clicks are scheduled ahead on the audio clock: pulse when the sound lands.
+        const ctx = editor.audioContext;
+        const delay = ctx ? Math.max(0, (e.time - ctx.currentTime) * 1000) : 0;
+        const timer = setTimeout(() => {
+          this.timers.delete(timer);
+          this.pulse(e.accent);
+        }, delay);
+        this.timers.add(timer);
+      }),
+      () => this.timers.forEach(clearTimeout),
+    );
+  }
+
+  private pulse(accent: boolean) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const button = this.renderRoot.querySelector('button');
+    if (!button) return;
+    const color = getComputedStyle(this).getPropertyValue('--_accent') || 'currentColor';
+    button.animate(
+      [
+        { transform: `scale(${accent ? 1.3 : 1.15})`, color, backgroundColor: `color-mix(in oklab, ${color} ${accent ? 28 : 16}%, transparent)` },
+        { transform: 'scale(1)' },
+      ],
+      { duration: 160, easing: 'ease-out' },
+    );
+  }
+
   render() {
     const t = this.ed?.transport;
     if (!t) return nothing;
@@ -721,20 +756,20 @@ export class MaddieFollowToggle extends ControlElement {
 }
 
 /**
- * Play notes from the computer keyboard. Shows the Z key's note while on.
- * Hover for options: map keys to every semitone, or to the key's scale only.
+ * All note input in one dropdown: computer keyboard, MIDI controller, and scale-only mode.
+ * The button is lit while any input is on. Turning MIDI on asks the browser for access.
  */
-@customElement('maddie-keys-toggle')
-export class MaddieKeysToggle extends ControlElement {
+@customElement('maddie-input')
+export class MaddieInput extends ControlElement {
   static styles = [
     tokens,
     controlStyles,
     css`
-      .pop.keys {
+      .pop.input {
         flex-direction: column;
         align-items: stretch;
-        gap: 8px;
-        min-width: 250px;
+        gap: 10px;
+        min-width: 260px;
       }
       .row {
         display: flex;
@@ -793,66 +828,6 @@ export class MaddieKeysToggle extends ControlElement {
       button.switch:active {
         transform: none;
       }
-    `,
-  ];
-
-  render() {
-    const ed = this.ed;
-    if (!ed) return nothing;
-    const on = ed.view.computerKeyboard;
-    const scaleOn = ed.view.keyboardScale;
-    const key = ed.key;
-    const z = pitchForOffset(ed, 0);
-    const mapped = scaleMapped(ed);
-    return html`<div class="pop-wrap">
-      <button class=${on ? 'with-chip' : ''} aria-pressed=${on} aria-label="Computer keyboard" @click=${() => setComputerKeyboard(ed, !on)}>
-        ${icons.keyboard}${on && z !== null ? html`<span class="chip">${pitchName(z)}</span>` : nothing}
-      </button>
-      <div class="pop keys" role="group" aria-label="Keyboard input options">
-        <span class="pop-title">Keyboard input<kbd>\`</kbd></span>
-        <div class="row">
-          <span class="switch-label">
-            Scale notes only
-            <span class="hint">${key ? `Keys follow ${formatKey(key)}` : 'Set a key to use this'}</span>
-          </span>
-          <button
-            class="switch"
-            role="switch"
-            aria-checked=${scaleOn}
-            aria-label="Scale notes only"
-            ?disabled=${!key}
-            @click=${() => setKeyboardScale(ed, !scaleOn)}
-          ></button>
-        </div>
-        <span class="hint">${mapped ? 'Each key steps up the scale · Z = tonic' : 'Each key steps up a semitone'}</span>
-        <span class="hint"><kbd>+</kbd> <kbd>−</kbd> change octave</span>
-      </div>
-    </div>`;
-  }
-}
-
-/**
- * Play notes from a MIDI controller. Hover to pick the device.
- * Turning it on asks the browser for MIDI access and turns the computer keyboard off.
- */
-@customElement('maddie-midi-toggle')
-export class MaddieMidiToggle extends ControlElement {
-  static styles = [
-    tokens,
-    controlStyles,
-    css`
-      .pop.midi {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-        min-width: 230px;
-      }
-      .hint {
-        color: var(--_text-faint);
-        font-size: 11.5px;
-        font-weight: 500;
-        white-space: normal;
-      }
       .select.device {
         justify-content: space-between;
         background: var(--_surface-2);
@@ -860,7 +835,12 @@ export class MaddieMidiToggle extends ControlElement {
       .device .value {
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 180px;
+        max-width: 200px;
+      }
+      .rule {
+        height: 1px;
+        margin: 0 -12px;
+        background: var(--_border);
       }
     `,
   ];
@@ -870,28 +850,47 @@ export class MaddieMidiToggle extends ControlElement {
     this.track(MidiInput.for(editor).onChange(() => this.requestUpdate()));
   }
 
+  private switch(label: string, hint: string, on: boolean, onClick: () => void, disabled = false) {
+    return html`<div class="row">
+      <span class="switch-label">${label}<span class="hint">${hint}</span></span>
+      <button class="switch" role="switch" aria-checked=${on} aria-label=${label} ?disabled=${disabled} @click=${onClick}></button>
+    </div>`;
+  }
+
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
+    const { computerKeyboard, midiInput, keyboardScale } = ed.view;
     const midi = MidiInput.for(ed);
-    const on = ed.view.midiInput;
     const devices = midi.devices;
     const current = devices.find((d) => d.id === ed.view.midiDevice);
-    const hint =
+    const key = ed.key;
+    const z = pitchForOffset(ed, 0);
+    const midiHint =
       midi.status === 'unsupported'
         ? "This browser can't read MIDI devices"
         : midi.status === 'denied'
           ? 'MIDI access was blocked'
-          : midi.status !== 'ready'
-            ? 'Click the button to connect'
-            : devices.length
-              ? 'Notes play and record like keys'
-              : 'No devices found · plug one in';
+          : midiInput && midi.status === 'ready' && !devices.length
+            ? 'No devices found · plug one in'
+            : 'Notes play and record like keys';
+    const keysHint = computerKeyboard
+      ? `${scaleMapped(ed) ? 'Each key steps up the scale' : 'Each key steps up a semitone'}${z !== null ? ` · Z = ${pitchName(z)}` : ''} · + − octave`
+      : 'Play with the keys (\`)';
     return html`<div class="pop-wrap">
-      <button aria-pressed=${on} aria-label="MIDI input" @click=${() => setMidiInput(ed, !on)}>${icons.midi}</button>
-      <div class="pop midi" role="group" aria-label="MIDI input options">
-        <span class="pop-title">MIDI input</span>
-        ${midi.status === 'ready' && devices.length
+      <button
+        class=${computerKeyboard && z !== null ? 'with-chip' : ''}
+        aria-pressed=${computerKeyboard || midiInput}
+        aria-label="Input"
+        @click=${() => setComputerKeyboard(ed, !computerKeyboard)}
+      >
+        ${midiInput && !computerKeyboard ? icons.midi : icons.keyboard}${computerKeyboard && z !== null ? html`<span class="chip">${pitchName(z)}</span>` : nothing}
+      </button>
+      <div class="pop input" role="group" aria-label="Input options">
+        <span class="pop-title">Input</span>
+        ${this.switch('Computer keyboard', keysHint, computerKeyboard, () => setComputerKeyboard(ed, !computerKeyboard))}
+        ${this.switch('MIDI controller', midiHint, midiInput, () => setMidiInput(ed, !midiInput))}
+        ${midiInput && midi.status === 'ready' && devices.length
           ? html`<label class="select device">
               <span class="value">${current?.name ?? 'All devices'}</span><span class="chev">${icons.chevron}</span>
               <select aria-label="MIDI device" @change=${(e: Event) => setMidiDevice(ed, (e.target as HTMLSelectElement).value || null)}>
@@ -900,7 +899,135 @@ export class MaddieMidiToggle extends ControlElement {
               </select>
             </label>`
           : nothing}
-        <span class="hint">${hint}</span>
+        <div class="rule"></div>
+        ${this.switch(
+          'Scale notes only',
+          key ? `Out-of-scale notes snap to ${formatKey(key)}` : 'Set a key to use this',
+          keyboardScale,
+          () => setKeyboardScale(ed, !keyboardScale),
+          !key,
+        )}
+      </div>
+    </div>`;
+  }
+}
+
+/**
+ * Where notes sound: one of the host's sounds or a MIDI port, with master volume at the bottom.
+ * The sound list comes from `<maddie-editor>.sounds`. With none, this is just the volume control.
+ */
+@customElement('maddie-output')
+export class MaddieOutput extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    css`
+      .pop.output {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        min-width: 240px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field-label,
+      .hint {
+        color: var(--_text-faint);
+        font-size: 11.5px;
+        font-weight: 500;
+        white-space: normal;
+      }
+      .select.full {
+        justify-content: space-between;
+        background: var(--_surface-2);
+      }
+      .select.full .value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 200px;
+      }
+      .rule {
+        height: 1px;
+        margin: 0 -12px;
+        background: var(--_border);
+      }
+      .volume {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .volume .slider {
+        flex: 1;
+        width: auto;
+      }
+    `,
+  ];
+
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    this.track(OutputRouter.for(editor).onChange(() => this.requestUpdate()));
+  }
+
+  private select(label: string, value: string, options: Array<{ id: string; name: string }>, onPick: (id: string) => void) {
+    const current = options.find((o) => o.id === value);
+    return html`<label class="field">
+      <span class="field-label">${label}</span>
+      <span class="select full">
+        <span class="value">${current?.name ?? '—'}</span><span class="chev">${icons.chevron}</span>
+        <select aria-label=${label} @change=${(e: Event) => onPick((e.target as HTMLSelectElement).value)}>
+          ${options.map((o) => html`<option value=${o.id} ?selected=${o.id === value}>${o.name}</option>`)}
+        </select>
+      </span>
+    </label>`;
+  }
+
+  render() {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const router = OutputRouter.for(ed);
+    const { level, muted } = ed.volume;
+    const value = muted ? 0 : level;
+    const midiOn = router.source === MIDI_SOURCE;
+    const sources = [
+      ...router.sounds.map((s) => ({ id: s.id, name: s.label })),
+      ...(router.supported ? [{ id: MIDI_SOURCE, name: 'MIDI output' }] : []),
+    ];
+    const ports = router.ports;
+    return html`<div class="pop-wrap">
+      <button aria-label=${muted ? 'Unmute' : 'Mute'} aria-pressed=${false} @click=${() => ed.setVolume({ muted: !muted })}>
+        ${muted || level === 0 ? icons.mute : icons.volume}
+      </button>
+      <div class="pop output" role="group" aria-label="Output options">
+        <span class="pop-title">Output<kbd>⇧M</kbd></span>
+        ${router.sounds.length
+          ? this.select('Sound', router.source, sources, (id) => (id === MIDI_SOURCE ? router.selectMidi() : router.selectSound(id)))
+          : nothing}
+        ${midiOn
+          ? ports.length
+            ? this.select('MIDI port', router.portId ?? '', ports, (id) => router.selectPort(id))
+            : html`<span class="hint">No MIDI outputs found · plug one in</span>`
+          : nothing}
+        ${router.sounds.length ? html`<div class="rule"></div>` : nothing}
+        <div class="volume">
+          <input
+            class="slider"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            aria-label="Volume"
+            .value=${String(value)}
+            style=${`--v: ${value}`}
+            @input=${(e: Event) => {
+              const v = Number((e.target as HTMLInputElement).value);
+              ed.setVolume({ level: v, muted: v === 0 });
+            }}
+          />
+          <span class="pop-value">${Math.round(value * 100)}%</span>
+        </div>
       </div>
     </div>`;
   }
@@ -1205,14 +1332,13 @@ export class MaddieTopbar extends MaddieElement {
       <div class="divider"></div>
       <div class="group" part="group sound">
         <maddie-metronome></maddie-metronome>
-        <maddie-volume></maddie-volume>
+        <maddie-output></maddie-output>
       </div>
       <div class="divider"></div>
       <div class="group" part="group playback">
         <maddie-loop-toggle></maddie-loop-toggle>
         <maddie-follow-toggle></maddie-follow-toggle>
-        <maddie-keys-toggle></maddie-keys-toggle>
-        <maddie-midi-toggle></maddie-midi-toggle>
+        <maddie-input></maddie-input>
       </div>
       <div class="spacer"></div>
       <div class="group" part="group file">
@@ -1324,8 +1450,8 @@ declare global {
     'maddie-volume': MaddieVolume;
     'maddie-loop-toggle': MaddieLoopToggle;
     'maddie-follow-toggle': MaddieFollowToggle;
-    'maddie-keys-toggle': MaddieKeysToggle;
-    'maddie-midi-toggle': MaddieMidiToggle;
+    'maddie-input': MaddieInput;
+    'maddie-output': MaddieOutput;
     'maddie-chords-toggle': MaddieChordsToggle;
     'maddie-tempo': MaddieTempo;
     'maddie-history': MaddieHistory;

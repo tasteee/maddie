@@ -13,7 +13,7 @@ editorEl.audioContext = audioContext;
 
 // Live notes (computer keyboard) have no duration: keep their stop functions for note-off.
 const held = new Map<number, (time?: number) => void>();
-const output: Output = {
+const pianoOutput: Output = {
   noteOn: (e) => {
     const stop = piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), time: e.time || undefined, duration: e.duration });
     if (e.duration === undefined) {
@@ -34,7 +34,7 @@ const output: Output = {
     piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), duration: e.duration });
   },
 };
-editorEl.output = output;
+editorEl.sounds = [{ id: 'piano', label: 'Piano (built-in)', output: pianoOutput }];
 
 // ── Content ─────────────────────────────────────────────────────────
 editorEl.notes = demoSong();

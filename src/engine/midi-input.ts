@@ -1,5 +1,4 @@
-import type { Editor } from '../core';
-import { releaseAll } from './computer-keyboard';
+import { nearestInScale, type Editor } from '../core';
 import { Engine } from './engine';
 
 export interface MidiDevice {
@@ -26,7 +25,8 @@ export class MidiInput {
   status: Status = 'idle';
   private access: MIDIAccess | null = null;
   private listening = new Set<MIDIInput>();
-  private held = new Set<number>();
+  /** Incoming pitch → the pitch it sounds (differs when scale-only snaps it). */
+  private held = new Map<number, number>();
   private listeners = new Set<() => void>();
 
   private constructor(private editor: Editor) {
@@ -109,26 +109,32 @@ export class MidiInput {
   };
 
   private press(pitch: number, velocity: number) {
-    this.held.add(pitch);
-    this.editor.liveNoteOn(pitch, velocity);
+    this.release(pitch);
+    const { keyboardScale } = this.editor.view;
+    const sounding = keyboardScale ? nearestInScale(pitch, this.editor.key) : pitch;
+    this.held.set(pitch, sounding);
+    this.editor.liveNoteOn(sounding, velocity);
     this.redraw();
   }
 
   private release(pitch: number) {
-    if (!this.held.delete(pitch)) return;
-    this.editor.liveNoteOff(pitch);
+    const sounding = this.held.get(pitch);
+    if (sounding === undefined) return;
+    this.held.delete(pitch);
+    // Two keys can snap to one pitch: let go only when the last one is up.
+    if (![...this.held.values()].includes(sounding)) this.editor.liveNoteOff(sounding);
     this.redraw();
   }
 
   private releaseAll() {
-    for (const pitch of this.held) this.editor.liveNoteOff(pitch);
+    for (const sounding of new Set(this.held.values())) this.editor.liveNoteOff(sounding);
     this.held.clear();
     this.redraw();
   }
 
   private redraw() {
     const engine = Engine.for(this.editor);
-    engine.held = new Set(this.held);
+    engine.held = new Set(this.held.values());
     engine.invalidate();
   }
 
@@ -144,7 +150,7 @@ export class MidiInput {
 
 /**
  * Turn MIDI input on or off. Asks for access the first time.
- * MIDI and computer keyboard are separate modes: turning one on turns the other off.
+ * Independent of the computer keyboard: both can be on at once.
  */
 export async function setMidiInput(editor: Editor, on: boolean) {
   const midi = MidiInput.for(editor);
@@ -154,8 +160,7 @@ export async function setMidiInput(editor: Editor, on: boolean) {
     engine.toast(midi.status === 'unsupported' ? "This browser can't read MIDI devices" : 'MIDI access was blocked', 'error');
     return;
   }
-  releaseAll(editor);
-  editor.setView({ midiInput: true, computerKeyboard: false });
+  editor.setView({ midiInput: true });
   if (!midi.devices.length) Engine.for(editor).toast('No MIDI devices found · plug one in');
 }
 
