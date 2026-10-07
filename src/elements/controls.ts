@@ -953,13 +953,13 @@ export class MaddieTopbar extends MaddieElement {
       </div>
       <z-separator vertical></z-separator>
       <div class="group" part="group sound">
+        <maddie-input></maddie-input>
         <maddie-output></maddie-output>
       </div>
       <z-separator vertical></z-separator>
       <div class="group" part="group playback">
         <maddie-loop-toggle></maddie-loop-toggle>
         <maddie-follow-toggle></maddie-follow-toggle>
-        <maddie-input></maddie-input>
       </div>
       <div class="spacer"></div>
       <div class="group" part="group file">
