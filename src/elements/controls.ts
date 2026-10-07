@@ -653,9 +653,43 @@ function popToggle(opts: {
   </div>`;
 }
 
-/** Metronome on/off; hover for volume. */
+/** Metronome on/off; hover for volume. The icon pulses on every click. */
 @customElement('maddie-metronome')
 export class MaddieMetronome extends ControlElement {
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    const { transport } = editor;
+    this.track(
+      transport.onClick((e) => {
+        // Clicks are scheduled ahead on the audio clock: pulse when the sound lands.
+        const ctx = editor.audioContext;
+        const delay = ctx ? Math.max(0, (e.time - ctx.currentTime) * 1000) : 0;
+        const timer = setTimeout(() => {
+          this.timers.delete(timer);
+          this.pulse(e.accent);
+        }, delay);
+        this.timers.add(timer);
+      }),
+      () => this.timers.forEach(clearTimeout),
+    );
+  }
+
+  private pulse(accent: boolean) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const button = this.renderRoot.querySelector('button');
+    if (!button) return;
+    const color = getComputedStyle(this).getPropertyValue('--_accent') || 'currentColor';
+    button.animate(
+      [
+        { transform: `scale(${accent ? 1.3 : 1.15})`, color, backgroundColor: `color-mix(in oklab, ${color} ${accent ? 28 : 16}%, transparent)` },
+        { transform: 'scale(1)' },
+      ],
+      { duration: 160, easing: 'ease-out' },
+    );
+  }
+
   render() {
     const t = this.ed?.transport;
     if (!t) return nothing;

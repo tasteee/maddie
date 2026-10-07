@@ -40,7 +40,8 @@ const HORIZON_S = 0.12;
 export class Transport {
   state: TransportState = 'stopped';
   loop: LoopRegion = { enabled: false, start: 0, end: 0 };
-  metronome: Metronome = { enabled: false, volume: 0.6 };
+  metronome: Metronome = { enabled: true, volume: 0.7 };
+  private clickListeners = new Set<(e: ClickEvent) => void>();
   private stoppedAt: Tick = 0;
   private returnTo: Tick = 0;
   private anchors: Anchor[] = [];
@@ -189,7 +190,7 @@ export class Transport {
         wrapped = true;
       }
 
-      if (this.metronome.enabled && this.metronome.volume > 0) {
+      if (this.metronome.enabled) {
         const { timeSignature } = this.editor.meta;
         for (const bar of barsInRange(Math.max(0, fromTick - ppq * 16), toTick, timeSignature, ppq)) {
           const beat = beatLength(bar.sig, ppq);
@@ -223,8 +224,16 @@ export class Transport {
     if (!this.loop.enabled && this.position > this.editor.contentEnd() + ppq * 8) this.stop();
   }
 
+  /** Called for every scheduled metronome click, slightly ahead of `e.time`. Fires even at volume 0, so a UI can pulse. */
+  onClick(listener: (e: ClickEvent) => void): () => void {
+    this.clickListeners.add(listener);
+    return () => this.clickListeners.delete(listener);
+  }
+
   /** Metronome click. Uses `output.click` if provided, otherwise a short built-in blip. */
   private click(e: ClickEvent) {
+    this.clickListeners.forEach((l) => l(e));
+    if (e.volume <= 0) return;
     const out = this.editor.output;
     if (out?.click) return out.click(e);
     const ctx = this.audioContext;

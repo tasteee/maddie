@@ -344,6 +344,7 @@ describe('transport', () => {
         doc: { tempo: [{ tick: 0, bpm }] },
         output: { noteOn: (e) => played.push(e.note.start), noteOff: () => {}, allNotesOff: () => {} },
       });
+      ed.transport.setMetronome({ enabled: false });
       // One note per 16th over 16 bars: every marker position the grid can snap to.
       const starts = Array.from({ length: 256 }, (_, i) => i * (PPQ / 4));
       ed.commands.add(starts.map((start) => ({ pitch: 60, start, duration: PPQ / 4, velocity: 0.8 })));
@@ -363,6 +364,7 @@ describe('transport', () => {
     vi.useFakeTimers();
     const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
     const ed = createEditor({ audioContext });
+    ed.transport.setMetronome({ enabled: false });
     ed.transport.seek(PPQ);
     await ed.transport.play();
     ed.transport.seek(PPQ * 8, { marker: false });
@@ -451,5 +453,21 @@ describe('output router', () => {
     expect(ed.output).toBe(a);
     router.selectSound('b');
     expect(ed.output).toBe(b);
+  });
+});
+
+describe('metronome', () => {
+  it('is on at 70% by default and reports each click', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const ctx = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    const ed = createEditor({ audioContext: ctx, output: { noteOn: () => {}, noteOff: () => {}, allNotesOff: () => {}, click: () => {} } });
+    expect(ed.transport.metronome).toEqual({ enabled: true, volume: 0.7 });
+    const clicks: boolean[] = [];
+    ed.transport.onClick((e) => clicks.push(e.accent));
+    await ed.transport.play();
+    expect(clicks).toEqual([true]);
+    ed.transport.stop();
+    vi.useRealTimers();
   });
 });

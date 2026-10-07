@@ -7,6 +7,7 @@ const TPS = 1920;
 function setup() {
   const clock = { currentTime: 0, state: 'running', outputLatency: 0, resume: async () => {} };
   const ed = createEditor({ audioContext: clock as unknown as AudioContext, output: { noteOn: () => {}, noteOff: () => {}, allNotesOff: () => {} } });
+  ed.transport.setMetronome({ enabled: false });
   // play() anchors 50ms ahead; `at(s)` sets the clock to `s` seconds after that anchor.
   const at = (s: number) => {
     clock.currentTime = 0.05 + s;
