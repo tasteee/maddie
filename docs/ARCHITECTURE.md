@@ -555,7 +555,7 @@ maddie-editor {
   --maddie-note-fill: var(--maddie-accent);
   --maddie-note-radius: 3px;
   --maddie-grid-bar: oklch(100% 0 0 / 0.14);
-  --maddie-font: "Inter", system-ui;
+  --maddie-font: "DM Sans", system-ui;
   --maddie-motion-fast: 90ms;
 }
 ```

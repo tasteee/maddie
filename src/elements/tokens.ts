@@ -7,8 +7,8 @@ import { css } from 'lit';
  */
 export const tokens = css`
   :host {
-    --_font: var(--maddie-font, 'Inter', 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
-    --_font-mono: var(--maddie-font-mono, 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace);
+    --_font: var(--maddie-font, 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
+    --_font-mono: var(--maddie-font-mono, 'DM Mono', ui-monospace, 'SF Mono', Menlo, monospace);
 
     --_bg: var(--maddie-bg, light-dark(#ffffff, #0c0c0f));
     --_surface: var(--maddie-surface, light-dark(#ffffff, #111115));
