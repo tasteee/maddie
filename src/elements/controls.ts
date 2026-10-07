@@ -628,9 +628,10 @@ export class MaddieInput extends ControlElement {
       ? `${scaleMapped(ed) ? 'Each key steps up the scale' : 'Each key steps up a semitone'}${z !== null ? ` · Z = ${pitchName(z)}` : ''} · + − octave`
       : 'Play with the keys (`)';
     const active = computerKeyboard || midiInput;
+    const showZ = computerKeyboard && z !== null;
     return html`<z-popover placement="bottom-start" label="Input options">
       <z-button slot="trigger" kind=${active ? 'soft' : 'ghost'} accent=${active ? 'dom' : 'neutral'} size="sm" aria-label="Input"
-        >${icons.keyboard}Input${computerKeyboard && z !== null ? html`<z-badge kind="solid" accent="dom" size="sm">${pitchName(z)}</z-badge>` : nothing}</z-button
+        >${icons.keyboard}Input<z-badge kind="solid" accent="dom" size="sm" ?hidden=${!showZ} style=${showZ ? '' : 'display:none'}>${showZ ? pitchName(z) : ''}</z-badge></z-button
       >
       <div class="panel">
         <z-text class="panel-title" size="sm" weight="600">Input</z-text>
