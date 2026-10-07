@@ -15,7 +15,7 @@ export default defineConfig(({ command }) =>
             },
             formats: ['es'],
           },
-          rollupOptions: { external: [/^lit/] },
+          rollupOptions: { external: [/^lit/, /^@tasteee\//] },
           sourcemap: true,
         },
       },

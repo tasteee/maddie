@@ -1,5 +1,6 @@
 import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { live } from 'lit/directives/live.js';
 import {
   CHORD_FAMILIES,
   chordsInKey,
@@ -14,7 +15,10 @@ import {
 import type { ChordDrag, Engine } from '../engine/engine';
 import { MaddieElement } from './base';
 import { icons } from './icons';
+import { partStyles } from './controls';
 import { tokens } from './tokens';
+import './zest';
+import '@tasteee/zest/z-collapsible';
 
 const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
 const DRAG_THRESHOLD = 4;
@@ -29,16 +33,18 @@ const AUDITION_NEAR = 55;
 export class MaddieChords extends MaddieElement {
   static styles = [
     tokens,
+    partStyles,
     css`
       :host {
         display: flex;
         flex-direction: column;
         width: var(--maddie-chords-width, 280px);
         min-height: 0;
-        background: var(--_surface);
+        background-color: var(--_surface);
+        background-image: var(--material-surface);
         border-left: 1px solid var(--_border);
         color: var(--_text);
-        font-size: 12.5px;
+        font-size: var(--font-size-small);
         user-select: none;
         -webkit-user-select: none;
         opacity: 1;
@@ -59,152 +65,48 @@ export class MaddieChords extends MaddieElement {
       header {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 10px 10px 8px 12px;
-      }
-      h2 {
-        margin: 0;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-      }
-      .key {
-        padding: 2px 7px;
-        border-radius: 999px;
-        background: var(--_surface-2);
-        color: var(--_text-muted);
-        font-size: 11.5px;
-        font-weight: 500;
-        white-space: nowrap;
+        gap: var(--space-sm);
+        padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
       }
       .spacer {
         flex: 1;
       }
-      button {
-        font: inherit;
-        color: inherit;
-        border: 0;
-        margin: 0;
-        background: transparent;
-        cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
-      }
-      button:focus-visible,
-      input:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 1px;
-      }
-      .close {
-        display: inline-grid;
-        place-items: center;
-        width: 26px;
-        height: 26px;
-        border-radius: var(--_radius-sm);
-        color: var(--_text-muted);
-      }
-      .close:hover {
-        background: var(--_hover);
-        color: var(--_text);
-      }
       .controls {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        padding: 0 10px 10px 12px;
+        gap: var(--space-sm);
+        padding: 0 var(--space-md) var(--space-md);
         border-bottom: 1px solid var(--_border);
-      }
-      input[type='search'] {
-        height: 28px;
-        padding: 0 9px;
-        border: 0;
-        border-radius: var(--_radius-sm);
-        background: var(--_surface-2);
-        color: var(--_text);
-        font: inherit;
-        outline: none;
-      }
-      input::placeholder {
-        color: var(--_text-faint);
-      }
-      .segmented {
-        display: flex;
-        padding: 2px;
-        gap: 2px;
-        border-radius: calc(var(--_radius-sm) + 2px);
-        background: var(--_surface-2);
-      }
-      .segmented button {
-        flex: 1;
-        height: 24px;
-        border-radius: calc(var(--_radius-sm) - 1px);
-        color: var(--_text-muted);
-        font-size: 11.5px;
-        font-weight: 500;
-      }
-      .segmented button[aria-pressed='true'] {
-        background: var(--_raised);
-        color: var(--_text);
-        box-shadow: 0 0 0 1px var(--_border);
       }
       .families {
         display: flex;
         flex-wrap: wrap;
-        gap: 4px;
-      }
-      .families button {
-        height: 22px;
-        padding: 0 8px;
-        border-radius: 999px;
-        color: var(--_text-muted);
-        font-size: 11px;
-        font-weight: 500;
-        box-shadow: inset 0 0 0 1px var(--_border);
-      }
-      .families button:hover {
-        color: var(--_text);
-        background: var(--_hover);
-      }
-      .families button[aria-pressed='true'] {
-        background: var(--_accent);
-        color: var(--_accent-text);
-        box-shadow: none;
+        gap: var(--space-xs);
       }
       .list {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
-        padding: 4px 0 12px;
+        padding: var(--space-xs) 0 var(--space-md);
         overscroll-behavior: contain;
       }
       .hint {
-        margin: 10px 12px 2px;
-        color: var(--_text-muted);
-        font-size: 11.5px;
-        line-height: 1.4;
+        margin: var(--space-md) var(--space-md) var(--space-xs);
+      }
+      z-collapsible {
+        display: block;
+        padding-inline: var(--space-md);
       }
       .root {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: var(--space-sm);
         width: 100%;
-        padding: 8px 12px 6px;
-        text-align: left;
-      }
-      .root:hover .root-name {
-        color: var(--_text);
-      }
-      .root .chev {
-        display: inline-flex;
-        color: var(--_text-faint);
-        transition: transform var(--_motion-fast) var(--_ease);
-      }
-      .root[aria-expanded='false'] .chev {
-        transform: rotate(-90deg);
       }
       .degree {
         min-width: 2.4em;
         color: var(--_text);
-        font: 600 11.5px var(--_font-mono);
+        font: 600 var(--font-size-caption) var(--_font-mono);
       }
       .root-name {
         color: var(--_text-muted);
@@ -213,46 +115,33 @@ export class MaddieChords extends MaddieElement {
       .count {
         margin-left: auto;
         color: var(--_text-faint);
-        font-size: 11px;
+        font-size: var(--font-size-caption);
         font-variant-numeric: tabular-nums;
       }
       .chips {
         display: flex;
         flex-wrap: wrap;
-        gap: 4px;
-        padding: 0 12px 6px;
+        gap: var(--space-xs);
+        padding-block: var(--space-xs) var(--space-sm);
       }
       .chip {
-        height: 26px;
-        padding: 0 8px;
-        border-radius: 7px;
-        background: var(--_surface-2);
-        color: var(--_text);
-        font-size: 12px;
-        font-weight: 500;
-        white-space: nowrap;
         cursor: grab;
         touch-action: none;
-        transition:
-          background-color var(--_motion-fast) var(--_ease),
-          transform var(--_motion-fast) var(--_ease);
+        border-radius: 999px;
+        transition: transform var(--_motion-fast) var(--_ease);
       }
-      .chip:hover {
-        background: var(--_hover);
-        box-shadow: inset 0 0 0 1px var(--_border);
+      .chip:focus-visible {
+        outline: 3px solid var(--_focus);
+        outline-offset: 2px;
       }
       .chip:active {
         transform: scale(0.96);
       }
       .chip.dragging {
         cursor: grabbing;
-        background: var(--_accent);
-        color: var(--_accent-text);
       }
       .empty {
-        margin: 16px 12px;
-        color: var(--_text-faint);
-        font-size: 12px;
+        margin: var(--space-lg) var(--space-md);
       }
       .ghost {
         position: fixed;
@@ -260,23 +149,24 @@ export class MaddieChords extends MaddieElement {
         top: 0;
         left: 0;
         display: none;
-        padding: 4px 9px;
+        padding: var(--space-xs) var(--space-sm);
+        border: 1px solid var(--_border);
         border-radius: 999px;
-        background: var(--_text);
-        color: var(--_bg);
-        font-size: 12px;
+        background: var(--_raised);
+        color: var(--_text);
+        box-shadow: var(--elevation-overlay);
+        font-size: var(--font-size-small);
         font-weight: 600;
         white-space: nowrap;
         pointer-events: none;
-        box-shadow: 0 6px 20px -6px rgb(0 0 0 / 0.35);
       }
       .ghost.show {
         display: block;
       }
       .ghost small {
-        margin-left: 6px;
+        margin-left: var(--space-sm);
+        color: var(--_text-muted);
         font-weight: 500;
-        opacity: 0.7;
       }
     `,
   ];
@@ -324,6 +214,8 @@ export class MaddieChords extends MaddieElement {
       if (!dragging) {
         dragging = true;
         chip.classList.add('dragging');
+        chip.setAttribute('kind', 'solid');
+        chip.setAttribute('accent', 'dom');
         ghost.innerHTML = '';
         ghost.append(label);
         const notes = document.createElement('small');
@@ -344,6 +236,8 @@ export class MaddieChords extends MaddieElement {
       window.removeEventListener('keydown', esc, true);
       if (ev && chip.hasPointerCapture(ev.pointerId)) chip.releasePointerCapture(ev.pointerId);
       chip.classList.remove('dragging');
+      chip.setAttribute('kind', 'soft');
+      chip.removeAttribute('accent');
       ghost.classList.remove('show');
       if (!dragging) return;
       if (ev) {
@@ -364,6 +258,14 @@ export class MaddieChords extends MaddieElement {
     chip.addEventListener('pointerup', up);
     chip.addEventListener('pointercancel', cancelled);
     window.addEventListener('keydown', esc, true);
+  }
+
+  /** Enter or Space on a focused chord plays it (dragging is for the pointer). */
+  private onChipKey(e: KeyboardEvent, chord: Chord) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const intervals = invert(chord.type.intervals, this.inversion);
+    this.ed?.auditionChord(voiceChord(chord.root, intervals, AUDITION_NEAR), 0.5, undefined, { humanize: true });
   }
 
   // ── Render ────────────────────────────────────────────────────────
@@ -398,69 +300,81 @@ export class MaddieChords extends MaddieElement {
 
     return html`
       <header>
-        <h2>Chords</h2>
-        <span class="key">${key ? formatKey(key) : 'No key'}</span>
+        <z-text tag="h2" size="sm" weight="600">Chords</z-text>
+        <z-badge size="sm">${key ? formatKey(key) : 'No key'}</z-badge>
         <span class="spacer"></span>
-        <button class="close" aria-label="Close chords" title="Close   H" @click=${() => ed.setView({ chordsPanel: false })}>
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
+        <z-tooltip content="Close   H" placement="bottom"
+          ><z-button class="icon" kind="ghost" size="sm" aria-label="Close chords" @click=${() => ed.setView({ chordsPanel: false })}>${icons.close}</z-button></z-tooltip
+        >
       </header>
       <div class="controls">
-        <input
+        <z-input
+          size="sm"
           type="search"
+          label="Search chords"
           placeholder="Search: m7, sus4, add9, 13…"
-          aria-label="Search chords"
-          .value=${this.query}
-          @input=${(e: Event) => (this.query = (e.target as HTMLInputElement).value)}
-        />
-        <div class="segmented" role="radiogroup" aria-label="Inversion">
-          ${INVERSIONS.map(
-            (label, i) =>
-              html`<button role="radio" aria-checked=${this.inversion === i} aria-pressed=${this.inversion === i} @click=${() => (this.inversion = i)}>
-                ${label}
-              </button>`,
-          )}
-        </div>
-        <div class="families" role="radiogroup" aria-label="Chord type">
+          .value=${live(this.query)}
+          @input=${(e: CustomEvent<{ value: string }>) => (this.query = e.detail.value)}
+        ></z-input>
+        <z-toggle-button-group
+          size="sm"
+          kind="outline"
+          accent="dom"
+          aria-label="Inversion"
+          @change=${(e: CustomEvent<{ value?: string }>) => {
+            if (e.detail.value !== undefined) this.inversion = Number(e.detail.value);
+            else this.requestUpdate(); // The inversion is always one of the four.
+          }}
+        >
+          ${INVERSIONS.map((label, i) => html`<z-toggle-button-group-item value=${i} .isPressed=${live(this.inversion === i)}>${label}</z-toggle-button-group-item>`)}
+        </z-toggle-button-group>
+        <div class="families" role="group" aria-label="Chord type">
           ${[{ id: 'all' as const, label: 'All' }, ...CHORD_FAMILIES].map(
             (f) =>
-              html`<button role="radio" aria-checked=${this.family === f.id} aria-pressed=${this.family === f.id} @click=${() => (this.family = f.id)}>
-                ${f.label}
-              </button>`,
+              html`<z-badge
+                selectable
+                size="sm"
+                kind=${this.family === f.id ? 'solid' : 'soft'}
+                accent=${this.family === f.id ? 'dom' : 'neutral'}
+                ?is-selected=${this.family === f.id}
+                @select=${() => (this.family = f.id)}
+                >${f.label}</z-badge
+              >`,
           )}
         </div>
       </div>
       <div class="list" part="list">
-        ${key ? nothing : html`<p class="hint">No key set, so every chord shows. Pick a key to see only chords that fit it.</p>`}
+        ${key ? nothing : html`<z-text class="hint" size="xs" color="muted">No key set, so every chord shows. Pick a key to see only chords that fit it.</z-text>`}
         ${groups.length
           ? groups.map((g) => {
               const open = this.isOpen(g.root);
-              return html`
-                <button class="root" aria-expanded=${open} @click=${() => this.toggleRoot(g.root)}>
-                  <span class="chev">${icons.chevron}</span>
+              return html`<z-collapsible
+                .isOpen=${live(open)}
+                @toggle=${(e: CustomEvent<{ open: boolean }>) => e.detail.open !== this.isOpen(g.root) && this.toggleRoot(g.root)}
+              >
+                <span slot="trigger" class="root">
                   ${g.degree ? html`<span class="degree">${g.degree}</span>` : nothing}
                   <span class="root-name">${pitchClassName(g.root)}</span>
                   <span class="count">${g.chords.length}</span>
-                </button>
-                ${open
-                  ? html`<div class="chips">
-                      ${g.chords.map(
-                        (c) =>
-                          html`<button
-                            class="chip"
-                            title=${`${pitchClassName(c.root)} ${c.type.name}${c.degree ? ` (${c.degree})` : ''}\n${c.type.intervals.map((i) => pitchClassName(c.root + i)).join(' · ')}\nDrag onto the grid · click to hear`}
-                            @pointerdown=${(e: PointerEvent) => this.onChipDown(e, c)}
-                          >
-                            ${c.name}
-                          </button>`,
-                      )}
-                    </div>`
-                  : nothing}
-              `;
+                </span>
+                <div class="chips">
+                  ${g.chords.map(
+                    (c) =>
+                      html`<z-badge
+                        class="chip"
+                        kind="soft"
+                        tabindex="0"
+                        role="button"
+                        title=${`${pitchClassName(c.root)} ${c.type.name}${c.degree ? ` (${c.degree})` : ''}\n${c.type.intervals.map((i) => pitchClassName(c.root + i)).join(' · ')}\nDrag onto the grid · click to hear`}
+                        @pointerdown=${(e: PointerEvent) => this.onChipDown(e, c)}
+                        @keydown=${(e: KeyboardEvent) => this.onChipKey(e, c)}
+                        >${c.name}</z-badge
+                      >`,
+                  )}
+                </div>
+              </z-collapsible>`;
             })
-          : html`<p class="empty">No chords match.</p>`}
+          : html`<z-text class="empty" size="sm" color="muted">No chords match.</z-text>`}
       </div>
       <div class="ghost" aria-hidden="true"></div>
     `;

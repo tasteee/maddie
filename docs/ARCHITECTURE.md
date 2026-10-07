@@ -273,7 +273,7 @@ viewport.zoomAt({ x, y }, factor)   // anchored zoom
 
 Canvas can't read CSS directly. So:
 
-1. Theme is defined as CSS custom properties on the host (see §7).
+1. Theme is defined as CSS custom properties on the host (see §7). They resolve to Zest tokens, so Zest's `data-theme` drives them.
 2. Engine reads resolved tokens via `getComputedStyle` on connect.
 3. Token changes are detected by a **sentinel trick**: tokens are registered with `@property`, a hidden sentinel element has `transition: all 1ms` on them, and `transitionrun` fires when any token changes (theme switch, class change, media query). No polling.
 4. Manual escape hatch: `el.refreshTheme()`.
@@ -517,7 +517,8 @@ editor.output = {
 
 - `<maddie-topbar>`: global (transport, tempo, metronome, volume, loop, follow, keyboard input, files).
 - `<maddie-editbar>`: grid tools (tools, grid, snap, key, scale lock, fold, history, row height, zoom).
-- `<maddie-toolbar>` stacks both and renders the edit row in the **inverse** color scheme (`edit-row="same"` to opt out). It detects the active scheme with a `light-dark()` sentinel, so it follows theme changes live.
+- `<maddie-toolbar>` stacks both. Each row is a bordered `--card` surface; depth is a hairline, not a shadow (Zest's flat rule), and the hardware themes add their own material.
+- Every control is a Zest element: `<z-button>`, `<z-toggle-button>`, `<z-toggle-button-group>`, `<z-select>`, `<z-switch>`, `<z-slider>`, `<z-number-input>`, `<z-popover>` (Input, Output, Quantize, Humanize), `<z-tooltip>` and `<z-separator>`. Maddie owns the state; `live()` keeps each element in step with the editor. Icons are Lucide-style 24-grid strokes, per Zest's iconography rules.
 
 ### 6.3.1 Marker, metronome, follow
 
@@ -570,7 +571,16 @@ Token groups:
 - **Space:** `row-height` (default), `keyboard-width`, `ruler-height`, `lane-height`
 - **Motion:** `motion-fast`, `motion-medium`, `motion-slow`, `ease-out`, `ease-spring`
 
-Ships `light` and `dark` built in, follows `prefers-color-scheme`, override with `theme="dark"`. Uses `oklch` for perceptually even velocity shading.
+Every token resolves to a Zest semantic token from `@tasteee/zest/ink.css`, so Maddie follows Zest's four themes (`dark`, `light`, `console`, `studio`). Set `data-theme` on `<html>` (Zest's `<z-theme-switcher>` does this) or `theme="studio"` on one editor. Uses `oklch` for perceptually even velocity shading.
+
+| Maddie role | Zest token |
+| --- | --- |
+| page, bars, panels | `--background`, `--card`, `--background-light` (wells), `--popover` (floating) |
+| text | `--foreground`, `--muted-foreground`, `--secondary` |
+| edges, focus | `--border`, `--focus-ring` |
+| dominant accent: tools, toggles that are on, marquee, scale | `--purple` (`accent="dom"`) |
+| subordinate accent: playhead, record, note sweep end | `--pink` (`accent="sub"`) |
+| delete | `--destructive` (`accent="error"`: destructive actions only) |
 
 ### Tier 2: `::part()` for DOM chrome
 
@@ -604,7 +614,7 @@ All built-in CSS lives in `@layer maddie` so any consumer CSS wins without `!imp
 
 Notes are colored by **pitch**, so you can match a note to its velocity stem at a glance.
 
-- `note-color="pitch"` (default): hue sweeps indigo → cyan → green → yellow → red from C1 to E6 (clamped), with a slight lightness lift going up. Hue only, never black: black notes vanish in dark mode and read as "selected" in light mode.
+- `note-color="pitch"` (default): hue sweeps Zest's dominant accent (purple) to its subordinate accent (pink) from C1 to E6 (clamped), with a slight lightness lift going up. Hue only, never black: black notes vanish in dark mode and read as "selected" in light mode.
 - `note-color="pitch-class"`: 12 hues, every C the same (good for harmony).
 - `note-color="mono"`: one neutral color.
 - Velocity is always opacity, so color always means pitch.
@@ -612,7 +622,7 @@ Notes are colored by **pitch**, so you can match a note to its velocity stem at 
 - The keyboard shows a thin color strip per row as a legend.
 - Overrides: `--maddie-pitch-hue-low`, `--maddie-pitch-hue-high`, `--maddie-pitch-lightness`, `--maddie-pitch-chroma`.
 
-Chrome is **grayscale**: the darkest color is the accent (play button, pressed states). Color is reserved for notes.
+Chrome is Zest's: neutral ramps plus the dominant accent for state that is on. Pitch color on the notes shares that purple → pink range, so notes and controls read as one system.
 
 ### Selection bar (`<maddie-inspector>`)
 
@@ -620,8 +630,8 @@ Batch edits for the selection live in a fixed bar under the velocity lane, never
 
 - Always visible, fixed height: no layout shift, no covering what you're dragging.
 - Empty selection → controls dim in place (muscle memory stays valid).
-- Contents: count + pitch range · velocity scrub (relative, shows ranges like `65–127`) · quantize (grid + strength) · humanize (timing % of grid, velocity %) · transpose (±1 follows scale lock, ±12) · length (×½ / ×2, keeps spacing) · legato / mute / duplicate / delete.
-- Values are `<maddie-scrub>` controls: drag, ⇧ for fine, double-click to type, arrows to nudge.
+- Contents: count + pitch range · velocity (one number sets every selected note; a low–high pair refits them, like `65–127`) · quantize and humanize (popovers: grid + strength, timing % of grid + velocity %) · transpose (±1 follows scale lock, ±12) · length (×½ / ×2, keeps spacing) · legato / mute / duplicate / delete.
+- Values are `<z-number-input>` fields and `<z-slider>`s: type, or use the arrow keys.
 - Standalone element: put it in a sidebar instead by slotting your own layout.
 
 ## 8. Motion design
@@ -772,7 +782,7 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 2. ✅ **Roll MVP:** `<maddie-root>`, `<maddie-piano-roll>`, `<maddie-keyboard>`. Draw, select, marquee, move, ⌘-drag copy, resize, erase, zoom, scroll, auto-scroll.
 3. 🟡 **Feel pass:** motion system (tween on undo/commands, snap glide, pop-in, fade-out, fold, keyboard zoom), theme bridge, light/dark, keymap, hit zones. Todo: hover lift polish, focus/cursor a11y layer.
 4. ✅ **Playback:** lookahead transport, `Output` + note events, ruler seek + loop drag, playhead, follow. Playground plays through smplr.
-5. 🟡 **Lanes + controls:** velocity lane (drag + paint), toolbar controls, `<maddie-editor>` preset. Todo: note inspector, overview/minimap, custom popover menus (selects are native for now).
+5. 🟡 **Lanes + controls:** velocity lane (drag + paint), toolbar controls, `<maddie-editor>` preset. Todo: overview/minimap. Selects, switches, sliders, popovers and tooltips are Zest elements.
 6. 🟡 **Music tools:** quantize, transpose (semitone + degree), scale lock, fold (scale/notes), clipboard, legato, mute. Todo: humanize, split/glue, time-sig UI.
 7. 🟡 **Ecosystem:** MIDI export + import ✅ (`toMidiFile`, `fromMidiFile`, `<maddie-export>`, `<maddie-import>`, drop on grid). Todo: `webMidiOutput()`, framework wrappers, docs site.
 8. ⬜ **Later:** touch, CC/pitch bend lanes, tempo automation, MPE, OffscreenCanvas, collab adapter, a11y screen-reader layer.

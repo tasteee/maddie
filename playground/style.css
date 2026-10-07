@@ -1,25 +1,8 @@
-:root {
-  color-scheme: light;
-  font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  --page: #ffffff;
-  --ink: #111114;
-  --muted: #6c6c78;
-  --hover: rgb(15 15 25 / 0.05);
-}
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --page: #0c0c0f;
-  --ink: #f2f2f5;
-  --muted: #8e8e9a;
-  --hover: rgb(255 255 255 / 0.065);
-}
 html,
 body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--page);
 }
 maddie-editor {
   height: 100vh;
@@ -28,28 +11,4 @@ maddie-editor {
 maddie-editor::part(frame) {
   border: 0;
   border-radius: 0;
-}
-.theme {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  margin-left: 2px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background-color 90ms ease,
-    color 90ms ease;
-}
-.theme:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.theme:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 1px;
 }

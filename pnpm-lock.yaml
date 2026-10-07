@@ -12,6 +12,9 @@ importers:
         specifier: ^3.3.0
         version: 3.3.3
     devDependencies:
+      '@tasteee/zest':
+        specifier: ^0.8.1
+        version: 0.8.1
       smplr:
         specifier: ^1.1.0
         version: 1.1.0
@@ -323,6 +326,14 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@tasteee/wired@0.1.0':
+    resolution: {integrity: sha512-hFa0Pq8OL78YxFyvnXnw2/i+dLAKutB/wlfy2zx10YVs5TvCqjIn2gMNzngq/+NI9EGVHoUPGsTVf97/25inyQ==}
+    peerDependencies:
+      atomico: ^2.2.0
+
+  '@tasteee/zest@0.8.1':
+    resolution: {integrity: sha512-r4ahS9NH7Zo/EY/wNYTXGH/Nhj4f2UHQgKWlevuFJDWeenL0licVvUpct8Vu/hzhOezm3uKz85JvpC4Su2UkhA==}
+
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
@@ -367,6 +378,10 @@ packages:
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
+
+  atomico@2.2.0:
+    resolution: {integrity: sha512-JrJQU2e2brn48JLgXiGIoGIlwzRgMKZYG7Uo3Wzwf6nat+QmVwoSurMMvwcFuYEZFO0IHWvH1DYwHWIAyUxaPg==}
+    hasBin: true
 
   cac@6.7.14:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
@@ -762,6 +777,15 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.63.6':
     optional: true
 
+  '@tasteee/wired@0.1.0(atomico@2.2.0)':
+    dependencies:
+      atomico: 2.2.0
+
+  '@tasteee/zest@0.8.1':
+    dependencies:
+      '@tasteee/wired': 0.1.0(atomico@2.2.0)
+      atomico: 2.2.0
+
   '@types/chai@5.2.3':
     dependencies:
       '@types/deep-eql': 4.0.2
@@ -816,6 +840,8 @@ snapshots:
       tinyrainbow: 2.0.0
 
   assertion-error@2.0.1: {}
+
+  atomico@2.2.0: {}
 
   cac@6.7.14: {}
 
