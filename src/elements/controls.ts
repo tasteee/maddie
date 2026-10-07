@@ -150,9 +150,21 @@ export const controlStyles = css`
     font-size: 11.5px;
     font-weight: 600;
   }
+  button.text {
+    padding: 0 10px;
+    font-weight: 500;
+    color: var(--_text);
+  }
+  button.text.muted {
+    color: var(--_text-faint);
+    text-decoration: line-through;
+  }
+  button.text[aria-pressed='true'] {
+    color: var(--_accent);
+  }
   button.with-chip {
     gap: 6px;
-    padding: 0 8px 0 7px;
+    padding: 0 8px 0 10px;
   }
   .chip {
     padding: 1px 5px;
@@ -838,13 +850,8 @@ export class MaddieInput extends ControlElement {
       ? `${scaleMapped(ed) ? 'Each key steps up the scale' : 'Each key steps up a semitone'}${z !== null ? ` · Z = ${pitchName(z)}` : ''} · + − octave`
       : 'Play with the keys (\`)';
     return html`<div class="pop-wrap">
-      <button
-        class=${computerKeyboard && z !== null ? 'with-chip' : ''}
-        aria-pressed=${computerKeyboard || midiInput}
-        aria-label="Input"
-        @click=${() => setComputerKeyboard(ed, !computerKeyboard)}
-      >
-        ${midiInput && !computerKeyboard ? icons.midi : icons.keyboard}${computerKeyboard && z !== null ? html`<span class="chip">${pitchName(z)}</span>` : nothing}
+      <button class=${computerKeyboard && z !== null ? 'text with-chip' : 'text'} aria-pressed=${computerKeyboard || midiInput} aria-label="Input" @click=${() => setComputerKeyboard(ed, !computerKeyboard)}>
+        Input${computerKeyboard && z !== null ? html`<span class="chip">${pitchName(z)}</span>` : nothing}
       </button>
       <div class="pop input" role="group" aria-label="Input options">
         <span class="pop-title">Input</span>
@@ -1007,8 +1014,8 @@ export class MaddieOutput extends ControlElement {
     ];
     const ports = router.ports;
     return html`<div class="pop-wrap">
-      <button aria-label=${muted ? 'Unmute' : 'Mute'} aria-pressed=${false} @click=${() => ed.setVolume({ muted: !muted })}>
-        ${muted || level === 0 ? icons.mute : icons.volume}
+      <button class=${muted || level === 0 ? 'text muted' : 'text'} aria-label=${muted ? 'Unmute' : 'Mute'} aria-pressed=${false} @click=${() => ed.setVolume({ muted: !muted })}>
+        Output
       </button>
       <div class="pop output" role="group" aria-label="Output options">
         <span class="pop-title">Output<kbd>⇧M</kbd></span>
