@@ -6,6 +6,7 @@ import {
   exportFilename,
   formatBBT,
   formatKey,
+  inScale,
   pitchName,
   toMidiFile,
   GRID_OPTIONS,
@@ -417,6 +418,11 @@ export class MaddieKeySelect extends ControlElement {
     const auto = () => {
       const guess = detectKey(notes);
       if (!guess) return;
+      // A key is already set and every note fits it: leave it alone.
+      if (key && notes.every((n) => inScale(n.pitch, key))) {
+        this.engine?.toast(`Key: ${formatKey(key)} · every note fits`);
+        return;
+      }
       ed.commands.setKey(guess.key);
       const pct = Math.round(guess.fit * 100);
       this.engine?.toast(guess.outside ? `Key: ${formatKey(guess.key)} · ${pct}% fits, ${guess.outside} notes outside` : `Key: ${formatKey(guess.key)} · every note fits`);
