@@ -270,7 +270,7 @@ export class MaddieInspector extends MaddieElement {
 
       <div class="group" part="group actions">
         ${iconAction('Legato', 'Legato · extend to next note   L', icons.legato, () => ed.commands.legato())}
-        ${iconAction('Mute', 'Mute   M', icons.mute, () => ed.commands.toggleMute())}
+        ${iconAction('Mute', 'Mute   M / 0', icons.mute, () => ed.commands.toggleMute())}
         ${iconAction('Duplicate', `Duplicate   ${modKeyLabel} D`, icons.duplicate, () => ed.commands.duplicate())}
         ${iconAction('Delete', 'Delete   ⌫', icons.trash, () => ed.commands.delete(), 'error')}
       </div>

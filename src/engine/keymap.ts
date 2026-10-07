@@ -135,6 +135,7 @@ export const defaultKeymap: Keymap = {
   'mod+v': 'paste',
   q: 'quantize',
   m: 'mute',
+  '0': 'mute',
   l: 'legato',
   arrowleft: 'nudgeLeft',
   arrowright: 'nudgeRight',
