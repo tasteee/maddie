@@ -30,6 +30,7 @@ export const icons = {
   download: icon(svg`<path d="M8 2.5v7.75M4.75 7 8 10.25 11.25 7"/><path d="M2.75 11v1.25a1.25 1.25 0 0 0 1.25 1.25h8a1.25 1.25 0 0 0 1.25-1.25V11"/>`),
   upload: icon(svg`<path d="M8 10.25V2.5M4.75 5.75 8 2.5l3.25 3.25"/><path d="M2.75 11v1.25a1.25 1.25 0 0 0 1.25 1.25h8a1.25 1.25 0 0 0 1.25-1.25V11"/>`),
   rewind: icon(svg`<path d="M3.25 3v10"/><path d="M12.75 3.6v8.8a.6.6 0 0 1-.94.5L5.6 8.5a.6.6 0 0 1 0-1l6.2-4.4a.6.6 0 0 1 .95.5Z" fill="currentColor" stroke="none"/>`),
+  metronomeOff: icon(svg`<path d="M5.4 13.5h5.2L9 2.75H7L5.4 13.5Z"/><path d="M5.9 10.5h4.2" opacity=".6"/><path d="M2.5 2.5l11 11"/>`),
   metronome: icon(svg`<path d="M5.4 13.5h5.2L9 2.75H7L5.4 13.5Z"/><path d="M8 10.5 12 4.5"/><path d="M5.9 10.5h4.2" opacity=".6"/>`),
   volume: icon(svg`<path d="M2.75 6.25v3.5h2.5L8.5 12.5v-9L5.25 6.25h-2.5Z"/><path d="M10.75 6a2.75 2.75 0 0 1 0 4M12.5 4.25a5.25 5.25 0 0 1 0 7.5"/>`),
   keyboard: icon(svg`<rect x="1.75" y="4" width="12.5" height="8" rx="1.75"/><path d="M4.25 6.75h.01M6.75 6.75h.01M9.25 6.75h.01M11.75 6.75h.01M5.25 9.5h5.5"/>`),

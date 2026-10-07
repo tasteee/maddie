@@ -628,6 +628,75 @@ export class MaddieTransport extends ControlElement {
   }
 }
 
+/** Switch rows (label + hint + toggle) for popovers. */
+const switchStyles = css`
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .hint {
+    color: var(--_text-faint);
+    font-size: 11.5px;
+    font-weight: 500;
+    white-space: normal;
+  }
+  .switch-label {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 12px;
+  }
+  button.switch {
+    width: 30px;
+    min-width: 30px;
+    height: 18px;
+    padding: 0;
+    border-radius: 999px;
+    background: var(--_surface-2);
+    box-shadow: inset 0 0 0 1px var(--_border);
+  }
+  button.switch::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--_text-muted);
+    transition:
+      transform var(--_motion-fast) var(--_ease),
+      background-color var(--_motion-fast) var(--_ease);
+  }
+  button.switch[aria-checked='true'] {
+    background: var(--_accent);
+    box-shadow: none;
+  }
+  button.switch[aria-checked='true']::before {
+    background: var(--_accent-text);
+    transform: translateX(12px);
+  }
+  button.switch:hover {
+    background: var(--_hover);
+  }
+  button.switch[aria-checked='true']:hover {
+    background: var(--_accent);
+  }
+  button.switch:active {
+    transform: none;
+  }
+`;
+
+/** One switch row. `label` names the switch for assistive tech. */
+function switchRow(label: string, hint: string, on: boolean, onClick: () => void, disabled = false) {
+  return html`<div class="row">
+    <span class="switch-label">${label}<span class="hint">${hint}</span></span>
+    <button class="switch" role="switch" aria-checked=${on} aria-label=${label} ?disabled=${disabled} @click=${onClick}></button>
+  </div>`;
+}
+
 /** Shared: an icon toggle with a slider popover underneath (hover or focus to reveal). */
 function popToggle(opts: {
   icon: unknown;
@@ -662,6 +731,40 @@ function popToggle(opts: {
 /** Metronome on/off; hover for volume. The icon pulses on every click. */
 @customElement('maddie-metronome')
 export class MaddieMetronome extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    switchStyles,
+    css`
+      /* On is a filled button, off is a struck-through icon: readable at a glance. */
+      button.metro[aria-pressed='true'] {
+        background: var(--_accent);
+        color: var(--_accent-text);
+      }
+      button.metro[aria-pressed='true']:hover {
+        background: color-mix(in oklab, var(--_accent) 85%, var(--_text));
+      }
+      button.metro[aria-pressed='false'] {
+        color: var(--_text-faint);
+      }
+      .pop.metro {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        min-width: 240px;
+      }
+      .volume {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .volume .slider {
+        flex: 1;
+        width: auto;
+      }
+    `,
+  ];
+
   private timers = new Set<ReturnType<typeof setTimeout>>();
 
   protected attach(editor: Editor, engine: Engine) {
@@ -699,15 +802,31 @@ export class MaddieMetronome extends ControlElement {
   render() {
     const t = this.ed?.transport;
     if (!t) return nothing;
-    return popToggle({
-      icon: icons.metronome,
-      label: 'Metronome',
-      shortcut: 'C',
-      on: t.metronome.enabled,
-      value: t.metronome.volume,
-      onToggle: () => t.setMetronome({ enabled: !t.metronome.enabled }),
-      onValue: (volume) => t.setMetronome({ volume, enabled: true }),
-    });
+    const { enabled, volume } = t.metronome;
+    const toggle = () => t.setMetronome({ enabled: !enabled });
+    return html`<div class="pop-wrap">
+      <button class="metro" aria-pressed=${enabled} aria-label=${enabled ? 'Metronome on' : 'Metronome off'} @click=${toggle}>
+        ${enabled ? icons.metronome : icons.metronomeOff}
+      </button>
+      <div class="pop metro" role="group" aria-label="Metronome options">
+        <span class="pop-title">Metronome<kbd>C</kbd></span>
+        ${switchRow('Click on every beat', enabled ? 'On' : 'Off', enabled, toggle)}
+        <div class="volume">
+          <input
+            class="slider"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            aria-label="Metronome volume"
+            .value=${String(volume)}
+            style=${`--v: ${volume}`}
+            @input=${(e: Event) => t.setMetronome({ volume: Number((e.target as HTMLInputElement).value), enabled: true })}
+          />
+          <span class="pop-value">${Math.round(volume * 100)}%</span>
+        </div>
+      </div>
+    </div>`;
   }
 }
 
@@ -770,69 +889,13 @@ export class MaddieInput extends ControlElement {
   static styles = [
     tokens,
     controlStyles,
+    switchStyles,
     css`
       .pop.input {
         flex-direction: column;
         align-items: stretch;
         gap: 10px;
         min-width: 260px;
-      }
-      .row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .hint {
-        color: var(--_text-faint);
-        font-size: 11.5px;
-        font-weight: 500;
-        white-space: normal;
-      }
-      .switch-label {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-        font-size: 12px;
-      }
-      button.switch {
-        width: 30px;
-        min-width: 30px;
-        height: 18px;
-        padding: 0;
-        border-radius: 999px;
-        background: var(--_surface-2);
-        box-shadow: inset 0 0 0 1px var(--_border);
-      }
-      button.switch::before {
-        content: '';
-        position: absolute;
-        top: 2px;
-        left: 2px;
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: var(--_text-muted);
-        transition:
-          transform var(--_motion-fast) var(--_ease),
-          background-color var(--_motion-fast) var(--_ease);
-      }
-      button.switch[aria-checked='true'] {
-        background: var(--_accent);
-        box-shadow: none;
-      }
-      button.switch[aria-checked='true']::before {
-        background: var(--_accent-text);
-        transform: translateX(12px);
-      }
-      button.switch:hover {
-        background: var(--_hover);
-      }
-      button.switch[aria-checked='true']:hover {
-        background: var(--_accent);
-      }
-      button.switch:active {
-        transform: none;
       }
       .select.device {
         justify-content: space-between;
@@ -854,13 +917,6 @@ export class MaddieInput extends ControlElement {
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
     this.track(MidiInput.for(editor).onChange(() => this.requestUpdate()));
-  }
-
-  private switch(label: string, hint: string, on: boolean, onClick: () => void, disabled = false) {
-    return html`<div class="row">
-      <span class="switch-label">${label}<span class="hint">${hint}</span></span>
-      <button class="switch" role="switch" aria-checked=${on} aria-label=${label} ?disabled=${disabled} @click=${onClick}></button>
-    </div>`;
   }
 
   render() {
@@ -894,8 +950,8 @@ export class MaddieInput extends ControlElement {
       </button>
       <div class="pop input" role="group" aria-label="Input options">
         <span class="pop-title">Input</span>
-        ${this.switch('Computer keyboard', keysHint, computerKeyboard, () => setComputerKeyboard(ed, !computerKeyboard))}
-        ${this.switch('MIDI controller', midiHint, midiInput, () => setMidiInput(ed, !midiInput))}
+        ${switchRow('Computer keyboard', keysHint, computerKeyboard, () => setComputerKeyboard(ed, !computerKeyboard))}
+        ${switchRow('MIDI controller', midiHint, midiInput, () => setMidiInput(ed, !midiInput))}
         ${midiInput && midi.status === 'ready' && devices.length
           ? html`<label class="select device">
               <span class="value">${current?.name ?? 'All devices'}</span><span class="chev">${icons.chevron}</span>
@@ -906,7 +962,7 @@ export class MaddieInput extends ControlElement {
             </label>`
           : nothing}
         <div class="rule"></div>
-        ${this.switch(
+        ${switchRow(
           'Scale notes only',
           key ? `Out-of-scale notes snap to ${formatKey(key)}` : 'Set a key to use this',
           keyboardScale,
