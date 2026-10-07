@@ -317,7 +317,7 @@ export class MaddieChords extends MaddieElement {
     const drag: ChordDrag = { root: chord.root, intervals, name: label, clientX: e.clientX, clientY: e.clientY, overGrid: false };
     const ghost = this.renderRoot.querySelector<HTMLElement>('.ghost')!;
     let dragging = false;
-    ed.auditionChord(voiceChord(chord.root, intervals, AUDITION_NEAR), 0.5);
+    ed.auditionChord(voiceChord(chord.root, intervals, AUDITION_NEAR), 0.5, undefined, { humanize: true });
 
     const move = (ev: PointerEvent) => {
       if (!dragging && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < DRAG_THRESHOLD) return;

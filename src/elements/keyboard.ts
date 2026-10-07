@@ -9,7 +9,7 @@ import { CanvasElement } from './canvas-element';
 import { noteBase, roundRect } from './paint';
 import type { Palette } from './tokens';
 
-/** Piano keys / row labels. Follows fold and scroll. Click or drag to audition. */
+/** Piano keys / row labels. Follows fold and scroll. Click or drag to audition. Click also selects every note in that row (⇧ / ⌘ adds). */
 @customElement('maddie-keyboard')
 export class MaddieKeyboard extends CanvasElement {
   static styles = [
@@ -66,6 +66,8 @@ export class MaddieKeyboard extends CanvasElement {
       engine.invalidate();
     };
     press(current);
+    const row = ed.notes().filter((n) => n.pitch === current);
+    if (row.length) ed.select(row.map((n) => n.id), e.shiftKey || e.metaKey || e.ctrlKey ? 'add' : 'replace');
     const move = (ev: PointerEvent) => {
       const pitch = this.pitchAt(this.local(ev).y);
       if (pitch !== current) press((current = pitch));

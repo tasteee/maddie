@@ -22,7 +22,6 @@ export {
   MaddieZoom,
   MaddieExport,
   MaddieImport,
-  MaddieMetronome,
   MaddieVolume,
   MaddieLoopToggle,
   MaddieFollowToggle,

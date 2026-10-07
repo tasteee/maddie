@@ -60,11 +60,16 @@ export abstract class CanvasElement extends MaddieElement {
       this.engine?.invalidate();
     });
     this.ro.observe(this);
+    // Canvas text uses whatever font is loaded at draw time: redraw when web fonts arrive.
+    document.fonts?.addEventListener('loadingdone', this.onFonts);
   }
+
+  private onFonts = () => this.engine?.invalidate();
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.ro?.disconnect();
+    document.fonts?.removeEventListener('loadingdone', this.onFonts);
   }
 
   protected attach(_editor: Editor, engine: Engine) {
