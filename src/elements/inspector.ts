@@ -204,10 +204,9 @@ export class MaddieInspector extends MaddieElement {
 
     return html`
       <div class="summary" role="status" aria-live="polite">
-        ${empty
-          ? html`<z-text size="sm" color="muted">Select notes to edit</z-text>`
-          : html`<span class="count">${notes.length} ${notes.length === 1 ? 'note' : 'notes'}</span>
-              <z-badge class="range" size="sm">${lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>`}
+        <z-text size="sm" color="muted" ?hidden=${!empty} style=${empty ? '' : 'display:none'}>Select notes to edit</z-text>
+        <span class="count" ?hidden=${empty}>${empty ? '' : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}</span>
+        <z-badge class="range" size="sm" ?hidden=${empty} style=${empty ? 'display:none' : ''}>${empty ? '' : lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
       </div>
 
       <z-separator vertical></z-separator>
