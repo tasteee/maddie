@@ -369,7 +369,7 @@ export class MaddieChords extends MaddieElement {
         dragging = true;
         chip.classList.add('dragging');
         chip.setAttribute('kind', 'solid');
-        chip.setAttribute('accent', 'dom');
+        chip.setAttribute('tone', 'primary');
         ghost.innerHTML = '';
         ghost.append(label);
         const notes = document.createElement('small');
@@ -391,7 +391,7 @@ export class MaddieChords extends MaddieElement {
       if (ev && chip.hasPointerCapture(ev.pointerId)) chip.releasePointerCapture(ev.pointerId);
       chip.classList.remove('dragging');
       chip.setAttribute('kind', 'soft');
-      chip.removeAttribute('accent');
+      chip.removeAttribute('tone');
       ghost.classList.remove('show');
       if (!dragging) return;
       if (ev) {
@@ -473,7 +473,7 @@ export class MaddieChords extends MaddieElement {
         <z-toggle-button-group
           size="sm"
           kind="outline"
-          accent="dom"
+          tone="primary"
           aria-label="Inversion"
           @change=${(e: CustomEvent<{ value?: string }>) => {
             if (e.detail.value !== undefined) this.inversion = Number(e.detail.value);
@@ -489,7 +489,7 @@ export class MaddieChords extends MaddieElement {
                 selectable
                 size="sm"
                 kind=${this.family === f.id ? 'solid' : 'soft'}
-                accent=${this.family === f.id ? 'dom' : 'neutral'}
+                tone=${this.family === f.id ? 'primary' : 'neutral'}
                 ?is-selected=${this.family === f.id}
                 @select=${() => (this.family = f.id)}
                 >${f.label}</z-badge

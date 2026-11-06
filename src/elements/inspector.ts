@@ -155,7 +155,7 @@ export class MaddieInspector extends MaddieElement {
   private percent(label: string, value: number, min: number, max: number, step: number, onValue: (v: number) => void) {
     return html`<z-slider
       label=${label}
-      accent="dom"
+      tone="primary"
       min=${min}
       max=${max}
       step=${step}
@@ -173,7 +173,7 @@ export class MaddieInspector extends MaddieElement {
       <div class="panel">
         <z-text class="panel-title" size="sm" weight="600">${title}</z-text>
         ${fields}
-        <z-tooltip content=${tipText} placement="top"><z-button kind="solid" accent="dom" size="sm" is-full-width @click=${apply}>Apply</z-button></z-tooltip>
+        <z-tooltip content=${tipText} placement="top"><z-button kind="solid" tone="primary" size="sm" is-full-width @click=${apply}>Apply</z-button></z-tooltip>
       </div>
     </z-popover>`;
   }
@@ -209,7 +209,7 @@ export class MaddieInspector extends MaddieElement {
         <z-badge class="range" size="sm" ?hidden=${empty} style=${empty ? 'display:none' : ''}>${empty ? '' : lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
       </div>
 
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group velocity">
         <span class="label">Velocity</span>
         ${vLo === vHi
@@ -217,7 +217,7 @@ export class MaddieInspector extends MaddieElement {
           : html`${this.velocityField('Lowest velocity', vLo, (v) => this.setVelocity(v, vHi))}<span class="dash">–</span>${this.velocityField('Highest velocity', vHi, (v) => this.setVelocity(vLo, v))}`}
       </div>
 
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group quantize">
         ${this.settings(
           'Quantize',
@@ -247,7 +247,7 @@ export class MaddieInspector extends MaddieElement {
         )}
       </div>
 
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group transpose">
         <span class="label">Transpose</span>
         <z-button-group>
@@ -258,7 +258,7 @@ export class MaddieInspector extends MaddieElement {
         </z-button-group>
       </div>
 
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group length">
         <span class="label">Length</span>
         <z-button-group>
@@ -271,16 +271,16 @@ export class MaddieInspector extends MaddieElement {
         ${iconAction('Legato', 'Legato · extend to next note   L', icons.legato, () => ed.commands.legato())}
         ${iconAction('Mute', 'Mute   M / 0', icons.mute, () => ed.commands.toggleMute())}
         ${iconAction('Duplicate', `Duplicate   ${modKeyLabel} D`, icons.duplicate, () => ed.commands.duplicate())}
-        ${iconAction('Delete', 'Delete   ⌫', icons.trash, () => ed.commands.delete(), 'error')}
+        ${iconAction('Delete', 'Delete   ⌫', icons.trash, () => ed.commands.delete(), 'danger')}
       </div>
     `;
   }
 }
 
 /** Icon-only action with a tooltip above it (the bar sits at the bottom). */
-function iconAction(label: string, tipText: string, icon: unknown, onClick: () => void, accent: 'neutral' | 'error' = 'neutral') {
+function iconAction(label: string, tipText: string, icon: unknown, onClick: () => void, tone: 'neutral' | 'danger' = 'neutral') {
   return html`<z-tooltip content=${tipText} placement="top"
-    ><z-button class="icon" kind="ghost" size="sm" accent=${accent} aria-label=${label} @click=${onClick}>${icon}</z-button></z-tooltip
+    ><z-button class="icon" kind="ghost" size="sm" tone=${tone} aria-label=${label} @click=${onClick}>${icon}</z-button></z-tooltip
   >`;
 }
 

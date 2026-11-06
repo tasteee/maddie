@@ -244,14 +244,14 @@ export class MaddieTracks extends MaddieElement {
     </z-popover>`;
   }
 
-  private renderToggle(label: string, text: string, isOn: boolean, accent: string, onToggle: (isOn: boolean) => void) {
+  private renderToggle(label: string, text: string, isOn: boolean, tone: string, onToggle: (isOn: boolean) => void) {
     // Off looks neutral; the accent colour means "on".
-    const shownAccent = isOn ? accent : 'neutral';
+    const shownTone = isOn ? tone : 'neutral';
     return html`<z-tooltip content=${label} placement="bottom">
       <z-toggle-button
         kind="ghost"
         size="sm"
-        accent=${shownAccent}
+        tone=${shownTone}
         aria-label=${label}
         .isPressed=${isOn}
         @click=${(event: Event) => event.stopPropagation()}
@@ -285,8 +285,8 @@ export class MaddieTracks extends MaddieElement {
     const classes = ['track', isActive ? 'isActive' : '', track.muted ? 'isMuted' : ''].filter(Boolean).join(' ');
     return html`<div class=${classes} @click=${() => this.activate(track.id)}>
       ${this.renderColor(track)} ${this.renderName(track, index)}
-      ${this.renderToggle('Mute', 'M', !!track.muted, 'sub', (isOn) => ed.commands.setTrackMuted(track.id, isOn))}
-      ${this.renderToggle('Solo', 'S', !!track.solo, 'dom', (isOn) => ed.commands.setTrackSolo(track.id, isOn))}
+      ${this.renderToggle('Mute', 'M', !!track.muted, 'secondary', (isOn) => ed.commands.setTrackMuted(track.id, isOn))}
+      ${this.renderToggle('Solo', 'S', !!track.solo, 'primary', (isOn) => ed.commands.setTrackSolo(track.id, isOn))}
       ${this.renderRemove(track)}
     </div>`;
   }

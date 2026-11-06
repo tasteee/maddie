@@ -27,8 +27,8 @@ export interface ZestOption {
   isDisabled?: boolean;
 }
 
-/** The accents Maddie uses. `dom` is Zest's dominant accent, `sub` the subordinate one; `error` is for destructive actions. */
-export type ZestAccent = 'neutral' | 'dom' | 'sub' | 'error';
+/** The tones Maddie uses. `primary` is Zest's dominant accent, `secondary` the subordinate one; `danger` is for destructive actions. */
+export type ZestTone = 'neutral' | 'primary' | 'secondary' | 'danger';
 
 type ToasterT = {
   show(options: { title: string; tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger'; duration?: number }): () => void;

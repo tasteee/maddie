@@ -63,10 +63,10 @@ export const tokens = css`
 
     --_radius: var(--maddie-radius, var(--radius-lg));
     --_radius-sm: var(--maddie-radius-sm, var(--radius-md));
-    --_motion-fast: var(--maddie-motion-fast, var(--duration-fast));
-    --_motion-medium: var(--maddie-motion-medium, var(--duration-move));
+    --_motion-fast: var(--maddie-motion-fast, var(--motion-fast));
+    --_motion-medium: var(--maddie-motion-medium, var(--motion-base));
     --_motion-slow: var(--maddie-motion-slow, 220ms);
-    --_ease: var(--maddie-ease, var(--easing-standard));
+    --_ease: var(--maddie-ease, var(--ease-move));
 
     --_keyboard-width: var(--maddie-keyboard-width, 64px);
     --_ruler-height: var(--maddie-ruler-height, 30px);
