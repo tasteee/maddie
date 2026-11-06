@@ -223,6 +223,7 @@ const select = (label: string, value: string, options: ZestOption[], onPick: (va
 const swapStyles = css`
   .swap-value {
     display: inline-block;
+    margin-top: 1px;
     min-width: var(--_swap-value-width, 2.75rem);
     text-align: left;
     animation: swap-in var(--_motion-medium) var(--_ease);
