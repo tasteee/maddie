@@ -97,7 +97,11 @@ export class MaddieKeyboard extends CanvasElement {
     const sounding = new Set(engine.held);
     if (ed.transport.playing) {
       const pos = ed.transport.position;
-      for (const n of ed.notesInRange(pos, pos + 1)) sounding.add(n.pitch);
+      // Every track that plays counts, not only the one being edited.
+      for (const entry of ed.notesAllTracks(pos, pos + 1, { audibleOnly: true })) {
+        const isSilentNote = !!entry.note.muted;
+        if (!isSilentNote) sounding.add(entry.note.pitch);
+      }
     }
 
     ctx.fillStyle = p['key-white'];

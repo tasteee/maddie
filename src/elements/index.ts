@@ -8,6 +8,7 @@ export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
 export { MaddieChords, MaddieChordsTab } from './chords';
 export { MaddieInspector } from './inspector';
+export { MaddieTracks } from './tracks';
 export {
   MaddieToolbar,
   MaddieToolSelect,

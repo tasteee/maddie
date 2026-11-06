@@ -116,7 +116,7 @@ export const actions: Record<string, Action> = {
   toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel }),
   record: (e) => e.recorder.toggle(),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
-  exportMidi: (e) => e.notes().length && downloadMidi(e.doc),
+  exportMidi: (e) => e.hasAnyNotes && downloadMidi(e.doc),
 };
 
 export type Keymap = Record<string, string | Action>;

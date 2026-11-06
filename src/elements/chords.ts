@@ -309,14 +309,15 @@ export class MaddieChords extends MaddieElement {
 
   // ── Found chords ──────────────────────────────────────────────────
 
-  /** Jump to the chord, hear it, and select its notes when its track is the active one. */
+  /** Jump to the chord, hear it, and select its notes. Its track becomes the active one first. */
   private onFoundClick(trackId: string, span: ChordSpanT) {
     const ed = this.ed;
     if (!ed) return;
     ed.transport.seek(span.start);
     ed.auditionChord(span.pitches, 0.5, undefined, { humanize: true });
     const isActiveTrack = trackId === ed.activeTrackId;
-    if (isActiveTrack) ed.select(span.noteIds);
+    if (!isActiveTrack) ed.setActiveTrack(trackId);
+    ed.select(span.noteIds);
   }
 
   private renderFoundRow(trackId: string, span: ChordSpanT) {

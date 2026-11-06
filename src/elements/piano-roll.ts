@@ -25,7 +25,7 @@ import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
 import { icons } from './icons';
 import { importMidiFile } from './midi-io';
-import { drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
+import { drawGhostNotes, drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 import './zest';
 
@@ -809,6 +809,9 @@ export class MaddiePianoRoll extends CanvasElement {
 
     drawLoop(ctx, ed, v, p, h);
     drawTimeGrid(ctx, ed, engine, v, p, w, 0, h, now);
+
+    // Other tracks sit behind the active one.
+    drawGhostNotes(ctx, engine, v, p, w, h, now);
 
     // Notes. Unselected first, selected on top.
     const from = v.scrollTick;

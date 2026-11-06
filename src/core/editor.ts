@@ -7,7 +7,8 @@ import type { Output } from './output';
 import { invertPatches, type MetaKey, type MetaValues, type Patch } from './patches';
 import { Recorder } from './recorder';
 import { Transport } from './transport';
-import type { MaddieDoc, Note, NoteId, Tick, Track } from './types';
+import { getAudibleTrackIds, getTrackColor } from './tracks';
+import type { MaddieDoc, Note, NoteId, Tick, Track, TrackChangesT, TrackMetaT, TrackNoteT } from './types';
 import { DEFAULT_VIEW, ZOOM_LIMITS, type ViewState } from './view';
 import { clampVelocity } from './music/velocity';
 
@@ -40,7 +41,9 @@ export interface EditorEvents extends Record<string, unknown> {
   view: ViewChangeEvent;
   transport: { state: Transport['state']; position: Tick };
   history: { canUndo: boolean; canRedo: boolean };
-  noteon: { note: Note; time: number };
+  noteon: { note: Note; time: number; track?: string };
+  /** The track list, a track's name, color, mute or solo, or the active track changed. */
+  tracks: { tracks: readonly TrackMetaT[]; activeId: string };
 }
 
 export interface EditorOptions {
@@ -59,6 +62,7 @@ export interface TransactOptions {
 
 let idCounter = 0;
 export const createId = () => `n${(Date.now() % 1e8).toString(36)}${(idCounter++).toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+export const createTrackId = () => `t${createId().slice(1)}`;
 
 const DEFAULT_TRACK = 'track-1';
 
@@ -95,7 +99,10 @@ export class Editor extends Emitter<EditorEvents> {
   audioContext: AudioContext | null;
   activeTrackId: string;
 
-  private tracks = new Map<string, { track: Omit<Track, 'notes'>; notes: NoteIndex }>();
+  private tracks = new Map<string, { track: TrackMetaT; notes: NoteIndex }>();
+  // Track order before the latest change, so a removed active track hands over to its neighbor.
+  private trackOrder: string[] = [];
+  private trackListCache: TrackMetaT[] | null = null;
   private _meta: MetaValues & { ppq: number };
   private _view: ViewState;
   private _selection = new Set<NoteId>();
@@ -117,6 +124,7 @@ export class Editor extends Emitter<EditorEvents> {
       this.tracks.set(t.id, { track, notes: new NoteIndex(notes) });
     }
     this.activeTrackId = doc.tracks[0].id;
+    this.trackOrder = [...this.tracks.keys()];
     this._view = { ...DEFAULT_VIEW, ...options.view };
     this.history = new History(options.historyLimit);
     this.transport = new Transport(this);
@@ -165,16 +173,55 @@ export class Editor extends Emitter<EditorEvents> {
       this.tracks.set(t.id, { track, notes: new NoteIndex(notes) });
     }
     if (!this.tracks.has(this.activeTrackId)) this.activeTrackId = next.tracks[0].id;
+    this.trackOrder = [...this.tracks.keys()];
     this._selection.clear();
     if (!keepHistory) this.history.clear();
     this.invalidate();
     this.emit('change', { patches: [], origin, label: 'Load' });
     this.emit('selection', { ids: this._selection });
+    this.emitTracks();
     this.emitHistory();
   }
 
   get trackIds() {
     return [...this.tracks.keys()];
+  }
+
+  /** Every track without its notes, in order. */
+  get trackList(): readonly TrackMetaT[] {
+    if (!this.trackListCache) this.trackListCache = [...this.tracks.values()].map((entry) => entry.track);
+    return this.trackListCache;
+  }
+
+  /** The color a track draws in. */
+  getTrackColor(trackId: string): string {
+    const index = this.trackIds.indexOf(trackId);
+    const track = this.tracks.get(trackId)?.track;
+    if (!track) return getTrackColor({ id: trackId }, 0);
+    return getTrackColor(track, index);
+  }
+
+  /** Does this track play? Not muted, and soloed if anything is soloed. */
+  isTrackAudible(trackId: string): boolean {
+    return getAudibleTrackIds(this.trackList).has(trackId);
+  }
+
+  /** Is there at least one note in any track? */
+  get hasAnyNotes(): boolean {
+    for (const entry of this.tracks.values()) {
+      if (entry.notes.size > 0) return true;
+    }
+    return false;
+  }
+
+  /** Make a track the one being edited. Clears the selection, which belongs to one track. Not an undo step. */
+  setActiveTrack(trackId: string) {
+    if (!this.tracks.has(trackId)) throw new Error(`[maddie] Unknown track "${trackId}"`);
+    if (trackId === this.activeTrackId) return;
+    this.activeTrackId = trackId;
+    this.resetSelection();
+    this.invalidate();
+    this.emitTracks();
   }
 
   private index(track = this.activeTrackId): NoteIndex {
@@ -202,14 +249,44 @@ export class Editor extends Emitter<EditorEvents> {
     return this.index(track).starting(from, to);
   }
 
-  contentEnd(track = this.activeTrackId): Tick {
-    return this.index(track).end();
+  /**
+   * Notes of every track overlapping [from, to), each with its track id.
+   * `audibleOnly` leaves out tracks that are muted or not soloed.
+   */
+  notesAllTracks(from: Tick, to: Tick, { audibleOnly = false } = {}): TrackNoteT[] {
+    const audibleIds = getAudibleTrackIds(this.trackList);
+    const found: TrackNoteT[] = [];
+    for (const [trackId, entry] of this.tracks) {
+      const isSilent = audibleOnly && !audibleIds.has(trackId);
+      if (isSilent) continue;
+      for (const note of entry.notes.range(from, to)) found.push({ trackId, note });
+    }
+    return found;
+  }
+
+  /** Notes starting in [from, to) on tracks that play. Used by the scheduler. */
+  notesStartingAudible(from: Tick, to: Tick): TrackNoteT[] {
+    const audibleIds = getAudibleTrackIds(this.trackList);
+    const found: TrackNoteT[] = [];
+    for (const [trackId, entry] of this.tracks) {
+      if (!audibleIds.has(trackId)) continue;
+      for (const note of entry.notes.starting(from, to)) found.push({ trackId, note });
+    }
+    return found;
+  }
+
+  /** End of the last note: in one track, or (no argument) in any track. */
+  contentEnd(track?: string): Tick {
+    if (track) return this.index(track).end();
+    let end = 0;
+    for (const entry of this.tracks.values()) end = Math.max(end, entry.notes.end());
+    return end;
   }
 
   /** Rows for the current fold mode and key. */
   get rowMap(): RowMap {
     if (!this.rowMapCache) {
-      const used = this._view.fold !== 'none' ? new Set(this.notes().map((n) => n.pitch)) : [];
+      const used = this._view.fold !== 'none' ? this.usedPitches() : [];
       this.rowMapCache = buildRowMap({ fold: this._view.fold, key: this._meta.key, used });
     }
     return this.rowMapCache;
@@ -296,9 +373,11 @@ export class Editor extends Emitter<EditorEvents> {
   applyPatches(patches: readonly Patch[], { origin = 'remote' as Origin } = {}) {
     if (!patches.length) return;
     for (const p of patches) this.applyPatch(p);
+    const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this.pruneSelection();
     this.emit('change', { patches, origin, label: 'Remote' });
+    this.emitTracksIfChanged(patches, hasNewActiveTrack);
   }
 
   undo() {
@@ -306,10 +385,12 @@ export class Editor extends Emitter<EditorEvents> {
     if (!entry) return;
     const patches = invertPatches(entry.patches);
     for (const p of patches) this.applyPatch(p);
+    const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this._selection = new Set(entry.selectionBefore.filter((id) => this.index().has(id)));
     this.emit('change', { patches, origin: 'history', label: `Undo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
+    this.emitTracksIfChanged(patches, hasNewActiveTrack);
     this.emitHistory();
   }
 
@@ -317,10 +398,12 @@ export class Editor extends Emitter<EditorEvents> {
     const entry = this.history.popRedo();
     if (!entry) return;
     for (const p of entry.patches) this.applyPatch(p);
+    const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this._selection = new Set(entry.selectionAfter.filter((id) => this.index().has(id)));
     this.emit('change', { patches: entry.patches, origin: 'history', label: `Redo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
+    this.emitTracksIfChanged(entry.patches, hasNewActiveTrack);
     this.emitHistory();
   }
 
@@ -408,8 +491,8 @@ export class Editor extends Emitter<EditorEvents> {
   }
 
   /** @internal Called by the transport scheduler. */
-  dispatchNote(note: Note, time: number, duration: number) {
-    this.emit('noteon', { note, time });
+  dispatchNote(note: Note, time: number, duration: number, track?: string) {
+    this.emit('noteon', { note, time, track });
     if (this.volume.muted) return;
     const e = { note, pitch: note.pitch, velocity: this.outVelocity(note.velocity), time, duration };
     this.output?.noteOn(e);
@@ -441,6 +524,36 @@ export class Editor extends Emitter<EditorEvents> {
       if (JSON.stringify(from) === JSON.stringify(value)) return;
       this.record({ op: 'meta', key, from, to: value });
     },
+    addTrack: (track, index = this.tracks.size) => {
+      const hasTrack = this.tracks.has(track.id);
+      if (hasTrack) throw new Error(`[maddie] Track "${track.id}" already exists`);
+      const clampedIndex = Math.max(0, Math.min(this.tracks.size, index));
+      this.record({ op: 'track-add', track, index: clampedIndex });
+    },
+    removeTrack: (id) => {
+      const entry = this.tracks.get(id);
+      if (!entry) return;
+      const isLastTrack = this.tracks.size <= 1;
+      if (isLastTrack) throw new Error('[maddie] A document needs at least one track');
+      const track: Track = { ...entry.track, notes: [...entry.notes.all()] };
+      const index = this.trackIds.indexOf(id);
+      this.record({ op: 'track-remove', track, index });
+    },
+    updateTrack: (id, changes) => {
+      const entry = this.tracks.get(id);
+      if (!entry) return;
+      const from: TrackChangesT = {};
+      const to: TrackChangesT = {};
+      for (const key of Object.keys(changes) as Array<keyof TrackChangesT>) {
+        const isSame = entry.track[key] === changes[key];
+        if (isSame) continue;
+        Object.assign(from, { [key]: entry.track[key] });
+        Object.assign(to, { [key]: changes[key] });
+      }
+      const hasChanges = Object.keys(to).length > 0;
+      if (!hasChanges) return;
+      this.record({ op: 'track-update', id, from, to });
+    },
   };
 
   private record(p: Patch) {
@@ -450,6 +563,7 @@ export class Editor extends Emitter<EditorEvents> {
   }
 
   private applyPatch(p: Patch) {
+    this.trackListCache = null;
     switch (p.op) {
       case 'add':
         this.index(p.track).set(p.note);
@@ -463,11 +577,74 @@ export class Editor extends Emitter<EditorEvents> {
       case 'meta':
         this._meta = { ...this._meta, [p.key]: p.to };
         break;
+      case 'track-add':
+        this.insertTrack(p.track, p.index);
+        break;
+      case 'track-remove':
+        this.tracks.delete(p.track.id);
+        break;
+      case 'track-update':
+        this.updateTrackMeta(p.id, p.to);
+        break;
     }
+  }
+
+  private insertTrack(track: Track, index: number) {
+    const { notes, ...meta } = track;
+    const entries = [...this.tracks.entries()];
+    entries.splice(index, 0, [track.id, { track: meta, notes: new NoteIndex(notes) }]);
+    this.tracks = new Map(entries);
+  }
+
+  private updateTrackMeta(id: string, changes: TrackChangesT) {
+    const entry = this.tracks.get(id);
+    if (!entry) return;
+    entry.track = { ...entry.track, ...changes };
+  }
+
+  /**
+   * After tracks were added or removed: if the active track is gone, the track that took its place becomes active.
+   * Returns true when the active track changed.
+   */
+  private settleActiveTrack(): boolean {
+    const ids = this.trackIds;
+    const wasActiveKept = this.tracks.has(this.activeTrackId);
+    const previousOrder = this.trackOrder;
+    this.trackOrder = ids;
+    if (wasActiveKept) return false;
+    const previousIndex = previousOrder.indexOf(this.activeTrackId);
+    const nextIndex = Math.min(Math.max(previousIndex, 0), ids.length - 1);
+    this.activeTrackId = ids[nextIndex];
+    this.resetSelection();
+    return true;
+  }
+
+  private resetSelection() {
+    const hadSelection = this._selection.size > 0;
+    this._selection = new Set();
+    if (hadSelection) this.emit('selection', { ids: this._selection });
+  }
+
+  private usedPitches(): Set<number> {
+    const pitches = new Set<number>();
+    for (const entry of this.tracks.values()) {
+      for (const note of entry.notes.all()) pitches.add(note.pitch);
+    }
+    return pitches;
+  }
+
+  private emitTracks() {
+    this.emit('tracks', { tracks: this.trackList, activeId: this.activeTrackId });
+  }
+
+  private emitTracksIfChanged(patches: readonly Patch[], hasNewActiveTrack: boolean) {
+    const hasTrackPatch = patches.some((p) => p.op === 'track-add' || p.op === 'track-remove' || p.op === 'track-update');
+    if (hasTrackPatch || hasNewActiveTrack) this.emitTracks();
   }
 
   private rollback(patches: Patch[]) {
     for (const p of invertPatches(patches)) this.applyPatch(p);
+    this.settleActiveTrack();
   }
 
   private finish(tx: Tx) {
@@ -489,6 +666,7 @@ export class Editor extends Emitter<EditorEvents> {
       this.pruneSelection();
       return;
     }
+    const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this.pruneSelection();
     if (tx.origin !== 'remote' && tx.origin !== 'load') {
@@ -501,6 +679,7 @@ export class Editor extends Emitter<EditorEvents> {
       });
     }
     this.emit('change', { patches: tx.patches, origin: tx.origin, label: tx.label, gestureId: tx.gestureId });
+    this.emitTracksIfChanged(tx.patches, hasNewActiveTrack);
     this.emitHistory();
   }
 
@@ -516,6 +695,7 @@ export class Editor extends Emitter<EditorEvents> {
   private invalidate() {
     this.docCache = null;
     this.rowMapCache = null;
+    this.trackListCache = null;
   }
 
   private emitHistory() {
@@ -528,6 +708,11 @@ export interface TxApi {
   remove(id: NoteId): void;
   update(id: NoteId, changes: Partial<Omit<Note, 'id'>>): void;
   setMeta<K extends MetaKey>(key: K, value: MetaValues[K]): void;
+  /** Insert a track (at the end by default). Its notes come with it. */
+  addTrack(track: Track, index?: number): void;
+  /** Remove a track and its notes. The last track can't be removed. */
+  removeTrack(id: string): void;
+  updateTrack(id: string, changes: TrackChangesT): void;
 }
 
 function noteChanged(a: Note, b: Note) {

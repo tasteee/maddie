@@ -3,7 +3,7 @@ import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 
 /**
- * The full editor: two toolbar rows, ruler, keyboard, piano roll, velocity lane, chords panel, selection bar.
+ * The full editor: two toolbar rows, track list, ruler, keyboard, piano roll, velocity lane, chords panel, selection bar.
  * Every region is a slot, so you can replace any piece.
  */
 @customElement('maddie-editor')
@@ -84,6 +84,7 @@ export class MaddieEditor extends MaddieRoot {
           ><maddie-toolbar part="toolbar"
             ><slot name="toolbar-start" slot="start"></slot><slot name="toolbar-end" slot="end"></slot></maddie-toolbar
         ></slot>
+        <slot name="tracks"><maddie-tracks part="tracks"></maddie-tracks></slot>
         <div class="grid" part="body">
           <div class="corner" part="corner"><slot name="corner"></slot></div>
           <maddie-ruler part="ruler"></maddie-ruler>

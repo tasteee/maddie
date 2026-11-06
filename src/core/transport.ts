@@ -202,12 +202,14 @@ export class Transport {
         }
       }
 
-      for (const note of this.editor.notesStarting(fromTick, toTick)) {
+      // Every track that plays: not muted, and soloed if anything is soloed.
+      for (const entry of this.editor.notesStartingAudible(fromTick, toTick)) {
+        const note = entry.note;
         if (note.muted) continue;
         const time = anchor.time + secs(note.start) - secs(anchor.tick);
         const end = loop.enabled ? Math.min(note.start + note.duration, loop.end) : note.start + note.duration;
         const duration = secs(end) - secs(note.start);
-        this.editor.dispatchNote(note, time, duration);
+        this.editor.dispatchNote(note, time, duration, entry.trackId);
       }
 
       if (!wrapped) {
@@ -220,7 +222,7 @@ export class Transport {
       this.scheduledUntil = wrapTime;
     }
 
-    // Auto-stop well past the end when not looping.
+    // Auto-stop well past the end of the longest track when not looping.
     if (!this.loop.enabled && this.position > this.editor.contentEnd() + ppq * 8) this.stop();
   }
 
