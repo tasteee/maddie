@@ -1,5 +1,6 @@
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { live } from 'lit/directives/live.js';
 import {
   detectKey,
@@ -17,7 +18,6 @@ import {
   type Editor,
   type FoldMode,
   type ScaleId,
-  type Tool,
   ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
@@ -207,53 +207,6 @@ const select = (label: string, value: string, options: ZestOption[], onPick: (va
     @change=${(e: CustomEvent<{ value: string }>) => onPick(e.detail.value)}
   ></z-select>`;
 
-// ── Tool ────────────────────────────────────────────────────────────
-
-const TOOLS: Array<{ tool: Tool; label: string; key: string }> = [
-  { tool: 'select', label: 'Select', key: 'V' },
-  { tool: 'draw', label: 'Draw', key: 'B' },
-  { tool: 'erase', label: 'Erase', key: 'E' },
-  { tool: 'velocity', label: 'Velocity', key: 'G' },
-];
-
-/** The segmented group's seams and radii come from Zest; items sit in tooltips, so the group's variables pass through them. */
-const groupStyles = css`
-  z-toggle-button-group {
-    align-items: center;
-  }
-  z-toggle-button-group > z-tooltip {
-    display: inline-flex;
-  }
-`;
-
-@customElement('maddie-tool-select')
-export class MaddieToolSelect extends ControlElement {
-  static styles = [tokens, controlStyles, groupStyles];
-  render() {
-    const ed = this.ed;
-    if (!ed) return nothing;
-    return html`<z-toggle-button-group
-      size="sm"
-      kind="outline"
-      accent="dom"
-      aria-label="Tool"
-      @change=${(e: CustomEvent<{ value?: string }>) => {
-        if (e.detail.value) ed.setView({ tool: e.detail.value as Tool });
-        else this.requestUpdate(); // Pressing the active tool again can't clear it.
-      }}
-    >
-      ${TOOLS.map((t) =>
-        tooltip(
-          tip(t.label, t.key),
-          html`<z-toggle-button-group-item value=${t.tool} is-icon aria-label=${t.label} .isPressed=${live(ed.view.tool === t.tool)}
-            >${icons[t.tool]}</z-toggle-button-group-item
-          >`,
-        ),
-      )}
-    </z-toggle-button-group>`;
-  }
-}
-
 // ── Grid + snap ─────────────────────────────────────────────────────
 
 @customElement('maddie-grid-select')
@@ -372,40 +325,81 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLDS: Array<{ value: FoldMode; label: string; tip: string }> = [
-  { value: 'none', label: 'Off', tip: 'Show every row' },
-  { value: 'scale', label: 'Scale', tip: 'Only rows in the key (plus rows with notes)' },
-  { value: 'used', label: 'Notes', tip: 'Only rows that have notes' },
-];
+const FOLD_CYCLE: FoldMode[] = ['none', 'scale', 'used'];
 
-/** Fold rows: one click between Off · Scale · Notes. */
+const FOLD_LABELS: Record<FoldMode, string> = {
+  none: 'Off',
+  scale: 'Scale',
+  used: 'Notes',
+};
+
+const FOLD_TIPS: Record<FoldMode, string> = {
+  none: 'Show every row',
+  scale: 'Only rows in the key (plus rows with notes)',
+  used: 'Only rows that have notes',
+};
+
+/** The next fold in Off → Scale → Notes. Scale is skipped when there is no key. */
+const getNextFold = (current: FoldMode, hasKey: boolean): FoldMode => {
+  const currentIndex = FOLD_CYCLE.indexOf(current);
+  const nextIndex = (currentIndex + 1) % FOLD_CYCLE.length;
+  const next = FOLD_CYCLE[nextIndex];
+  const isBlocked = next === 'scale' && !hasKey;
+  if (isBlocked) return FOLD_CYCLE[(nextIndex + 1) % FOLD_CYCLE.length];
+  return next;
+};
+
+/** Fold rows: one button. Click to swap the value: Off → Scale → Notes → Off. */
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
-  static styles = [tokens, controlStyles, groupStyles];
+  static styles = [
+    tokens,
+    controlStyles,
+    css`
+      .fold-label {
+        color: var(--_text-muted);
+      }
+      .fold-value {
+        display: inline-block;
+        min-width: 2.75rem;
+        text-align: left;
+        animation: fold-swap var(--_motion-medium) var(--_ease);
+      }
+      @keyframes fold-swap {
+        from {
+          opacity: 0;
+          transform: translateY(0.4em);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .fold-value {
+          animation: none;
+        }
+      }
+    `,
+  ];
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    return html`<span class="label optional">Fold</span>
-      <z-toggle-button-group
-        size="sm"
+    const fold = ed.view.fold;
+    const isFolded = fold !== 'none';
+    const nextFold = getNextFold(fold, !!ed.key);
+    const valueLabel = FOLD_LABELS[fold];
+    const tipText = `${FOLD_TIPS[fold]} · click for ${FOLD_LABELS[nextFold]}`;
+    const accent = isFolded ? 'dom' : 'neutral';
+    return tooltip(
+      tipText,
+      html`<z-button
         kind="outline"
-        accent="dom"
-        aria-label="Fold rows"
-        @change=${(e: CustomEvent<{ value?: string }>) => {
-          if (e.detail.value) ed.setView({ fold: e.detail.value as FoldMode }, { animate: true });
-          else this.requestUpdate();
-        }}
+        size="sm"
+        accent=${accent}
+        aria-label=${`Fold rows: ${valueLabel}`}
+        @click=${() => ed.setView({ fold: nextFold }, { animate: true })}
       >
-        ${FOLDS.map((f) => {
-          const needsKey = f.value === 'scale' && !ed.key;
-          return tooltip(
-            needsKey ? 'Set a key first' : f.tip,
-            html`<z-toggle-button-group-item value=${f.value} ?is-disabled=${needsKey} .isPressed=${live(ed.view.fold === f.value)}
-              >${f.label}</z-toggle-button-group-item
-            >`,
-          );
-        })}
-      </z-toggle-button-group>`;
+        <span class="fold-label">Fold:</span>
+        ${keyed(fold, html`<span class="fold-value">${valueLabel}</span>`)}
+      </z-button>`,
+    );
   }
 }
 
@@ -988,7 +982,7 @@ export class MaddieTopbar extends MaddieElement {
   }
 }
 
-/** Second row: tools that change the grid below. Tools, grid, key, fold, history, zoom. */
+/** Second row: tools that change the grid below. Grid, key, fold, history, zoom. */
 @customElement('maddie-editbar')
 export class MaddieEditbar extends MaddieElement {
   static styles = [
@@ -1004,8 +998,6 @@ export class MaddieEditbar extends MaddieElement {
   ];
   render() {
     return html`
-      <div class="group" part="group tools"><maddie-tool-select></maddie-tool-select></div>
-      <z-separator vertical></z-separator>
       <div class="group" part="group grid">
         <maddie-grid-select></maddie-grid-select>
         <maddie-snap-toggle></maddie-snap-toggle>
@@ -1047,7 +1039,6 @@ export class MaddieToolbar extends MaddieElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'maddie-tool-select': MaddieToolSelect;
     'maddie-grid-select': MaddieGridSelect;
     'maddie-snap-toggle': MaddieSnapToggle;
     'maddie-key-select': MaddieKeySelect;

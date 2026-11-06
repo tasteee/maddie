@@ -6,7 +6,7 @@ import { clamp } from '../engine/ease';
 import { handleWheel } from '../engine/interact';
 import { withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
-import { drawTimeGrid, noteBase, noteFill, playingFlash } from './paint';
+import { drawTimeGrid, noteFill, playingFlash, resolveTrackColor } from './paint';
 import type { Palette } from './tokens';
 
 const PAD_TOP = 10;
@@ -139,6 +139,7 @@ export class MaddieVelocityLane extends CanvasElement {
     const notes = engine.visibleNotes(from - 1, to);
     notes.sort((a, b) => Number(ed.selection.has(a.id)) - Number(ed.selection.has(b.id)));
     const pos = ed.transport.position;
+    const activeTrackColor = resolveTrackColor(p, ed.getTrackColor(ed.activeTrackId));
     for (const n of notes) {
       const d = engine.notes.resolve(n, now);
       const x = Math.round((d.start - v.scrollTick) * v.pxPerTick) + 0.5;
@@ -146,7 +147,7 @@ export class MaddieVelocityLane extends CanvasElement {
       const selected = ed.selection.has(n.id) || n.id.startsWith('copy:');
       const hovered = engine.hoverId === n.id;
       const top = PAD_TOP + span * (1 - d.velocity);
-      const base = noteBase(p, n.pitch, ed.view.noteColor, selected);
+      const base = activeTrackColor;
       ctx.globalAlpha = d.alpha;
       ctx.strokeStyle = withAlpha(base, selected || hovered ? 1 : 0.55);
       ctx.lineWidth = selected || hovered ? 2 : 1.5;

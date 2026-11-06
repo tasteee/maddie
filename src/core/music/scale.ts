@@ -119,6 +119,15 @@ const DETECT_ORDER: ScaleId[] = [
   'blues',
 ];
 
+/** Major and minor are the expected answer. */
+const STANDARD_SCALES: ReadonlySet<ScaleId> = new Set(['major', 'minor']);
+
+/**
+ * Extra fit credit for major and minor. Any other scale (modes, harmonic minor,
+ * pentatonics, blues) has to hold clearly more of the music to beat them.
+ */
+const STANDARD_FIT_BONUS = 0.05;
+
 export interface KeyGuess {
   key: Key;
   /** Share of the music (weighted by note length) that sits in the scale, 0–1. */
@@ -144,7 +153,8 @@ function correlate(a: number[], b: number[]) {
 
 /**
  * The key and scale that best fit some notes. First the scales that hold the most of
- * the music (all of it if possible). Then, among those, the tonic that sounds most
+ * the music (all of it if possible), with major and minor favored: another scale must
+ * fit clearly more of the music to win. Then, among those, the tonic that sounds most
  * like home (key profile, plus the lowest and last notes), then the more common scale.
  * Null when there are no notes.
  */
@@ -180,8 +190,10 @@ export function detectKey(notes: ReadonlyArray<{ pitch: number; duration: number
       const fit = inside / total;
       const rotated = Array.from({ length: 12 }, (_, i) => hist[(root + i) % 12]);
       const tonic = correlate(rotated, profile) + (first === root ? 0.35 : 0) + (last === root ? 0.1 : 0) + (bass === root ? 0.05 : 0);
-      // Fit dominates; tonic decides between equal fits; scale order breaks exact ties.
-      const score = Math.round(fit * 1000) * 100 + tonic * 10 - order * 0.01;
+      // Fit dominates (major and minor get a head start); tonic decides between equal fits;
+      // scale order breaks exact ties.
+      const bonus = STANDARD_SCALES.has(scale) ? STANDARD_FIT_BONUS : 0;
+      const score = Math.round((fit + bonus) * 1000) * 100 + tonic * 10 - order * 0.01;
       if (!best || score > best.score) best = { guess: { key: { root, scale }, fit, outside }, score };
     }
   }

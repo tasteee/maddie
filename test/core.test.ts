@@ -327,6 +327,17 @@ describe('detectKey', () => {
     expect(formatKey(detectKey(demoSong())!.key)).toBe('C Minor');
   });
 
+  it('prefers major over a mode that fits equally well', () => {
+    // The C major note set, centered on D, would read as D Dorian without the major/minor head start.
+    const g = detectKey(mk([62, 64, 65, 67, 69, 71, 72, 74, 69, 62]))!;
+    expect(['major', 'minor']).toContain(g.key.scale);
+  });
+
+  it('prefers major or minor over a pentatonic that fits equally well', () => {
+    const g = detectKey(mk([60, 62, 64, 67, 69, 67, 64, 62, 60]))!;
+    expect(['major', 'minor']).toContain(g.key.scale);
+  });
+
   it('returns null with no notes', () => {
     expect(detectKey([])).toBeNull();
   });

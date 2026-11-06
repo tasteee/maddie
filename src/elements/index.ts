@@ -11,7 +11,6 @@ export { MaddieInspector } from './inspector';
 export { MaddieTracks } from './tracks';
 export {
   MaddieToolbar,
-  MaddieToolSelect,
   MaddieGridSelect,
   MaddieSnapToggle,
   MaddieKeySelect,

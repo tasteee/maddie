@@ -115,10 +115,6 @@ export const actions: Record<string, Action> = {
     e.transport.stop();
     if (e.transport.position !== 0) e.transport.stop();
   },
-  toolSelect: (e) => e.setView({ tool: 'select' }),
-  toolDraw: (e) => e.setView({ tool: 'draw' }),
-  toolErase: (e) => e.setView({ tool: 'erase' }),
-  toolVelocity: (e) => e.setView({ tool: 'velocity' }),
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
   toggleMetronome: (e) => e.transport.setMetronome({ enabled: !e.transport.metronome.enabled }),
   toggleMasterMute: (e) => e.setVolume({ muted: !e.volume.muted }),
@@ -169,11 +165,6 @@ export const defaultKeymap: Keymap = {
   'mod+space': 'playSelection',
   'ctrl+space': 'playSelection',
   enter: 'stop',
-  v: 'toolSelect',
-  b: 'toolDraw',
-  d: 'toolDraw',
-  e: 'toolErase',
-  g: 'toolVelocity',
   s: 'toggleSnap',
   'mod+l': 'toggleLoop',
   r: 'record',
