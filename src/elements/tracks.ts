@@ -63,7 +63,7 @@ export class MaddieTracks extends MaddieElement {
         align-items: center;
         gap: var(--space-md);
         padding: var(--space-sm) var(--space-md);
-        background: var(--_surface-2);
+        background: var(--_surface);
         border-bottom: 1px solid var(--_border);
         color: var(--_text);
         font-size: var(--font-size-small);
@@ -81,7 +81,7 @@ export class MaddieTracks extends MaddieElement {
         padding: 2px var(--space-xs) 2px var(--space-sm);
         border: 1px solid var(--_border);
         border-radius: var(--_radius-sm);
-        background: var(--_surface);
+        background: var(--_surface-2);
         color: var(--_text-muted);
         cursor: pointer;
         user-select: none;
