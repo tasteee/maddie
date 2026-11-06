@@ -79,7 +79,7 @@ export class MaddieTracks extends MaddieElement {
         align-items: center;
         gap: var(--space-xs);
         padding: 2px var(--space-xs) 2px var(--space-sm);
-        border: 1px solid transparent;
+        border: 1px solid var(--_border);
         border-radius: var(--_radius-sm);
         color: var(--_text-muted);
         cursor: pointer;
@@ -95,12 +95,41 @@ export class MaddieTracks extends MaddieElement {
       }
       .track.isActive {
         background: var(--_surface-2);
-        border-color: var(--_border);
+        border-color: var(--_text-faint);
         color: var(--_text);
       }
       .track.isMuted .track-name,
       .track.isMuted .track-color {
         opacity: 0.45;
+      }
+      .track-name {
+        max-width: 10rem;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+      .track-name:focus-visible {
+        outline: 2px solid var(--_focus);
+        outline-offset: 2px;
+        border-radius: var(--_radius-sm);
+      }
+      .rename-input {
+        width: 8rem;
+        padding: 0 var(--space-xs);
+        border: 1px solid var(--_accent);
+        border-radius: var(--_radius-sm);
+        background: var(--_bg);
+        color: var(--_text);
+        font: inherit;
+        font-weight: 500;
+        outline: none;
       }
       .track-color {
         flex: none;
