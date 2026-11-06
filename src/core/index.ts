@@ -8,6 +8,7 @@ export * from './tracks';
 export * from './output';
 export * from './transport';
 export * from './recorder';
+export * from './capture';
 export * from './view';
 export * from './music/pitch';
 export * from './music/scale';

@@ -22,7 +22,7 @@ import {
 } from '../core';
 import type { Engine } from '../engine/engine';
 import { pitchForOffset, scaleMapped, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
-import { modKeyLabel, rowZoomBy } from '../engine/keymap';
+import { captureMidi, modKeyLabel, rowZoomBy } from '../engine/keymap';
 import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
 import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
 import { MaddieElement } from './base';
@@ -450,6 +450,7 @@ export class MaddieTransport extends ControlElement {
     super.attach(editor, engine);
     this.track(
       editor.on('transport', () => this.tick()),
+      editor.capture.onChange(() => this.requestUpdate()),
       () => cancelAnimationFrame(this.raf),
     );
     this.tick();
@@ -469,6 +470,8 @@ export class MaddieTransport extends ControlElement {
     const t = ed.transport;
     const rec = ed.recorder;
     const [bar, beat, six] = this.position.split('.');
+    const capturedCount = ed.capture.count;
+    const canCapture = capturedCount > 0 && !rec.recording;
     const record = () => {
       if (!rec.recording && !ed.view.computerKeyboard && !ed.view.midiInput) {
         this.engine?.toast('Turn on keyboard or MIDI input to play while recording');
@@ -493,6 +496,18 @@ export class MaddieTransport extends ControlElement {
           .isPressed=${live(rec.recording)}
           @press=${record}
           >${icons.record}</z-toggle-button
+        >`,
+      )}
+      ${tooltip(
+        tip(canCapture ? `Keep what you just played (${capturedCount})` : 'Play something to capture it', 'Shift+R'),
+        html`<z-button
+          class="icon"
+          kind="ghost"
+          size="sm"
+          aria-label="Capture MIDI"
+          ?is-disabled=${!canCapture}
+          @click=${() => captureMidi(ed)}
+          >${icons.capture}</z-button
         >`,
       )}
       ${tooltip(

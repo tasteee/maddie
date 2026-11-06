@@ -64,6 +64,16 @@ const resizeBy = (editor: Editor, dir: -1 | 1) => {
   if (changes.length) editor.commands.update(changes, 'Resize notes');
 };
 
+/** Keep what was just played (outside a take) as notes at the marker. */
+export const captureMidi = (editor: Editor) => {
+  const ids = editor.capture.commit();
+  const engine = Engine.for(editor);
+  const hasNotes = ids.length > 0;
+  if (!hasNotes) return engine.toast('Nothing to capture yet · play something first');
+  const label = ids.length === 1 ? '1 note' : `${ids.length} notes`;
+  engine.toast(`Captured ${label}`);
+};
+
 /** Built-in actions, by name. Keymaps point at these (or at functions). */
 export const actions: Record<string, Action> = {
   undo: (e) => e.undo(),
@@ -115,6 +125,7 @@ export const actions: Record<string, Action> = {
   toggleFollow: (e) => e.setView({ follow: !e.view.follow }),
   toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel }),
   record: (e) => e.recorder.toggle(),
+  captureMidi: (e) => captureMidi(e),
   toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
   exportMidi: (e) => e.hasAnyNotes && downloadMidi(e.doc),
 };
@@ -166,6 +177,7 @@ export const defaultKeymap: Keymap = {
   s: 'toggleSnap',
   'mod+l': 'toggleLoop',
   r: 'record',
+  'shift+r': 'captureMidi',
   c: 'toggleMetronome',
   f: 'toggleFollow',
   h: 'toggleChords',
