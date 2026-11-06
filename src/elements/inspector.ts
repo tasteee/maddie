@@ -5,7 +5,7 @@ import { GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type Editor } from 
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
-import { partStyles } from './controls';
+import { dividerStyles, partStyles } from './controls';
 import { icons } from './icons';
 import { tokens } from './tokens';
 import './zest';
@@ -19,6 +19,7 @@ export class MaddieInspector extends MaddieElement {
   static styles = [
     tokens,
     partStyles,
+    dividerStyles,
     css`
       :host {
         display: flex;
@@ -61,12 +62,6 @@ export class MaddieInspector extends MaddieElement {
       }
       .group[part~='actions'] {
         margin-inline-start: auto;
-      }
-      z-separator[vertical] {
-        height: 1.25rem;
-      }
-      z-separator[vertical] {
-        flex: none;
       }
       :host([empty]) .group {
         opacity: var(--control-disabled-opacity);

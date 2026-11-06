@@ -36,6 +36,17 @@ import { tokens } from './tokens';
 import type { ZestTone, ZestOption } from './zest';
 import './zest';
 
+/** The vertical divider between groups. Shared by the top bar, the edit bar and the selection bar so all three space it alike. */
+export const dividerStyles = css`
+  /* One divider for every bar: full height inside the bar, the same space on both sides. */
+  z-separator[is-vertical] {
+    flex: none;
+    align-self: stretch;
+    margin-block: var(--space-sm);
+    margin-inline: var(--space-sm);
+  }
+`;
+
 /** Pieces shared by controls and the panels around them: layout and type only. Color, shape and state come from the Zest elements. */
 export const partStyles = css`
   /* An icon-only <z-button>: Zest sizes the icon and the height; this makes the cap square. */
@@ -64,11 +75,6 @@ export const partStyles = css`
     font-size: var(--font-size-caption);
     font-weight: 600;
     letter-spacing: 0.04em;
-  }
-  z-separator[vertical] {
-    align-self: center;
-    height: 1.125rem;
-    margin-inline: var(--space-xs);
   }
   z-select {
     min-width: 6.5rem;
@@ -1015,12 +1021,6 @@ const barStyles = css`
     align-items: center;
     gap: var(--space-xs);
   }
-  z-separator[vertical] {
-    flex: none;
-    align-self: center;
-    height: 1.25rem;
-    margin-inline: var(--space-xs);
-  }
   .spacer {
     flex: 1;
     min-width: 8px;
@@ -1033,6 +1033,7 @@ export class MaddieTopbar extends MaddieElement {
   static styles = [
     tokens,
     barStyles,
+    dividerStyles,
     css`
       :host {
         z-index: 4;
@@ -1072,6 +1073,7 @@ export class MaddieEditbar extends MaddieElement {
   static styles = [
     tokens,
     barStyles,
+    dividerStyles,
     css`
       :host {
         height: var(--maddie-editbar-height, 56px);
