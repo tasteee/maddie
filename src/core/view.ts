@@ -2,7 +2,6 @@ import type { FoldMode } from './music/rowmap';
 import type { GridValue } from './music/grid';
 import type { Tick } from './types';
 
-export type Tool = 'select' | 'draw' | 'erase' | 'velocity';
 
 /** How notes are colored. `pitch`: low → high gradient. `pitch-class`: every C the same. `mono`: one color. */
 export type NoteColorMode = 'pitch' | 'pitch-class' | 'mono';
@@ -19,7 +18,6 @@ export interface ViewState {
   scrollRow: number | null;
   grid: GridValue;
   snap: boolean;
-  tool: Tool;
   fold: FoldMode;
   /** Constrain placing and pitch moves to the key's scale. */
   scaleLock: boolean;
@@ -54,7 +52,6 @@ export const DEFAULT_VIEW: ViewState = {
   scrollRow: null,
   grid: '1/16',
   snap: true,
-  tool: 'select',
   fold: 'none',
   scaleLock: false,
   scaleHighlight: true,

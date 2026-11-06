@@ -53,7 +53,7 @@ el.output = {
 
 ## Controls
 
-Two toolbar rows. The **top row** is global: play/stop, record, back to start, position, tempo, metronome, volume, loop, follow, keyboard input, MIDI input, import/export. The **edit row** changes the grid: tools, grid/snap, key/scale lock, fold, undo/redo, row height, zoom.
+Two toolbar rows. The **top row** is global: play/stop, record, back to start, position, tempo, metronome, volume, loop, follow, keyboard input, MIDI input, import/export. The **edit row** changes the grid: grid/snap, key/scale lock, fold (one button: click to cycle Off · Scale · Notes), undo/redo, row height, zoom.
 
 - **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid. While playing, click empty grid to jump there. **Enter** goes back to the start. While playing, the rewind button jumps back to the marker; double-click it for the start.
 - **← / →** move to the previous / next grid line: the play marker when nothing is selected, else the selected notes (the first one lands on the line, the rest keep their spacing). **⇧← / ⇧→** move note ends to grid lines. Everything snaps to lines of the current grid, never a grid step away from an off-grid spot.
@@ -96,7 +96,6 @@ downloadMidi(el.doc, 'my-loop.mid'); // browser download
 ```html
 <maddie-root scale="D dorian">
   <my-toolbar>
-    <maddie-tool-select></maddie-tool-select>
     <maddie-grid-select></maddie-grid-select>
   </my-toolbar>
   <maddie-keyboard></maddie-keyboard>

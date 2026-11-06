@@ -71,7 +71,7 @@ pointer/keyboard
 | ------------- | ------------------------------------------------ | -------- | --------- | ----- |
 | **Document**  | notes, tempo map, time sig, key/scale            | yes      | yes       | core `doc` |
 | **Selection** | selected note ids, keyboard cursor               | restored with undo, never its own entry | no | core `selection` |
-| **View**      | zoom, scroll, grid, snap, fold, tool, lock-to-scale | no    | optional  | core `view` |
+| **View**      | zoom, scroll, grid, snap, fold, lock-to-scale | no    | optional  | core `view` |
 | **Ephemeral** | hover, drag ghost, marquee rect, animations      | no       | no        | engine only |
 
 This split is the most important rule in the codebase. It is what makes undo, controlled mode, collab, and perf all work.
@@ -145,7 +145,7 @@ const editor = createEditor({ doc, view: { grid: '1/16', snap: true } });
 
 editor.doc            // read-only snapshot (structurally shared, frozen in dev)
 editor.selection      // Set<NoteId> + cursor
-editor.view           // zoom, scroll, grid, snap, fold, tool…
+editor.view           // zoom, scroll, grid, snap, fold…
 editor.transport      // clock (see §6)
 editor.history        // undo / redo
 
@@ -304,10 +304,10 @@ idle ──down──▶ pressed ──move>3px──▶ dragging:{move|resizeSt
 **Hit zones** (in px, so they work at every zoom):
 - Note body → move
 - Left/right edge (6px, min 1/3 of note width) → resize
-- Empty space → marquee (select tool) or draw (draw tool)
-- Velocity tool (`G`) + drag vertical on a note → velocity. `Alt` is reserved for snap bypass.
+- Empty space → marquee. Double-click empty space adds a note; double-click a note deletes it.
+- Right-drag a note up or down → velocity (the whole selection if the note is selected). Right-click never deletes. `Alt` is reserved for snap bypass.
 
-**Tools:** `select`, `draw`, `erase`, `velocity` (`slice` later). Draw tool on empty space = click to place, drag to set length.
+**No tool modes.** One pointer behavior does everything: drag to select, move or resize; double-click to add or delete; `Delete`/`Backspace` deletes the selection; right-drag changes velocity.
 
 Pointer Events + `setPointerCapture`. **Desktop first:** mouse, trackpad (pinch = zoom, two-finger = scroll), pen. Pointer Events keep touch possible later without a rewrite, but touch is not a v1 target.
 

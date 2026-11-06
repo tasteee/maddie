@@ -1,5 +1,6 @@
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { live } from 'lit/directives/live.js';
 import {
   detectKey,
@@ -17,7 +18,6 @@ import {
   type Editor,
   type FoldMode,
   type ScaleId,
-  type Tool,
   ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
@@ -207,66 +207,98 @@ const select = (label: string, value: string, options: ZestOption[], onPick: (va
     @change=${(e: CustomEvent<{ value: string }>) => onPick(e.detail.value)}
   ></z-select>`;
 
-// ── Tool ────────────────────────────────────────────────────────────
+// ── Swap button ─────────────────────────────────────────────────────
 
-const TOOLS: Array<{ tool: Tool; label: string; key: string }> = [
-  { tool: 'select', label: 'Select', key: 'V' },
-  { tool: 'draw', label: 'Draw', key: 'B' },
-  { tool: 'erase', label: 'Erase', key: 'E' },
-  { tool: 'velocity', label: 'Velocity', key: 'G' },
-];
-
-/** The segmented group's seams and radii come from Zest; items sit in tooltips, so the group's variables pass through them. */
-const groupStyles = css`
-  z-toggle-button-group {
-    align-items: center;
+/** Styles for `swapButton`. The value slides in each time it changes. */
+const swapStyles = css`
+  .swap-label {
+    color: var(--_text-muted);
   }
-  z-toggle-button-group > z-tooltip {
-    display: inline-flex;
+  .swap-value {
+    display: inline-block;
+    min-width: var(--_swap-value-width, 2.75rem);
+    text-align: left;
+    animation: swap-in var(--_motion-medium) var(--_ease);
+  }
+  @keyframes swap-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.4em);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .swap-value {
+      animation: none;
+    }
   }
 `;
 
-@customElement('maddie-tool-select')
-export class MaddieToolSelect extends ControlElement {
-  static styles = [tokens, controlStyles, groupStyles];
-  render() {
-    const ed = this.ed;
-    if (!ed) return nothing;
-    return html`<z-toggle-button-group
-      size="sm"
+type SwapButtonT = {
+  label: string;
+  value: string;
+  tip: string;
+  isActive: boolean;
+  onSwap: (isBackwards: boolean) => void;
+};
+
+/** One button that shows `Label: value`. Click swaps to the next value; ⇧-click goes back. */
+const swapButton = (swap: SwapButtonT) => {
+  const accent = swap.isActive ? 'dom' : 'neutral';
+  return tooltip(
+    swap.tip,
+    html`<z-button
       kind="outline"
-      accent="dom"
-      aria-label="Tool"
-      @change=${(e: CustomEvent<{ value?: string }>) => {
-        if (e.detail.value) ed.setView({ tool: e.detail.value as Tool });
-        else this.requestUpdate(); // Pressing the active tool again can't clear it.
-      }}
+      size="sm"
+      accent=${accent}
+      aria-label=${`${swap.label}: ${swap.value}`}
+      @click=${(event: MouseEvent) => swap.onSwap(event.shiftKey)}
     >
-      ${TOOLS.map((t) =>
-        tooltip(
-          tip(t.label, t.key),
-          html`<z-toggle-button-group-item value=${t.tool} is-icon aria-label=${t.label} .isPressed=${live(ed.view.tool === t.tool)}
-            >${icons[t.tool]}</z-toggle-button-group-item
-          >`,
-        ),
-      )}
-    </z-toggle-button-group>`;
-  }
-}
+      <span class="swap-label">${swap.label}:</span>
+      ${keyed(swap.value, html`<span class="swap-value">${swap.value}</span>`)}
+    </z-button>`,
+  );
+};
+
+/** The item after (or before) `current` in a list, wrapping around. */
+const getSwappedItem = <T,>(items: readonly T[], current: T, isBackwards: boolean): T => {
+  const currentIndex = items.indexOf(current);
+  const step = isBackwards ? -1 : 1;
+  const nextIndex = (currentIndex + step + items.length) % items.length;
+  return items[nextIndex];
+};
 
 // ── Grid + snap ─────────────────────────────────────────────────────
 
+const GRID_VALUES = GRID_OPTIONS.map((option) => option.value);
+
+/** Grid size: one button. Click to swap to the next size (⇧-click: previous). */
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    swapStyles,
+    css`
+      :host {
+        --_swap-value-width: 3.25rem;
+      }
+    `,
+  ];
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    return html`<span class="label optional">Grid</span>${select(
-      'Grid',
-      ed.view.grid,
-      GRID_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-      (grid) => ed.setView({ grid }),
-    )}`;
+    const grid = ed.view.grid;
+    const currentOption = GRID_OPTIONS.find((option) => option.value === grid);
+    const valueLabel = currentOption?.label ?? grid;
+    const nextGrid = getSwappedItem(GRID_VALUES, grid, false);
+    const nextLabel = GRID_OPTIONS.find((option) => option.value === nextGrid)?.label ?? nextGrid;
+    return swapButton({
+      label: 'Grid',
+      value: valueLabel,
+      tip: `Grid size · click for ${nextLabel} · ⇧-click to go back`,
+      isActive: false,
+      onSwap: (isBackwards) => ed.setView({ grid: getSwappedItem(GRID_VALUES, grid, isBackwards) }),
+    });
   }
 }
 
@@ -372,40 +404,47 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLDS: Array<{ value: FoldMode; label: string; tip: string }> = [
-  { value: 'none', label: 'Off', tip: 'Show every row' },
-  { value: 'scale', label: 'Scale', tip: 'Only rows in the key (plus rows with notes)' },
-  { value: 'used', label: 'Notes', tip: 'Only rows that have notes' },
-];
+const FOLD_CYCLE: FoldMode[] = ['none', 'scale', 'used'];
 
-/** Fold rows: one click between Off · Scale · Notes. */
+const FOLD_LABELS: Record<FoldMode, string> = {
+  none: 'Off',
+  scale: 'Scale',
+  used: 'Notes',
+};
+
+const FOLD_TIPS: Record<FoldMode, string> = {
+  none: 'Show every row',
+  scale: 'Only rows in the key (plus rows with notes)',
+  used: 'Only rows that have notes',
+};
+
+/** The next fold in Off → Scale → Notes. Scale is skipped when there is no key. */
+const getNextFold = (current: FoldMode, hasKey: boolean): FoldMode => {
+  const currentIndex = FOLD_CYCLE.indexOf(current);
+  const nextIndex = (currentIndex + 1) % FOLD_CYCLE.length;
+  const next = FOLD_CYCLE[nextIndex];
+  const isBlocked = next === 'scale' && !hasKey;
+  if (isBlocked) return FOLD_CYCLE[(nextIndex + 1) % FOLD_CYCLE.length];
+  return next;
+};
+
+/** Fold rows: one button. Click to swap the value: Off → Scale → Notes → Off. */
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
-  static styles = [tokens, controlStyles, groupStyles];
+  static styles = [tokens, controlStyles, swapStyles];
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    return html`<span class="label optional">Fold</span>
-      <z-toggle-button-group
-        size="sm"
-        kind="outline"
-        accent="dom"
-        aria-label="Fold rows"
-        @change=${(e: CustomEvent<{ value?: string }>) => {
-          if (e.detail.value) ed.setView({ fold: e.detail.value as FoldMode }, { animate: true });
-          else this.requestUpdate();
-        }}
-      >
-        ${FOLDS.map((f) => {
-          const needsKey = f.value === 'scale' && !ed.key;
-          return tooltip(
-            needsKey ? 'Set a key first' : f.tip,
-            html`<z-toggle-button-group-item value=${f.value} ?is-disabled=${needsKey} .isPressed=${live(ed.view.fold === f.value)}
-              >${f.label}</z-toggle-button-group-item
-            >`,
-          );
-        })}
-      </z-toggle-button-group>`;
+    const fold = ed.view.fold;
+    const nextFold = getNextFold(fold, !!ed.key);
+    const tipText = `${FOLD_TIPS[fold]} · click for ${FOLD_LABELS[nextFold]}`;
+    return swapButton({
+      label: 'Fold',
+      value: FOLD_LABELS[fold],
+      tip: tipText,
+      isActive: fold !== 'none',
+      onSwap: () => ed.setView({ fold: nextFold }, { animate: true }),
+    });
   }
 }
 
@@ -988,7 +1027,7 @@ export class MaddieTopbar extends MaddieElement {
   }
 }
 
-/** Second row: tools that change the grid below. Tools, grid, key, fold, history, zoom. */
+/** Second row: tools that change the grid below. Grid, key, fold, history, zoom. */
 @customElement('maddie-editbar')
 export class MaddieEditbar extends MaddieElement {
   static styles = [
@@ -1004,8 +1043,6 @@ export class MaddieEditbar extends MaddieElement {
   ];
   render() {
     return html`
-      <div class="group" part="group tools"><maddie-tool-select></maddie-tool-select></div>
-      <z-separator vertical></z-separator>
       <div class="group" part="group grid">
         <maddie-grid-select></maddie-grid-select>
         <maddie-snap-toggle></maddie-snap-toggle>
@@ -1047,7 +1084,6 @@ export class MaddieToolbar extends MaddieElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'maddie-tool-select': MaddieToolSelect;
     'maddie-grid-select': MaddieGridSelect;
     'maddie-snap-toggle': MaddieSnapToggle;
     'maddie-key-select': MaddieKeySelect;

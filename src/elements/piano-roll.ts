@@ -25,7 +25,7 @@ import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
 import { icons } from './icons';
 import { importMidiFile } from './midi-io';
-import { drawGhostNotes, drawLoop, drawPlayhead, drawTimeGrid, noteBase, noteFill, playingFlash, roundRect, type NoteState, type NoteStyle } from './paint';
+import { drawGhostNotes, drawLoop, drawPlayhead, drawTimeGrid, noteFill, playingFlash, resolveTrackColor, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 import './zest';
 
@@ -44,26 +44,9 @@ interface Gesture {
 
 const DRAG_THRESHOLD = 3;
 
-const cursorSvg = (body: string, x: number, y: number, fallback: string) =>
-  `url("data:image/svg+xml,${encodeURIComponent(
-    `<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22' fill='none' stroke-linecap='round' stroke-linejoin='round'>${body}</svg>`,
-  )}") ${x} ${y}, ${fallback}`;
-
-const PENCIL = cursorSvg(
-  `<path d='M14.5 3.5l4 4L8 18H4v-4L14.5 3.5Z' fill='white' stroke='white' stroke-width='3.5'/><path d='M14.5 3.5l4 4L8 18H4v-4L14.5 3.5Z' fill='white' stroke='black' stroke-width='1.5'/><path d='M12.5 5.5l4 4' stroke='black' stroke-width='1.5'/>`,
-  4,
-  18,
-  'crosshair',
-);
-const ERASER = cursorSvg(
-  `<path d='M4.2 13.2 12.6 4.8a1.8 1.8 0 0 1 2.6 0l3 3a1.8 1.8 0 0 1 0 2.6L11 17.6H7.6l-3.4-3.4a.7.7 0 0 1 0-1Z' fill='white' stroke='white' stroke-width='3.5'/><path d='M4.2 13.2 12.6 4.8a1.8 1.8 0 0 1 2.6 0l3 3a1.8 1.8 0 0 1 0 2.6L11 17.6H7.6l-3.4-3.4a.7.7 0 0 1 0-1Z' fill='white' stroke='black' stroke-width='1.5'/><path d='M8 9.5l5.5 5.5' stroke='black' stroke-width='1.5'/>`,
-  6,
-  17,
-  'cell',
-);
-
 /**
- * The note grid. Draw, select, move, resize, erase, velocity.
+ * The note grid. Drag to select, move and resize notes. Double-click to add or delete.
+ * Right-drag a note up or down to change its velocity (the whole selection if it is selected).
  * Renders on canvas; all state lives in the editor and engine.
  */
 @customElement('maddie-piano-roll')
@@ -117,7 +100,7 @@ export class MaddiePianoRoll extends CanvasElement {
   noteStyle?: (note: Note, state: NoteState) => NoteStyle | undefined;
 
   private gesture: Gesture | null = null;
-  private hover: { id: NoteId | null; zone: Zone | null; ghost: Note | null } = { id: null, zone: null, ghost: null };
+  private hover: { id: NoteId | null; zone: Zone | null } = { id: null, zone: null };
   private marquee!: HTMLElement;
   private lastPointer: PointerEvent | null = null;
   private autoScrollRaf = 0;
@@ -329,24 +312,20 @@ export class MaddiePianoRoll extends CanvasElement {
 
     if (e.button === 1) return this.begin(e, this.panGesture(e));
     if (e.button === 2) {
-      const hit = this.hitTest(x, y);
-      if (hit) ed.commands.delete([hit.note.id]);
-      return;
+      const rightHit = this.hitTest(x, y);
+      if (!rightHit) return;
+      return this.begin(e, this.velocityGesture(e, rightHit.note));
     }
     if (e.button !== 0) return;
 
     const hit = this.hitTest(x, y);
-    const tool = ed.view.tool;
     const clicked = this.snap(this.tickAt(x), e, 'floor');
     ed.setView({ cursor: clicked });
 
-    if (tool === 'erase') return this.begin(e, this.eraseGesture(e));
-    if (hit && tool === 'velocity') return this.begin(e, this.velocityGesture(e, hit.note));
     if (hit) {
       if (hit.zone !== 'body') return this.begin(e, this.resizeGesture(e, hit));
       return this.begin(e, this.moveGesture(e, hit.note));
     }
-    if (tool === 'draw') return this.begin(e, this.drawGesture(e));
     return this.begin(e, this.marqueeGesture(e));
   };
 
@@ -365,7 +344,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   private onDoubleClick = (e: MouseEvent) => {
     const ed = this.ed;
-    if (!ed || ed.view.tool !== 'select') return;
+    if (!ed) return;
     // Double-click isn't a marker click: undo the seek its first click made.
     if (this.seekUndo && performance.now() - this.seekUndo.at < 500) ed.transport.seek(this.seekUndo.tick, { marker: !ed.transport.playing });
     this.seekUndo = null;
@@ -383,7 +362,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   private begin(e: PointerEvent, gesture: Gesture) {
     this.gesture = gesture;
-    this.hover = { id: null, zone: null, ghost: null };
+    this.hover = { id: null, zone: null };
     this.engine?.setHover(null);
     this.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
@@ -573,37 +552,6 @@ export class MaddiePianoRoll extends CanvasElement {
     };
   }
 
-  private drawGesture(down: PointerEvent): Gesture {
-    const ed = this.ed!;
-    const engine = this.engine!;
-    const { x, y } = this.local(down);
-    const start = this.snap(this.tickAt(x), down, 'floor');
-    const pitch = this.pitchAt(y);
-    const id = createId();
-    let note: Note = { id, pitch, start, duration: this.defaultLength(start), velocity: ed.view.noteVelocity };
-    let stretched = false;
-    engine.notes.markBorn(id, performance.now());
-    engine.setPreview({ added: [note] });
-    ed.audition(pitch);
-
-    return {
-      move: (e) => {
-        const p = this.local(e);
-        if (!stretched && Math.abs(p.x - x) < DRAG_THRESHOLD) return;
-        stretched = true;
-        const end = this.snap(this.tickAt(p.x), e, 'ceil');
-        const grid = ed.view.snap && !e.altKey ? this.gridAt(start) : ed.ppq / 64;
-        note = { ...note, duration: Math.max(grid, end - start) };
-        engine.setPreview({ added: [note] }, ed.view.snap);
-      },
-      up: () => {
-        ed.commands.add([note]);
-        if (stretched) ed.setView({ noteLength: note.duration });
-      },
-      cancel: () => engine.notes.forget(id),
-    };
-  }
-
   private marqueeGesture(down: PointerEvent): Gesture {
     const ed = this.ed!;
     const origin = this.local(down);
@@ -653,26 +601,6 @@ export class MaddiePianoRoll extends CanvasElement {
     };
   }
 
-  private eraseGesture(down: PointerEvent): Gesture {
-    const ed = this.ed!;
-    const engine = this.engine!;
-    const hidden = new Set<NoteId>();
-    const erase = (e: PointerEvent) => {
-      const { x, y } = this.local(e);
-      const hit = this.hitTest(x, y);
-      if (hit && !hidden.has(hit.note.id)) {
-        hidden.add(hit.note.id);
-        engine.notes.markDying(hit.note, performance.now());
-        engine.setPreview({ hidden: new Set(hidden) });
-      }
-    };
-    erase(down);
-    return {
-      move: erase,
-      up: () => hidden.size && ed.commands.delete(hidden, { gestureId: createId() }),
-      cancel: () => {},
-    };
-  }
 
   private velocityGesture(down: PointerEvent, hit: Note): Gesture {
     const ed = this.ed!;
@@ -723,7 +651,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   private onLeave = () => {
     if (this.gesture) return;
-    this.hover = { id: null, zone: null, ghost: null };
+    this.hover = { id: null, zone: null };
     this.engine?.setHover(null);
     this.engine?.invalidate();
   };
@@ -731,29 +659,19 @@ export class MaddiePianoRoll extends CanvasElement {
   private updateCursor(e?: { clientX: number; clientY: number }) {
     const ed = this.ed;
     if (!ed || this.gesture) return;
-    const tool = ed.view.tool;
-    let ghost: Note | null = null;
     let hit: Hit | null = null;
     if (e) {
       const { x, y } = this.local(e);
       if (x >= 0 && y >= 0 && x <= this.width && y <= this.height) {
         hit = this.hitTest(x, y);
-        if (!hit && tool === 'draw') {
-          const start = this.snap(this.tickAt(x), { altKey: false }, 'floor');
-          ghost = { id: 'ghost', pitch: this.pitchAt(y), start, duration: this.defaultLength(start), velocity: ed.view.noteVelocity };
-        }
       }
     }
     const prev = this.hover;
-    this.hover = { id: hit?.note.id ?? null, zone: hit?.zone ?? null, ghost };
+    this.hover = { id: hit?.note.id ?? null, zone: hit?.zone ?? null };
     this.engine?.setHover(this.hover.id);
-    if (prev.id !== this.hover.id || prev.ghost?.start !== ghost?.start || prev.ghost?.pitch !== ghost?.pitch) {
-      this.engine?.invalidate();
-    }
-    if (tool === 'erase') return this.setCursor(ERASER);
-    if (hit && tool === 'velocity') return this.setCursor('ns-resize');
+    if (prev.id !== this.hover.id) this.engine?.invalidate();
     if (hit) return this.setCursor(hit.zone === 'body' ? 'grab' : 'ew-resize');
-    this.setCursor(tool === 'draw' ? PENCIL : 'default');
+    this.setCursor('default');
   }
 
   private setCursor(cursor: string) {
@@ -824,6 +742,9 @@ export class MaddiePianoRoll extends CanvasElement {
     ctx.textBaseline = 'middle';
     ctx.font = `600 10px ${p.font}`;
 
+    // The active track's notes keep the track color, drawn fully solid (other tracks are ghosts).
+    const activeTrackColor = resolveTrackColor(p, ed.getTrackColor(ed.activeTrackId));
+
     const drawNote = (n: Note, d: ReturnType<typeof engine.notes.resolve>, state: NoteState) => {
       const x = (d.start - v.scrollTick) * v.pxPerTick;
       const nw = Math.max(3, d.duration * v.pxPerTick);
@@ -836,10 +757,10 @@ export class MaddiePianoRoll extends CanvasElement {
       const y = (row - v.scrollRow) * rh + 1 + (inner - nh) / 2;
       if (y > h || y + nh < 0) return;
       const style = this.noteStyle?.(n, state);
-      const base = style?.fill ? normalizeColor(style.fill) : noteBase(p, n.pitch, ed.view.noteColor, state.selected);
+      const base = style?.fill ? normalizeColor(style.fill) : activeTrackColor;
       ctx.globalAlpha = alpha;
       roundRect(ctx, x + 0.5, y, nw - 1, nh, radius);
-      ctx.fillStyle = noteFill(p, base, { velocity: d.velocity, muted: n.muted }, state);
+      ctx.fillStyle = noteFill(p, base, { velocity: 1, muted: n.muted }, state);
       ctx.fill();
       // Crisp edge so quiet notes still read as shapes.
       ctx.lineWidth = 1;
@@ -856,7 +777,7 @@ export class MaddiePianoRoll extends CanvasElement {
       }
       // Label.
       if (nw > 34 && rh >= 14 && d.scale > 0.95) {
-        const strong = (state.selected || p.noteMinOpacity + (1 - p.noteMinOpacity) * d.velocity > 0.72) && !n.muted;
+        const strong = !n.muted;
         ctx.fillStyle = strong ? p['note-text'] : p.text;
         ctx.globalAlpha = alpha * 0.9;
         ctx.save();
@@ -888,25 +809,6 @@ export class MaddiePianoRoll extends CanvasElement {
         const note: Note = { id: `rec-${r.pitch}`, pitch: r.pitch, start: r.start, duration: 0, velocity: r.velocity };
         const duration = Math.max(1, pos - r.start);
         drawNote(note, { start: r.start, duration, pitch: r.pitch, velocity: r.velocity, alpha: 1, scale: 1 }, { selected: false, hovered: false, playing: 1 });
-      }
-    }
-
-    // Draw-tool ghost.
-    const g = this.hover.ghost;
-    if (g && !dragging) {
-      const row = ed.rowMap.rowOf(g.pitch);
-      if (row !== null) {
-        const x = (g.start - v.scrollTick) * v.pxPerTick;
-        const y = (row - v.scrollRow) * rh + 1;
-        ctx.setLineDash([3, 3]);
-        ctx.lineWidth = 1;
-        const ghostBase = noteBase(p, g.pitch, ed.view.noteColor, false);
-        ctx.strokeStyle = withAlpha(ghostBase, 0.8);
-        roundRect(ctx, x + 1, y + 0.5, Math.max(3, g.duration * v.pxPerTick) - 2, rh - 3, radius);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = withAlpha(ghostBase, 0.12);
-        ctx.fill();
       }
     }
 

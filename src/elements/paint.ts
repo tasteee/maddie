@@ -65,7 +65,7 @@ const GHOST_MUTED_FILL_ALPHA = 0.08;
 const GHOST_MUTED_EDGE_ALPHA = 0.22;
 
 /** Track colors are CSS colors. Canvas needs rgba, and the conversion is slow, so each is converted once. */
-function resolveTrackColor(p: Palette, color: string): string {
+export function resolveTrackColor(p: Palette, color: string): string {
   const cacheKey = `track:${color}`;
   const cached = p.pitchCache.get(cacheKey);
   if (cached) return cached;

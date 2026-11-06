@@ -144,60 +144,6 @@ export class MaddieTracks extends MaddieElement {
         outline: 2px solid var(--_focus);
         outline-offset: 2px;
       }
-      .custom-color {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--space-sm);
-        color: var(--_text-muted);
-        font-size: var(--font-size-caption);
-        cursor: pointer;
-      }
-      .custom-color input {
-        width: 2rem;
-        height: 1.25rem;
-        padding: 0;
-        border: 1px solid var(--_border);
-        border-radius: var(--_radius-sm);
-        background: none;
-        cursor: pointer;
-      }
-      .track-name {
-        min-width: 3rem;
-        max-width: 10rem;
-        padding: 0;
-        border: 0;
-        background: none;
-        color: inherit;
-        font: inherit;
-        font-weight: 500;
-        text-align: left;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        cursor: pointer;
-      }
-      .track-name:focus-visible,
-      .rename-input:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-      }
-      .rename-input {
-        width: 8rem;
-        padding: 0 var(--space-xs);
-        border: 1px solid var(--_accent);
-        border-radius: var(--_radius-sm);
-        background: var(--_bg);
-        color: var(--_text);
-        font: inherit;
-        font-weight: 500;
-      }
-      z-button.icon {
-        width: var(--control-height-sm);
-      }
-      .add {
-        flex: none;
-      }
     `,
   ];
 
@@ -289,21 +235,11 @@ export class MaddieTracks extends MaddieElement {
 
   private renderColor(track: TrackMetaT) {
     const color = this.ed!.getTrackColor(track.id);
-    const hexColor = toHexColor(color);
     const swatches = TRACK_COLOR_GROUPS.map((group) => this.renderColorGroup(track.id, group));
     return html`<z-popover placement="bottom-start" label="Track color" @click=${(event: Event) => event.stopPropagation()}>
       <button slot="trigger" type="button" class="track-color" style="--_track-color: ${color}" title="Track color" aria-label="Track color"></button>
       <div class="color-panel">
         <div class="color-swatches">${swatches}</div>
-        <label class="custom-color">
-          Custom
-          <input
-            type="color"
-            aria-label="Custom track color"
-            .value=${hexColor}
-            @change=${(event: Event) => this.ed?.commands.setTrackColor(track.id, (event.currentTarget as HTMLInputElement).value)}
-          />
-        </label>
       </div>
     </z-popover>`;
   }
