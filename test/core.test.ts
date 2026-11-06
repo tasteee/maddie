@@ -532,7 +532,7 @@ describe('chord audition', () => {
 
 describe('triplet grid', () => {
   it('turns a plain size into its triplet and back', async () => {
-    const { setTripletGrid, isTripletGrid, getStraightGrid, canBeTriplet } = await import('../src/core');
+    const { setTripletGrid, isTripletGrid, getStraightGrid } = await import('../src/core');
     expect(setTripletGrid('1/8', true)).toBe('1/8T');
     expect(setTripletGrid('1/8T', false)).toBe('1/8');
     expect(isTripletGrid('1/16T')).toBe(true);
