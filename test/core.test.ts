@@ -529,3 +529,21 @@ describe('chord audition', () => {
     vi.useRealTimers();
   });
 });
+
+describe('triplet grid', () => {
+  it('turns a plain size into its triplet and back', async () => {
+    const { setTripletGrid, isTripletGrid, getStraightGrid, canBeTriplet } = await import('../src/core');
+    expect(setTripletGrid('1/8', true)).toBe('1/8T');
+    expect(setTripletGrid('1/8T', false)).toBe('1/8');
+    expect(isTripletGrid('1/16T')).toBe(true);
+    expect(getStraightGrid('1/16T')).toBe('1/16');
+  });
+
+  it('leaves auto, bar and dotted grids alone', async () => {
+    const { setTripletGrid, canBeTriplet } = await import('../src/core');
+    for (const grid of ['auto', 'bar', '1/8.']) {
+      expect(canBeTriplet(grid)).toBe(false);
+      expect(setTripletGrid(grid, true)).toBe(grid);
+    }
+  });
+});
