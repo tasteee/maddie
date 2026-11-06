@@ -112,7 +112,9 @@ describe('reading across tracks', () => {
   it('returns notes with their track ids', () => {
     const { editor, firstId, secondId } = buildTwoTrackEditor();
     const found = editor.notesAllTracks(0, PPQ * 4);
-    expect(found.map((e) => [e.trackId, e.note.pitch]).sort()).toEqual([
+    // Order by pitch: track ids come from the clock, so sorting them as strings is not stable.
+    const byPitchDescending = found.map((e) => [e.trackId, e.note.pitch] as const).sort((a, b) => b[1] - a[1]);
+    expect(byPitchDescending).toEqual([
       [firstId, 60],
       [secondId, 36],
     ]);
