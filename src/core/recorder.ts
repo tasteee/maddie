@@ -33,6 +33,7 @@ export class Recorder {
     this.takeId = `record-${++this.takes}-${Date.now()}`;
     this.takeNotes = [];
     this.pending.clear();
+    this.editor.capture.clear();
     this.emit();
     if (!this.editor.transport.playing) await this.editor.transport.play();
   }

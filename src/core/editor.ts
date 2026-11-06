@@ -5,6 +5,7 @@ import { buildRowMap, type RowMap } from './music/rowmap';
 import { NoteIndex } from './notes';
 import type { Output } from './output';
 import { invertPatches, type MetaKey, type MetaValues, type Patch } from './patches';
+import { createCapture, type CaptureT } from './capture';
 import { Recorder } from './recorder';
 import { Transport } from './transport';
 import { getAudibleTrackIds, getTrackColor } from './tracks';
@@ -94,6 +95,8 @@ export class Editor extends Emitter<EditorEvents> {
   readonly transport: Transport;
   /** Records live notes while the transport plays. */
   readonly recorder: Recorder;
+  /** Remembers live notes played outside a take, so they can be kept after the fact. */
+  readonly capture: CaptureT;
   readonly commands: Commands;
   output: Output | null;
   audioContext: AudioContext | null;
@@ -129,6 +132,7 @@ export class Editor extends Emitter<EditorEvents> {
     this.history = new History(options.historyLimit);
     this.transport = new Transport(this);
     this.recorder = new Recorder(this);
+    this.capture = createCapture(this);
     this.commands = new Commands(this);
     this.output = options.output ?? null;
     this.audioContext = options.audioContext ?? null;
@@ -426,6 +430,7 @@ export class Editor extends Emitter<EditorEvents> {
     const note: Note = { id: `live-${pitch}`, pitch, start: 0, duration: 0, velocity };
     this.live.set(pitch, note);
     this.recorder.noteOn(pitch, velocity);
+    this.capture.noteOn(pitch, velocity);
     if (!this.output || this.volume.muted) return;
     this.output.noteOn({ note, pitch, velocity: this.outVelocity(velocity), time: 0 });
   }
@@ -435,6 +440,7 @@ export class Editor extends Emitter<EditorEvents> {
     if (!note) return;
     this.live.delete(pitch);
     this.recorder.noteOff(pitch);
+    this.capture.noteOff(pitch);
     this.output?.noteOff({ note, pitch, velocity: 0, time: 0 });
   }
 
