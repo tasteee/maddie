@@ -17,7 +17,7 @@ import {
   toMidiVelocity,
   transposeDegrees,
 } from '../src/core';
-import { demoSong } from '../playground/demo-song';
+import { demoSong } from '../src/app/demo-song';
 
 const PPQ = 960;
 

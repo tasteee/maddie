@@ -1,4 +1,4 @@
-import type { NoteInput } from '../src/core';
+import type { NoteInput } from '../core';
 
 const PPQ = 960;
 const S = PPQ / 4; // one sixteenth

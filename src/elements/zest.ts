@@ -15,7 +15,7 @@ import '@tasteee/zest/z-slider';
 import '@tasteee/zest/z-subheading';
 import '@tasteee/zest/z-switch';
 import '@tasteee/zest/z-text';
-import '@tasteee/zest/z-toast';
+import '@tasteee/zest/z-toaster';
 import '@tasteee/zest/z-toggle-button';
 import '@tasteee/zest/z-toggle-button-group';
 import '@tasteee/zest/z-toggle-button-group-item';
@@ -29,3 +29,13 @@ export interface ZestOption {
 
 /** The accents Maddie uses. `dom` is Zest's dominant accent, `sub` the subordinate one; `error` is for destructive actions. */
 export type ZestAccent = 'neutral' | 'dom' | 'sub' | 'error';
+
+type ToasterT = {
+  show(options: { title: string; tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger'; duration?: number }): () => void;
+};
+
+// The `z-toaster` subpath exports `toaster` at runtime but its .d.ts only declares `ZToaster`.
+// @ts-expect-error missing declaration in @tasteee/zest
+import { toaster as zestToaster } from '@tasteee/zest/z-toaster';
+
+export const toaster: ToasterT = zestToaster;
