@@ -109,7 +109,7 @@ export class MaddiePianoRoll extends CanvasElement {
   protected renderOverlay() {
     return html`<div class="marquee" part="marquee"></div>
       <div class="drop" part="drop" aria-hidden="true">
-        <z-badge size="md" kind="soft" accent="dom"><span slot="prefix">${icons.upload}</span>Drop a MIDI file to replace the notes</z-badge>
+        <z-badge size="md" kind="soft" tone="primary"><span slot="prefix">${icons.upload}</span>Drop a MIDI file to replace the notes</z-badge>
       </div>`;
   }
 

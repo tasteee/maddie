@@ -33,7 +33,7 @@ import { MaddieElement } from './base';
 import { icons } from './icons';
 import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
-import type { ZestAccent, ZestOption } from './zest';
+import type { ZestTone, ZestOption } from './zest';
 import './zest';
 
 /** Pieces shared by controls and the panels around them: layout and type only. Color, shape and state come from the Zest elements. */
@@ -71,7 +71,7 @@ export const partStyles = css`
     margin-inline: var(--space-xs);
   }
   z-select {
-    min-width: 4.5rem;
+    min-width: 6.5rem;
   }
   z-popover {
     --z-overlay-padding: var(--space-md);
@@ -149,7 +149,7 @@ interface IconAction {
   icon: unknown;
   onClick: () => void;
   disabled?: boolean;
-  accent?: ZestAccent;
+  tone?: ZestTone;
   placement?: 'top' | 'bottom';
 }
 
@@ -161,7 +161,7 @@ const iconButton = (a: IconAction) =>
       class="icon"
       kind="ghost"
       size="sm"
-      accent=${a.accent ?? 'neutral'}
+      tone=${a.tone ?? 'neutral'}
       aria-label=${a.label}
       ?is-disabled=${a.disabled}
       @click=${a.onClick}
@@ -177,7 +177,7 @@ interface IconToggle {
   on: boolean;
   onToggle: (on: boolean) => void;
   disabled?: boolean;
-  accent?: ZestAccent;
+  tone?: ZestTone;
   /** A visible label next to the icon. */
   text?: string;
 }
@@ -189,7 +189,7 @@ const iconToggle = (t: IconToggle) =>
     html`<z-toggle-button
       kind="ghost"
       size="sm"
-      accent=${t.accent ?? 'dom'}
+      tone=${t.tone ?? 'primary'}
       ?is-icon=${!t.text}
       aria-label=${t.label}
       .isPressed=${live(t.on)}
@@ -202,7 +202,6 @@ const iconToggle = (t: IconToggle) =>
 /** A Zest select that shows the editor's value. */
 const select = (label: string, value: string, options: ZestOption[], onPick: (value: string) => void, placeholder?: string) =>
   html`<z-select
-    inline
     size="sm"
     label=${label}
     placeholder=${placeholder ?? nothing}
@@ -246,13 +245,13 @@ type SwapButtonT = {
 
 /** One button that shows an icon and a value. Click swaps to the next value; ⇧-click goes back. */
 const swapButton = (swap: SwapButtonT) => {
-  const accent = swap.isActive ? 'dom' : 'neutral';
+  const tone = swap.isActive ? 'primary' : 'neutral';
   return tooltip(
     swap.tip,
     html`<z-button
       kind="outline"
       size="sm"
-      accent=${accent}
+      tone=${tone}
       aria-label=${`${swap.label}: ${swap.value}`}
       @click=${(event: MouseEvent) => swap.onSwap(event.shiftKey)}
     >
@@ -331,7 +330,7 @@ export class MaddieGridSelect extends ControlElement {
       html`<z-toggle-button
         kind="ghost"
         size="sm"
-        accent="dom"
+        tone="primary"
         aria-label="Triplet grid"
         .isPressed=${live(isTriplet)}
         ?is-disabled=${!canTriplet}
@@ -560,7 +559,7 @@ export class MaddieTransport extends ControlElement {
     return html`
       ${tooltip(
         tip(t.playing ? 'Stop · back to marker' : 'Play from marker', 'Space'),
-        html`<z-button class="icon" kind="solid" accent="dom" size="sm" aria-label=${t.playing ? 'Stop' : 'Play'} @click=${() => t.toggle()}
+        html`<z-button class="icon" kind="solid" tone="primary" size="sm" aria-label=${t.playing ? 'Stop' : 'Play'} @click=${() => t.toggle()}
           >${t.playing ? icons.stop : icons.play}</z-button
         >`,
       )}
@@ -570,7 +569,7 @@ export class MaddieTransport extends ControlElement {
           is-icon
           kind="ghost"
           size="sm"
-          accent="sub"
+          tone="secondary"
           aria-label=${rec.recording ? 'Stop recording' : 'Record'}
           .isPressed=${live(rec.recording)}
           @press=${record}
@@ -616,7 +615,7 @@ export class MaddieTransport extends ControlElement {
 /** A labelled Zest switch with a hint underneath. */
 function switchRow(label: string, hint: string, on: boolean, onToggle: (on: boolean) => void, disabled = false) {
   return html`<div class="setting">
-    <z-switch size="sm" accent="dom" label=${label} .isChecked=${live(on)} ?is-disabled=${disabled} @change=${(e: CustomEvent<{ checked: boolean }>) => onToggle(e.detail.checked)}
+    <z-switch size="sm" tone="primary" label=${label} .isChecked=${live(on)} ?is-disabled=${disabled} @change=${(e: CustomEvent<{ checked: boolean }>) => onToggle(e.detail.checked)}
       >${label}</z-switch
     >
     <z-text class="hint" size="xs" color="muted">${hint}</z-text>
@@ -627,7 +626,7 @@ function switchRow(label: string, hint: string, on: boolean, onToggle: (on: bool
 function levelSlider(label: string, value: number, onInput: (v: number) => void) {
   return html`<z-slider
     label=${label}
-    accent="dom"
+    tone="primary"
     min="0"
     max="100"
     step="1"
@@ -725,8 +724,8 @@ export class MaddieInput extends ControlElement {
     const active = computerKeyboard || midiInput;
     const showZ = computerKeyboard && z !== null;
     return html`<z-popover placement="bottom-start" label="Input options">
-      <z-button slot="trigger" kind=${active ? 'soft' : 'ghost'} accent=${active ? 'dom' : 'neutral'} size="sm" aria-label="Input"
-        >${icons.keyboard}Input<z-badge kind="solid" accent="dom" size="sm" ?hidden=${!showZ} style=${showZ ? '' : 'display:none'}>${showZ ? pitchName(z) : ''}</z-badge></z-button
+      <z-button slot="trigger" kind=${active ? 'soft' : 'ghost'} tone=${active ? 'primary' : 'neutral'} size="sm" aria-label="Input"
+        >${icons.keyboard}Input<z-badge kind="solid" tone="primary" size="sm" ?hidden=${!showZ} style=${showZ ? '' : 'display:none'}>${showZ ? pitchName(z) : ''}</z-badge></z-button
       >
       <div class="panel">
         <z-text class="panel-title" size="sm" weight="600">Input</z-text>
@@ -928,7 +927,7 @@ export class MaddieZoom extends ControlElement {
         disabled: ed.view.rowHeight >= maxRh,
         onClick: () => rowZoomBy(ed, 1.25),
       })}
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       ${iconButton({ label: 'Zoom out', tip: tip('Zoom out · ⌘ scroll', '−'), icon: icons.zoomOut, onClick: () => this.zoom(1 / 1.5) })}
       ${iconButton({ label: 'Zoom in', tip: tip('Zoom in · ⌘ scroll', '+'), icon: icons.zoomIn, onClick: () => this.zoom(1.5) })}
     `;
@@ -1047,12 +1046,12 @@ export class MaddieTopbar extends MaddieElement {
         <maddie-transport></maddie-transport>
         <maddie-tempo></maddie-tempo>
       </div>
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group playback">
         <maddie-loop-toggle></maddie-loop-toggle>
         <maddie-follow-toggle></maddie-follow-toggle>
       </div>
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group sound">
         <maddie-input></maddie-input>
         <maddie-output></maddie-output>
@@ -1087,16 +1086,16 @@ export class MaddieEditbar extends MaddieElement {
         <maddie-grid-select></maddie-grid-select>
         <maddie-snap-toggle></maddie-snap-toggle>
       </div>
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group key">
         <maddie-key-select></maddie-key-select>
         <maddie-scale-lock></maddie-scale-lock>
       </div>
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group fold"><maddie-fold-select></maddie-fold-select></div>
       <div class="spacer"></div>
       <div class="group" part="group history"><maddie-history></maddie-history></div>
-      <z-separator vertical></z-separator>
+      <z-separator is-vertical></z-separator>
       <div class="group" part="group zoom"><maddie-zoom></maddie-zoom></div>
     `;
   }
