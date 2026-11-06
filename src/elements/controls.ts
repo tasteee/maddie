@@ -12,6 +12,10 @@ import {
   pitchName,
   toMidiFile,
   GRID_OPTIONS,
+  canBeTriplet,
+  getStraightGrid,
+  isTripletGrid,
+  setTripletGrid,
   pitchClassName,
   SCALE_IDS,
   SCALES,
@@ -211,9 +215,6 @@ const select = (label: string, value: string, options: ZestOption[], onPick: (va
 
 /** Styles for `swapButton`. The value slides in each time it changes. */
 const swapStyles = css`
-  .swap-label {
-    color: var(--_text-muted);
-  }
   .swap-value {
     display: inline-block;
     min-width: var(--_swap-value-width, 2.75rem);
@@ -234,14 +235,16 @@ const swapStyles = css`
 `;
 
 type SwapButtonT = {
+  /** Names the control for tooltips and screen readers. Not drawn. */
   label: string;
+  icon: unknown;
   value: string;
   tip: string;
   isActive: boolean;
   onSwap: (isBackwards: boolean) => void;
 };
 
-/** One button that shows `Label: value`. Click swaps to the next value; ⇧-click goes back. */
+/** One button that shows an icon and a value. Click swaps to the next value; ⇧-click goes back. */
 const swapButton = (swap: SwapButtonT) => {
   const accent = swap.isActive ? 'dom' : 'neutral';
   return tooltip(
@@ -253,7 +256,7 @@ const swapButton = (swap: SwapButtonT) => {
       aria-label=${`${swap.label}: ${swap.value}`}
       @click=${(event: MouseEvent) => swap.onSwap(event.shiftKey)}
     >
-      <span class="swap-label">${swap.label}:</span>
+      ${swap.icon}
       ${keyed(swap.value, html`<span class="swap-value">${swap.value}</span>`)}
     </z-button>`,
   );
@@ -269,9 +272,21 @@ const getSwappedItem = <T,>(items: readonly T[], current: T, isBackwards: boolea
 
 // ── Grid + snap ─────────────────────────────────────────────────────
 
-const GRID_VALUES = GRID_OPTIONS.map((option) => option.value);
+// Triplets are a toggle, not a size, so they are not in this cycle.
+const GRID_SIZES = GRID_OPTIONS.filter((option) => !isTripletGrid(option.value));
+const GRID_SIZE_VALUES = GRID_SIZES.map((option) => option.value);
 
-/** Grid size: one button. Click to swap to the next size (⇧-click: previous). */
+const getGridLabel = (grid: string): string => {
+  const straight = getStraightGrid(grid);
+  const option = GRID_SIZES.find((size) => size.value === straight);
+  const label = option?.label ?? straight;
+  return isTripletGrid(grid) ? `${label} T` : label;
+};
+
+/**
+ * Grid size: a swap button (click for the next size, ⇧-click for the previous)
+ * and a T button that makes the chosen size a triplet grid.
+ */
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
   static styles = [
@@ -284,21 +299,46 @@ export class MaddieGridSelect extends ControlElement {
       }
     `,
   ];
+
+  private swapSize(isBackwards: boolean) {
+    const ed = this.ed!;
+    const grid = ed.view.grid;
+    const isTriplet = isTripletGrid(grid);
+    const straight = getStraightGrid(grid);
+    const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, isBackwards);
+    ed.setView({ grid: setTripletGrid(nextSize, isTriplet) });
+  }
+
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
     const grid = ed.view.grid;
-    const currentOption = GRID_OPTIONS.find((option) => option.value === grid);
-    const valueLabel = currentOption?.label ?? grid;
-    const nextGrid = getSwappedItem(GRID_VALUES, grid, false);
-    const nextLabel = GRID_OPTIONS.find((option) => option.value === nextGrid)?.label ?? nextGrid;
-    return swapButton({
-      label: 'Grid',
-      value: valueLabel,
+    const isTriplet = isTripletGrid(grid);
+    const straight = getStraightGrid(grid);
+    const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, false);
+    const nextLabel = getGridLabel(setTripletGrid(nextSize, isTriplet));
+    const canTriplet = canBeTriplet(grid);
+    const tripletTip = canTriplet ? 'Triplet grid' : 'Triplets need a plain 1/2, 1/4, 1/8 … size';
+    return html`${swapButton({
+      label: 'Grid size',
+      icon: icons.grid,
+      value: getGridLabel(grid),
       tip: `Grid size · click for ${nextLabel} · ⇧-click to go back`,
       isActive: false,
-      onSwap: (isBackwards) => ed.setView({ grid: getSwappedItem(GRID_VALUES, grid, isBackwards) }),
-    });
+      onSwap: (isBackwards) => this.swapSize(isBackwards),
+    })}${tooltip(
+      tripletTip,
+      html`<z-toggle-button
+        kind="ghost"
+        size="sm"
+        accent="dom"
+        aria-label="Triplet grid"
+        .isPressed=${live(isTriplet)}
+        ?is-disabled=${!canTriplet}
+        @press=${(event: CustomEvent<{ pressed: boolean }>) => ed.setView({ grid: setTripletGrid(grid, event.detail.pressed) })}
+        >T</z-toggle-button
+      >`,
+    )}`;
   }
 }
 
@@ -365,7 +405,6 @@ export class MaddieKeySelect extends ControlElement {
       this.engine?.toast(guess.outside ? `Key: ${formatKey(guess.key)} · ${pct}% fits, ${guess.outside} notes outside` : `Key: ${formatKey(guess.key)} · every note fits`);
     };
     return html`
-      <span class="label optional">Key</span>
       ${select(
         'Key',
         key ? String(key.root) : NO_KEY,
@@ -439,7 +478,8 @@ export class MaddieFoldSelect extends ControlElement {
     const nextFold = getNextFold(fold, !!ed.key);
     const tipText = `${FOLD_TIPS[fold]} · click for ${FOLD_LABELS[nextFold]}`;
     return swapButton({
-      label: 'Fold',
+      label: 'Fold rows',
+      icon: icons.fold,
       value: FOLD_LABELS[fold],
       tip: tipText,
       isActive: fold !== 'none',

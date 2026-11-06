@@ -22,6 +22,22 @@ export const GRID_OPTIONS: { value: GridValue; label: string }[] = [
   { value: '1/16.', label: '1/16 ·' },
 ];
 
+/** Is this a triplet grid (`'1/8T'`)? */
+export const isTripletGrid = (grid: GridValue): boolean => /^1\/\d+T$/.test(grid);
+
+/** The grid without its triplet flag: `'1/8T'` → `'1/8'`. Other grids are unchanged. */
+export const getStraightGrid = (grid: GridValue): GridValue => (isTripletGrid(grid) ? grid.slice(0, -1) : grid);
+
+/** Only plain divisions (`'1/8'`) have a triplet version. Not auto, bar or dotted. */
+export const canBeTriplet = (grid: GridValue): boolean => /^1\/\d+T?$/.test(grid);
+
+/** Turn the triplet flag on or off, keeping the size. Grids with no triplet version are unchanged. */
+export const setTripletGrid = (grid: GridValue, isTriplet: boolean): GridValue => {
+  if (!canBeTriplet(grid)) return grid;
+  const straight = getStraightGrid(grid);
+  return isTriplet ? `${straight}T` : straight;
+};
+
 /** Grid size in ticks. `null` for `'auto'` (resolve with `autoGridTicks`). */
 export function gridTicks(grid: GridValue, ppq: number, sig?: TimeSigEvent): number | null {
   if (grid === 'auto') return null;
