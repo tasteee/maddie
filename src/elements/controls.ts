@@ -207,19 +207,98 @@ const select = (label: string, value: string, options: ZestOption[], onPick: (va
     @change=${(e: CustomEvent<{ value: string }>) => onPick(e.detail.value)}
   ></z-select>`;
 
+// ── Swap button ─────────────────────────────────────────────────────
+
+/** Styles for `swapButton`. The value slides in each time it changes. */
+const swapStyles = css`
+  .swap-label {
+    color: var(--_text-muted);
+  }
+  .swap-value {
+    display: inline-block;
+    min-width: var(--_swap-value-width, 2.75rem);
+    text-align: left;
+    animation: swap-in var(--_motion-medium) var(--_ease);
+  }
+  @keyframes swap-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.4em);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .swap-value {
+      animation: none;
+    }
+  }
+`;
+
+type SwapButtonT = {
+  label: string;
+  value: string;
+  tip: string;
+  isActive: boolean;
+  onSwap: (isBackwards: boolean) => void;
+};
+
+/** One button that shows `Label: value`. Click swaps to the next value; ⇧-click goes back. */
+const swapButton = (swap: SwapButtonT) => {
+  const accent = swap.isActive ? 'dom' : 'neutral';
+  return tooltip(
+    swap.tip,
+    html`<z-button
+      kind="outline"
+      size="sm"
+      accent=${accent}
+      aria-label=${`${swap.label}: ${swap.value}`}
+      @click=${(event: MouseEvent) => swap.onSwap(event.shiftKey)}
+    >
+      <span class="swap-label">${swap.label}:</span>
+      ${keyed(swap.value, html`<span class="swap-value">${swap.value}</span>`)}
+    </z-button>`,
+  );
+};
+
+/** The item after (or before) `current` in a list, wrapping around. */
+const getSwappedItem = <T,>(items: readonly T[], current: T, isBackwards: boolean): T => {
+  const currentIndex = items.indexOf(current);
+  const step = isBackwards ? -1 : 1;
+  const nextIndex = (currentIndex + step + items.length) % items.length;
+  return items[nextIndex];
+};
+
 // ── Grid + snap ─────────────────────────────────────────────────────
 
+const GRID_VALUES = GRID_OPTIONS.map((option) => option.value);
+
+/** Grid size: one button. Click to swap to the next size (⇧-click: previous). */
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
+  static styles = [
+    tokens,
+    controlStyles,
+    swapStyles,
+    css`
+      :host {
+        --_swap-value-width: 3.25rem;
+      }
+    `,
+  ];
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    return html`<span class="label optional">Grid</span>${select(
-      'Grid',
-      ed.view.grid,
-      GRID_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-      (grid) => ed.setView({ grid }),
-    )}`;
+    const grid = ed.view.grid;
+    const currentOption = GRID_OPTIONS.find((option) => option.value === grid);
+    const valueLabel = currentOption?.label ?? grid;
+    const nextGrid = getSwappedItem(GRID_VALUES, grid, false);
+    const nextLabel = GRID_OPTIONS.find((option) => option.value === nextGrid)?.label ?? nextGrid;
+    return swapButton({
+      label: 'Grid',
+      value: valueLabel,
+      tip: `Grid size · click for ${nextLabel} · ⇧-click to go back`,
+      isActive: false,
+      onSwap: (isBackwards) => ed.setView({ grid: getSwappedItem(GRID_VALUES, grid, isBackwards) }),
+    });
   }
 }
 
@@ -352,54 +431,20 @@ const getNextFold = (current: FoldMode, hasKey: boolean): FoldMode => {
 /** Fold rows: one button. Click to swap the value: Off → Scale → Notes → Off. */
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
-  static styles = [
-    tokens,
-    controlStyles,
-    css`
-      .fold-label {
-        color: var(--_text-muted);
-      }
-      .fold-value {
-        display: inline-block;
-        min-width: 2.75rem;
-        text-align: left;
-        animation: fold-swap var(--_motion-medium) var(--_ease);
-      }
-      @keyframes fold-swap {
-        from {
-          opacity: 0;
-          transform: translateY(0.4em);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .fold-value {
-          animation: none;
-        }
-      }
-    `,
-  ];
+  static styles = [tokens, controlStyles, swapStyles];
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
     const fold = ed.view.fold;
-    const isFolded = fold !== 'none';
     const nextFold = getNextFold(fold, !!ed.key);
-    const valueLabel = FOLD_LABELS[fold];
     const tipText = `${FOLD_TIPS[fold]} · click for ${FOLD_LABELS[nextFold]}`;
-    const accent = isFolded ? 'dom' : 'neutral';
-    return tooltip(
-      tipText,
-      html`<z-button
-        kind="outline"
-        size="sm"
-        accent=${accent}
-        aria-label=${`Fold rows: ${valueLabel}`}
-        @click=${() => ed.setView({ fold: nextFold }, { animate: true })}
-      >
-        <span class="fold-label">Fold:</span>
-        ${keyed(fold, html`<span class="fold-value">${valueLabel}</span>`)}
-      </z-button>`,
-    );
+    return swapButton({
+      label: 'Fold',
+      value: FOLD_LABELS[fold],
+      tip: tipText,
+      isActive: fold !== 'none',
+      onSwap: () => ed.setView({ fold: nextFold }, { animate: true }),
+    });
   }
 }
 
