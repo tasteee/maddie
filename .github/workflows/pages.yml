@@ -29,6 +29,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      # Zest compiled with the classic JSX transform throws 'React is not defined' at render.
+      - run: '! grep -rq "React.createElement" dist/assets'
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
         with:
