@@ -1,5 +1,4 @@
 node_modules
 dist
-dist-playground
 *.log
 .DS_Store

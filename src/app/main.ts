@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 import { SplendidGrandPiano, Soundfont, ElectricPiano } from 'smplr';
-import { toMidiVelocity, type Output } from '../src/core';
+import { toMidiVelocity, type Output } from '../core';
 import '@tasteee/zest/ink.css';
 import '@tasteee/zest/fonts.css';
 import { ZThemeSwitcher } from '@tasteee/zest/z-theme-switcher';
-import '../src/elements';
+import '../elements';
 import { DEMO_TEMPO, demoBass, demoChords, demoLead } from './demo-song';
 
 const editorEl = document.querySelector('maddie-editor')!;

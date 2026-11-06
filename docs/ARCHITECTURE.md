@@ -771,10 +771,10 @@ test/
   core/           vitest, pure
   e2e/            playwright: gestures, a11y, visual regression
   perf/           benchmarks with 20k/50k notes
-playground/       demo app, smplr Splendid Grand Piano as the output
+src/app/          the app: smplr Splendid Grand Piano as the output
 ```
 
-Tooling: pnpm, TypeScript strict, Vite (lib mode + playground), Vitest, Playwright, Changesets, CEM analyzer.
+Tooling: pnpm, TypeScript strict, Vite, Vitest, Playwright, Changesets, CEM analyzer.
 
 ---
 

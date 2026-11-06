@@ -1,0 +1,24 @@
+/* Density. Maddie is a dense editor, so Zest's dials are turned down once, here.
+   Every z-* element reads these, so nothing is sized per component. */
+:root {
+  --base-font-size: 14px;
+  --base-radius: 0.5rem;
+  --control-height-sm: 1.75rem;
+  --control-height-md: 2.125rem;
+  --control-height-lg: 2.5rem;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+maddie-editor {
+  height: 100vh;
+  height: 100dvh;
+}
+maddie-editor::part(frame) {
+  border: 0;
+  border-radius: 0;
+}

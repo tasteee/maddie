@@ -1,4 +1,5 @@
 import { css, html } from 'lit';
+import { toaster } from './zest';
 import { customElement } from 'lit/decorators.js';
 import {
   clampPitch,
@@ -109,8 +110,7 @@ export class MaddiePianoRoll extends CanvasElement {
     return html`<div class="marquee" part="marquee"></div>
       <div class="drop" part="drop" aria-hidden="true">
         <z-badge size="md" kind="soft" accent="dom"><span slot="prefix">${icons.upload}</span>Drop a MIDI file to replace the notes</z-badge>
-      </div>
-      <z-toast part="toast" position="bottom-center"></z-toast>`;
+      </div>`;
   }
 
   connectedCallback() {
@@ -168,9 +168,10 @@ export class MaddiePianoRoll extends CanvasElement {
   };
 
   private showToast = ({ message, kind }: Toast) => {
-    this.renderRoot
-      .querySelector<HTMLElement & { push(t: { title: string; accent?: string; duration?: number }): number }>('z-toast')
-      ?.push({ title: message, accent: kind === 'error' ? 'error' : undefined, duration: kind === 'error' ? 4000 : 2800 });
+    const isError = kind === 'error'
+    const tone = isError ? 'danger' : 'neutral'
+    const duration = isError ? 4000 : 2800
+    toaster.show({ title: message, tone, duration })
   };
 
   protected firstUpdated() {

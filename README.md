@@ -1,55 +1,26 @@
-# @tasteee/maddie
+# Maddie
 
-A framework-agnostic, browser-based MIDI editor. Web components on a headless core.
-
-- **Full editor:** `<maddie-editor>`
-- **Compose your own:** `<maddie-root>` + `<maddie-piano-roll>`, `<maddie-keyboard>`, `<maddie-ruler>`, `<maddie-velocity-lane>`, toolbar controls
-- **Headless:** `@tasteee/maddie/core`
+A browser-based MIDI editor, built on [Zest](https://github.com/tasteee/zest). This repo is an app, not a library.
 
 Live demo: https://tasteee.github.io/maddie/ · Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-## Quick start
-
-Maddie's interface is built from [Zest](https://github.com/tasteee/zest) (`@tasteee/zest`): its buttons, selects, switches, sliders, popovers, tooltips and toasts are `<z-*>` elements, and its colors, type, radii and motion are Zest tokens. Load Zest's tokens once, next to Maddie:
+## Run it
 
 ```sh
-pnpm add @tasteee/maddie @tasteee/zest # Zest is a peer dependency: one copy per page
+pnpm install   # installs Zest from GitHub and builds it
+pnpm dev       # app at localhost:5173
+pnpm build     # static site in dist/
+pnpm typecheck
+pnpm test
 ```
 
-```html
-<script type="module">
-  import '@tasteee/zest/ink.css'; // Zest tokens (required)
-  import '@tasteee/zest/fonts.css'; // DM Sans + DM Mono from Google Fonts (optional: self-host instead)
-  import '@tasteee/maddie/elements';
-</script>
+## Look and feel
 
-<maddie-editor grid="1/16" scale="C minor" tempo="96"></maddie-editor>
-```
+Every control is a Zest `<z-*>` element. Colors, type, radii and motion are Zest tokens, so the editor follows Zest's themes (`data-theme`).
 
-```js
-const el = document.querySelector('maddie-editor');
-el.notes = [{ pitch: 60, start: 0, duration: 480, velocity: 0.8 }]; // ticks, PPQ 960
-el.addEventListener('maddie-change', (e) => save(e.detail.doc));
-```
+The editor is dense, so Zest's size dials are turned down once, in `src/app/style.css`: `--base-font-size`, `--base-radius`, `--control-height-sm|md|lg`. Change them there to scale the whole UI.
 
-## Sound
-
-Maddie makes no sound. It schedules notes ahead of time and hands them to your `output`:
-
-```js
-import { SplendidGrandPiano } from 'smplr';
-import { toMidiVelocity } from '@tasteee/maddie/core';
-
-const ctx = new AudioContext();
-const piano = SplendidGrandPiano(ctx);
-el.audioContext = ctx; // share the clock
-el.output = {
-  noteOn: (e) => piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), time: e.time, duration: e.duration }),
-  noteOff: () => {},
-  allNotesOff: () => piano.stop(),
-  audition: (e) => piano.start({ note: e.pitch, velocity: toMidiVelocity(e.velocity), duration: e.duration }),
-};
-```
+`src/core` is the headless editor, `src/elements` the Maddie custom elements, `src/app` the page that wires in sound (smplr).
 
 ## Controls
 

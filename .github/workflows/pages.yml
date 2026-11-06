@@ -29,11 +29,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: pnpm build:playground
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
         with:
-          path: dist-playground
+          path: dist
 
   deploy:
     if: github.event_name != 'pull_request'
