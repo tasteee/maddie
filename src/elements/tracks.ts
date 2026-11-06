@@ -61,8 +61,8 @@ export class MaddieTracks extends MaddieElement {
       :host {
         display: flex;
         align-items: center;
-        gap: var(--space-xs);
-        padding: var(--space-xs) var(--space-sm);
+        gap: var(--space-md);
+        padding: var(--space-sm) var(--space-md);
         background: var(--_surface);
         border-bottom: 1px solid var(--_border);
         color: var(--_text);
@@ -81,6 +81,7 @@ export class MaddieTracks extends MaddieElement {
         padding: 2px var(--space-xs) 2px var(--space-sm);
         border: 1px solid var(--_border);
         border-radius: var(--_radius-sm);
+        background: var(--_surface-2);
         color: var(--_text-muted);
         cursor: pointer;
         user-select: none;
@@ -91,10 +92,10 @@ export class MaddieTracks extends MaddieElement {
           color var(--_motion-fast) var(--_ease);
       }
       .track:hover {
-        background: var(--_hover);
+        border-color: var(--_text-faint);
       }
       .track.isActive {
-        background: var(--_surface-2);
+        background: var(--_raised);
         border-color: var(--_text-faint);
         color: var(--_text);
       }
