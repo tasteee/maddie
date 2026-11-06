@@ -1,7 +1,7 @@
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
-import { GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type Editor } from '../core';
+import { analyzeSelection, GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type ChordSpanT, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
@@ -9,6 +9,25 @@ import { partStyles } from './controls';
 import { icons } from './icons';
 import { tokens } from './tokens';
 import './zest';
+
+const MAX_CHORDS_SHOWN = 4;
+// Passing notes in a selection are shorter than a 32nd note.
+const SELECTION_MIN_DURATION_DIVISOR = 8;
+
+const formatChordList = (spans: readonly ChordSpanT[]): string => {
+  const shown = spans.slice(0, MAX_CHORDS_SHOWN);
+  const names = shown.map((span) => span.chord.name);
+  const hiddenCount = spans.length - shown.length;
+  const hasHidden = hiddenCount > 0;
+  const hiddenLabel = hasHidden ? ` +${hiddenCount}` : '';
+  return `${names.join(' → ')}${hiddenLabel}`;
+};
+
+const describeChordSpan = (span: ChordSpanT): string => {
+  const hasDegree = span.chord.degree !== '';
+  const degreeLabel = hasDegree ? ` (${span.chord.degree})` : '';
+  return `${span.chord.name}${degreeLabel}`;
+};
 
 /**
  * The selection bar. Always visible, fixed height, never over the notes.
@@ -51,6 +70,9 @@ export class MaddieInspector extends MaddieElement {
       }
       .range {
         font-family: var(--_font-mono);
+      }
+      .chord {
+        font-weight: 600;
       }
       .group {
         display: flex;
@@ -201,12 +223,18 @@ export class MaddieInspector extends MaddieElement {
     const vLo = empty ? 0 : Math.min(...vels);
     const vHi = empty ? 0 : Math.max(...vels);
     const currentGrid = GRID_OPTIONS.find((o) => o.value === ed.view.grid)?.label ?? ed.view.grid;
+    const chordSpans = analyzeSelection(notes, { key: ed.key, minDuration: ed.ppq / SELECTION_MIN_DURATION_DIVISOR });
+    const hasChords = chordSpans.length > 0;
+    const chordLabel = formatChordList(chordSpans);
+    const chordTitle = chordSpans.map(describeChordSpan).join('\n');
+    const chordBadge = hasChords ? html`<z-badge class="chord" size="sm" accent="dom" title=${chordTitle}>${chordLabel}</z-badge>` : nothing;
 
     return html`
       <div class="summary" role="status" aria-live="polite">
         <z-text size="sm" color="muted" ?hidden=${!empty} style=${empty ? '' : 'display:none'}>Select notes to edit</z-text>
         <span class="count" ?hidden=${empty}>${empty ? '' : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}</span>
         <z-badge class="range" size="sm" ?hidden=${empty} style=${empty ? 'display:none' : ''}>${empty ? '' : lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
+        ${chordBadge}
       </div>
 
       <z-separator vertical></z-separator>
