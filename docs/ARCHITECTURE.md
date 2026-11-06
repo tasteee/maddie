@@ -116,7 +116,11 @@ interface Track {
 }
 ```
 
-- Multi-track from day one. The editor edits one track; others can render as **ghost notes** (read-only).
+- Multi-track from day one. The editor edits one track (`activeTrackId`); the others draw as **ghost notes** (read-only) in their own colors, and all of them play.
+- A track plays when it is not `muted` and, if any track is `solo`, when it is soloed too.
+- Track edits (`addTrack`, `removeTrack`, `renameTrack`, `setTrackColor`, `setTrackMuted`, `setTrackSolo`) are undoable commands. `setActiveTrack` is not: like the selection, it is a view of the song. Changing the active track clears the selection.
+- `editor.notes()` and the `.notes` property on `<maddie-root>` mean the active track, so single-track code keeps working. Use `notesAllTracks(from, to)` to read every track.
+- Out of scope for now: per-track instrument or MIDI channel routing, cross-track selection, dragging notes between tracks, reordering tracks.
 - `data` lets consumers attach anything (ids from their DB, lyrics, articulations).
 
 #### 3.1.1 Velocity is a 0–1 float

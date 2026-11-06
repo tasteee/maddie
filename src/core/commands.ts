@@ -1,12 +1,13 @@
-import type { Editor, TransactOptions } from './editor';
-import { createId } from './editor';
+import type { Editor, TransactOptions, TxApi } from './editor';
+import { createId, createTrackId } from './editor';
 import { resolveGrid, snapTick } from './music/grid';
 import { clampPitch, MAX_PITCH, MIN_PITCH } from './music/pitch';
 import { transposeDegrees } from './music/scale';
 import { timeSigAt } from './music/timeline';
 import { clampVelocity } from './music/velocity';
 import { fromMidiFile, type MidiImport } from './midi/read';
-import type { Key, Note, NoteId, NoteInput, Tick } from './types';
+import { getTrackName, pickNewTrackColor, pickNewTrackName, TRACK_COLORS } from './tracks';
+import type { Key, Note, NoteId, NoteInput, Tick, Track } from './types';
 
 type Ids = Iterable<NoteId> | undefined;
 
@@ -286,21 +287,124 @@ export class Commands {
   }
 
   /**
-   * Load a .mid file. Replaces the active track's notes (and tempo, time
-   * signature, key) in one undoable step. All MIDI tracks merge into one.
+   * Load a .mid file in one undoable step, with its tempo, time signature and key.
+   *
+   * - `tracks: 'split'` (default): one Maddie track per MIDI track, named after it.
+   *   The first imported track becomes the active one.
+   * - `tracks: 'merge'`: every MIDI track goes into the active track (the old behavior).
+   *
+   * `replace` (default) clears first: all tracks when splitting, the active track's notes when merging.
    */
-  importMidi(input: ArrayBuffer | Uint8Array, { replace = true }: { replace?: boolean } = {}): MidiImport {
+  importMidi(
+    input: ArrayBuffer | Uint8Array,
+    { replace = true, tracks = 'split' }: { replace?: boolean; tracks?: 'split' | 'merge' } = {},
+  ): MidiImport {
     const ed = this.editor;
     const midi = fromMidiFile(input, { ppq: ed.ppq });
+    const isMerge = tracks === 'merge';
+    if (isMerge) this.importIntoActiveTrack(midi, replace);
+    if (!isMerge) this.importAsTracks(midi, replace);
+    return midi;
+  }
+
+  private importIntoActiveTrack(midi: MidiImport, replace: boolean) {
+    const ed = this.editor;
     ed.transact('Import MIDI', (tx) => {
       if (replace) for (const n of [...ed.notes()]) tx.remove(n.id);
       for (const n of midi.notes) tx.add(normalize({ ...n, id: createId() }));
-      tx.setMeta('tempo', midi.tempo);
-      tx.setMeta('timeSignature', midi.timeSignature);
-      if (midi.key) tx.setMeta('key', midi.key);
+      this.applyImportedMeta(tx, midi);
     });
     ed.clearSelection();
-    return midi;
+  }
+
+  private importAsTracks(midi: MidiImport, replace: boolean) {
+    const ed = this.editor;
+    const oldTrackIds = ed.trackIds;
+    const keptTracks = replace ? [] : [...ed.trackList];
+    const importedTracks = midi.tracks.length > 0 ? midi.tracks : [{ name: undefined, notes: [] }];
+    const newTracks: Track[] = [];
+    for (const imported of importedTracks) {
+      const position = keptTracks.length + newTracks.length;
+      const draft = { id: createTrackId(), name: imported.name?.trim() || undefined };
+      const name = getTrackName(draft, position);
+      const color = TRACK_COLORS[position % TRACK_COLORS.length];
+      const notes = imported.notes.map((n) => normalize({ ...n, id: createId() }));
+      newTracks.push({ id: draft.id, name, color, notes });
+    }
+    ed.transact('Import MIDI', (tx) => {
+      // New tracks go in first: a document is never without a track.
+      for (const track of newTracks) tx.addTrack(track);
+      if (replace) for (const id of oldTrackIds) tx.removeTrack(id);
+      this.applyImportedMeta(tx, midi);
+    });
+    ed.setActiveTrack(newTracks[0].id);
+  }
+
+  private applyImportedMeta(tx: TxApi, midi: MidiImport) {
+    tx.setMeta('tempo', midi.tempo);
+    tx.setMeta('timeSignature', midi.timeSignature);
+    if (midi.key) tx.setMeta('key', midi.key);
+  }
+
+  // ── Tracks ────────────────────────────────────────────────────────
+
+  /**
+   * Add a track after the others and make it the active one.
+   * It gets the next free "Track N" name and palette color unless you pass your own.
+   */
+  addTrack(
+    input: { name?: string; color?: string; notes?: NoteInput[]; activate?: boolean } = {},
+    opts?: TransactOptions,
+  ): Track {
+    const ed = this.editor;
+    const existing = ed.trackList;
+    const notes = (input.notes ?? []).map((n) => normalize({ ...n, id: n.id ?? createId() }));
+    const track: Track = {
+      id: createTrackId(),
+      name: input.name?.trim() || pickNewTrackName(existing),
+      color: input.color ?? pickNewTrackColor(existing),
+      notes,
+    };
+    ed.transact('Add track', (tx) => tx.addTrack(track), opts);
+    const shouldActivate = input.activate ?? true;
+    if (shouldActivate) ed.setActiveTrack(track.id);
+    return track;
+  }
+
+  /** Remove a track and its notes. The last track stays. Returns false if nothing was removed. */
+  removeTrack(trackId: string, opts?: TransactOptions): boolean {
+    const ed = this.editor;
+    const hasTrack = ed.trackIds.includes(trackId);
+    const isLastTrack = ed.trackIds.length <= 1;
+    if (!hasTrack || isLastTrack) return false;
+    ed.transact('Remove track', (tx) => tx.removeTrack(trackId), opts);
+    return true;
+  }
+
+  /** An empty name goes back to "Track N". */
+  renameTrack(trackId: string, name: string, opts?: TransactOptions) {
+    const trimmedName = name.trim();
+    const nextName = trimmedName === '' ? undefined : trimmedName;
+    this.editor.transact('Rename track', (tx) => tx.updateTrack(trackId, { name: nextName }), opts);
+  }
+
+  setTrackColor(trackId: string, color: string, opts?: TransactOptions) {
+    this.editor.transact('Change track color', (tx) => tx.updateTrack(trackId, { color }), opts);
+  }
+
+  setTrackMuted(trackId: string, isMuted: boolean, opts?: TransactOptions) {
+    const label = isMuted ? 'Mute track' : 'Unmute track';
+    this.editor.transact(label, (tx) => tx.updateTrack(trackId, { muted: isMuted }), opts);
+  }
+
+  setTrackSolo(trackId: string, isSolo: boolean, opts?: TransactOptions) {
+    const label = isSolo ? 'Solo track' : 'Unsolo track';
+    this.editor.transact(label, (tx) => tx.updateTrack(trackId, { solo: isSolo }), opts);
+  }
+
+  /** Same as `editor.setActiveTrack`. Not an undo step: it is a view of the song, like the selection. */
+  setActiveTrack(trackId: string) {
+    this.editor.setActiveTrack(trackId);
   }
 
   setTempo(bpm: number, opts?: TransactOptions) {

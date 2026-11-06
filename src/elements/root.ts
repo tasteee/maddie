@@ -30,7 +30,8 @@ export interface MaddieChangeDetail {
  * @fires maddie-selectionchange - `detail: { ids }`
  * @fires maddie-viewchange - `detail: { view }`
  * @fires maddie-transportchange - `detail: { state, position }`
- * @fires maddie-noteon - A note was scheduled during playback. `detail: { note, time }`
+ * @fires maddie-noteon - A note was scheduled during playback. `detail: { note, time, track }`
+ * @fires maddie-trackchange - A track was added, removed, renamed, recolored, muted or soloed, or the active track changed. `detail: { tracks, activeId }`
  */
 @customElement('maddie-root')
 export class MaddieRoot extends LitElement {
@@ -112,7 +113,12 @@ export class MaddieRoot extends LitElement {
     this.editor.setDoc(doc);
   }
 
-  /** Notes of the active track. Setting replaces them (history is cleared). */
+  /**
+   * Shortcut for the active track's notes, so single-track code keeps working.
+   * Reading returns the active track's notes only. Setting replaces only those notes; other tracks,
+   * their names and colors stay as they are. The selection and history are cleared, like `doc`.
+   * To change every track at once, set `doc`.
+   */
   get notes(): readonly Note[] {
     return this.editor.notes();
   }
@@ -220,6 +226,7 @@ export class MaddieRoot extends LitElement {
     ed.on('view', (e) => fire('maddie-viewchange', { view: e.view }));
     ed.on('transport', (e) => fire('maddie-transportchange', e));
     ed.on('noteon', (e) => fire('maddie-noteon', e));
+    ed.on('tracks', (e) => fire('maddie-trackchange', e));
   }
 
   disconnectedCallback() {

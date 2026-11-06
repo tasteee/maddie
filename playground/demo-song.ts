@@ -31,3 +31,17 @@ const NOTES: Array<[number, number, number, number]> = [
 export function demoSong(): NoteInput[] {
   return NOTES.map(([pitch, start, length, velocity]) => ({ pitch, start: start * S, duration: length * S, velocity }));
 }
+
+/** A simple C minor lead over the demo chords, for the second track. Same format as `NOTES`. */
+const LEAD: Array<[number, number, number, number]> = [
+  [79, 0, 4, 0.8], [77, 4, 2, 0.7], [75, 6, 2, 0.7],
+  [77, 8, 4, 0.8], [75, 12, 2, 0.7], [72, 14, 2, 0.7],
+  [75, 16, 4, 0.8], [72, 20, 2, 0.7], [68, 22, 2, 0.7],
+  [72, 24, 6, 0.8],
+  [79, 32, 4, 0.8], [75, 36, 4, 0.7], [74, 40, 2, 0.7], [75, 42, 2, 0.7],
+  [77, 48, 6, 0.85], [74, 56, 4, 0.75], [70, 60, 4, 0.75],
+];
+
+export function demoLead(): NoteInput[] {
+  return LEAD.map(([pitch, start, length, velocity]) => ({ pitch, start: start * S, duration: length * S, velocity }));
+}

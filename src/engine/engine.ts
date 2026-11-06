@@ -43,6 +43,16 @@ export interface ChordDrag {
 
 export type ChordDragPhase = 'move' | 'drop' | 'cancel';
 
+/** A note from a track that is not being edited. Drawn behind the active track, never selectable. */
+export type GhostNoteT = {
+  trackId: string;
+  note: Note;
+  /** The track's CSS color. */
+  color: string;
+  /** Does the track play? Muted tracks draw fainter. */
+  isAudible: boolean;
+};
+
 export interface Toast {
   message: string;
   kind: 'info' | 'error';
@@ -103,6 +113,10 @@ export class Engine {
       this.invalidate();
     });
     editor.on('selection', () => this.invalidate());
+    editor.on('tracks', () => {
+      this.reflowRows(this.motion.slow, performance.now());
+      this.invalidate();
+    });
     editor.on('transport', () => this.invalidate());
     editor.on('view', ({ view, prev, animate }) => {
       const now = performance.now();
@@ -211,6 +225,21 @@ export class Engine {
     for (const n of overrides.values()) if (!hidden.has(n.id)) out.push(n);
     for (const n of added) out.push(n);
     return out;
+  }
+
+  /** Notes of every other track overlapping a tick range, with the colors to draw them in. */
+  ghostNotes(from: number, to: number): GhostNoteT[] {
+    const editor = this.editor;
+    const activeId = editor.activeTrackId;
+    const ghosts: GhostNoteT[] = [];
+    for (const entry of editor.notesAllTracks(from, to)) {
+      const isActive = entry.trackId === activeId;
+      if (isActive) continue;
+      const color = editor.getTrackColor(entry.trackId);
+      const isAudible = editor.isTrackAudible(entry.trackId);
+      ghosts.push({ trackId: entry.trackId, note: entry.note, color, isAudible });
+    }
+    return ghosts;
   }
 
   /** Displayed (possibly animating) view. */

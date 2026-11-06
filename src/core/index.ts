@@ -4,6 +4,7 @@ export * from './commands';
 export * from './patches';
 export * from './history';
 export * from './notes';
+export * from './tracks';
 export * from './output';
 export * from './transport';
 export * from './recorder';

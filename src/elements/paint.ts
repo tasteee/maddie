@@ -58,6 +58,66 @@ export function noteFill(p: Palette, base: string, note: { velocity: number; mut
   return color;
 }
 
+// How strongly a ghost note shows. Muted tracks sit further back than playing ones.
+const GHOST_FILL_ALPHA = 0.2;
+const GHOST_EDGE_ALPHA = 0.5;
+const GHOST_MUTED_FILL_ALPHA = 0.08;
+const GHOST_MUTED_EDGE_ALPHA = 0.22;
+
+/** Track colors are CSS colors. Canvas needs rgba, and the conversion is slow, so each is converted once. */
+function resolveTrackColor(p: Palette, color: string): string {
+  const cacheKey = `track:${color}`;
+  const cached = p.pitchCache.get(cacheKey);
+  if (cached) return cached;
+  const resolved = normalizeColor(color);
+  p.pitchCache.set(cacheKey, resolved);
+  return resolved;
+}
+
+/**
+ * Notes of the other tracks, in their own colors, drawn behind the active track.
+ * Read-only: they never take part in hit-testing or selection.
+ */
+export function drawGhostNotes(
+  ctx: CanvasRenderingContext2D,
+  engine: Engine,
+  v: DisplayView,
+  p: Palette,
+  width: number,
+  height: number,
+  now: number,
+) {
+  const from = v.scrollTick;
+  const to = from + width / v.pxPerTick;
+  const ghosts = engine.ghostNotes(from, to);
+  const rowHeight = v.rowHeight;
+  const radius = p.noteRadius;
+  const inner = Math.max(2, rowHeight - 2);
+  ctx.lineWidth = 1;
+  for (const ghost of ghosts) {
+    const note = ghost.note;
+    const rowAlpha = engine.rows.alphaOf(Math.round(note.pitch), now);
+    if (rowAlpha <= 0.01) continue;
+    const x = (note.start - v.scrollTick) * v.pxPerTick;
+    const noteWidth = Math.max(3, note.duration * v.pxPerTick);
+    const row = engine.rows.rowOf(note.pitch, now);
+    const y = (row - v.scrollRow) * rowHeight + 1;
+    const isOffscreen = x > width || x + noteWidth < 0 || y > height || y + inner < 0;
+    if (isOffscreen) continue;
+    const color = resolveTrackColor(p, ghost.color);
+    const fillAlpha = ghost.isAudible ? GHOST_FILL_ALPHA : GHOST_MUTED_FILL_ALPHA;
+    const edgeAlpha = ghost.isAudible ? GHOST_EDGE_ALPHA : GHOST_MUTED_EDGE_ALPHA;
+    ctx.globalAlpha = rowAlpha;
+    roundRect(ctx, x + 0.5, y, noteWidth - 1, inner, radius);
+    ctx.fillStyle = withAlpha(color, fillAlpha);
+    ctx.fill();
+    ctx.strokeStyle = withAlpha(color, edgeAlpha);
+    roundRect(ctx, x + 1, y + 0.5, noteWidth - 2, inner - 1, radius - 0.5);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
 /** How bright a note flashes while the playhead is on it. */
 export function playingFlash(editor: Editor, note: Note, position: number): number {
   if (!editor.transport.playing) return 0;

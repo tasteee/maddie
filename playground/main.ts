@@ -5,7 +5,7 @@ import '@tasteee/zest/ink.css';
 import '@tasteee/zest/fonts.css';
 import { ZThemeSwitcher } from '@tasteee/zest/z-theme-switcher';
 import '../src/elements';
-import { DEMO_TEMPO, demoSong } from './demo-song';
+import { DEMO_TEMPO, demoLead, demoSong } from './demo-song';
 
 const editorEl = document.querySelector('maddie-editor')!;
 const editor = editorEl.editor;
@@ -110,6 +110,11 @@ editorEl.sounds = [
 
 // ── Content ─────────────────────────────────────────────────────────
 editorEl.notes = demoSong();
+// A second track, so the track list and ghost notes have something to show. Not part of undo history.
+const chordsTrackId = editor.activeTrackId;
+editor.commands.renameTrack(chordsTrackId, 'Chords + bass', { origin: 'load' });
+editor.commands.addTrack({ name: 'Lead', notes: demoLead() }, { origin: 'load' });
+editor.setActiveTrack(chordsTrackId);
 editor.commands.setTempo(DEMO_TEMPO, { origin: 'load' });
 editor.transport.setLoop({ start: 0, end: editor.ppq * 16, enabled: true });
 editor.setView({ pxPerTick: 0.075 });

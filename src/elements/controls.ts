@@ -318,7 +318,8 @@ export class MaddieKeySelect extends ControlElement {
     const setScale = (id: string) => {
       ed.commands.setKey({ root: key?.root ?? 0, scale: id as ScaleId });
     };
-    const notes = ed.notes().filter((n) => !n.muted);
+    // The key of the song: notes from every track, not only the one being edited.
+    const notes = ed.doc.tracks.flatMap((track) => track.notes).filter((n) => !n.muted);
     const auto = () => {
       const guess = detectKey(notes);
       if (!guess) return;
@@ -868,7 +869,7 @@ export class MaddieExport extends ControlElement {
       label: 'Export MIDI',
       tip: tip('Export .mid', `${modKeyLabel} ⇧ E`),
       icon: icons.download,
-      disabled: this.ed.notes().length === 0,
+      disabled: !this.ed.hasAnyNotes,
       onClick: () => this.export(),
     });
   }

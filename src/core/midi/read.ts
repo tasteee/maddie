@@ -1,6 +1,14 @@
 import { fromMidiVelocity } from '../music/velocity';
 import type { Key, NoteInput, TempoEvent, TimeSigEvent } from '../types';
 
+/** The notes of one MIDI track chunk. */
+export type MidiTrackT = {
+  /** From the track-name meta event, if the file has one. */
+  name?: string;
+  /** Rescaled to `ppq`, sorted by start. */
+  notes: NoteInput[];
+};
+
 export interface MidiImport {
   /** Ticks per quarter in the file (notes are already rescaled to `ppq`). */
   sourcePpq: number;
@@ -10,6 +18,8 @@ export interface MidiImport {
   key: Key | null;
   /** All notes from every track, rescaled to `ppq`, sorted by start. */
   notes: NoteInput[];
+  /** One entry per MIDI track that has notes (a tempo-only track is left out), in file order. */
+  tracks: MidiTrackT[];
   trackNames: string[];
 }
 
@@ -43,6 +53,7 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
   let key: Key | null = null;
   const notes: NoteInput[] = [];
   const trackNames: string[] = [];
+  const tracks: MidiTrackT[] = [];
 
   let o = 8 + headerLen;
   for (let t = 0; t < ntracks && o + 8 <= bytes.length; t++) {
@@ -56,6 +67,8 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
     }
     let tick = 0;
     let status = 0;
+    const trackNotes: NoteInput[] = [];
+    let trackName: string | undefined;
     // Open notes per channel+pitch (a stack, so overlapping same-pitch notes pair FIFO).
     const open = new Map<number, Array<{ tick: number; velocity: number }>>();
 
@@ -73,13 +86,15 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
       const stack = open.get((ch << 7) | pitch);
       const on = stack?.shift();
       if (!on) return;
-      notes.push({
+      const note: NoteInput = {
         pitch,
         start: scale(on.tick),
         duration: Math.max(1, scale(at) - scale(on.tick)),
         velocity: fromMidiVelocity(on.velocity),
         channel: ch,
-      });
+      };
+      notes.push(note);
+      trackNotes.push(note);
     };
 
     while (o < end) {
@@ -103,7 +118,11 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
           const sf = (d[0] << 24) >> 24;
           const major = SF_TO_MAJOR[sf] ?? 0;
           key = d[1] ? { root: (major + 9) % 12, scale: 'minor' } : { root: major, scale: 'major' };
-        } else if (type === 0x03 && l) trackNames.push(new TextDecoder().decode(d));
+        } else if (type === 0x03 && l) {
+          const name = new TextDecoder().decode(d);
+          trackNames.push(name);
+          trackName ??= name;
+        }
         else if (type === 0x2f) break;
         continue;
       }
@@ -131,6 +150,10 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
     // Close anything left hanging at the end of the track.
     for (const [k, stack] of open) while (stack.length) close(k >> 7, k & 0x7f, tick);
     o = end;
+    if (trackNotes.length) {
+      trackNotes.sort((a, b) => a.start - b.start || b.pitch - a.pitch);
+      tracks.push({ name: trackName, notes: trackNotes });
+    }
   }
 
   const dedupe = <T extends { tick: number }>(evs: T[]) =>
@@ -144,6 +167,7 @@ export function fromMidiFile(input: ArrayBuffer | Uint8Array, { ppq = 960 }: Mid
     timeSignature: timeSignature.length ? dedupe(timeSignature) : [{ tick: 0, numerator: 4, denominator: 4 }],
     key,
     notes,
+    tracks,
     trackNames,
   };
 }
