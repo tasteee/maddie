@@ -19,6 +19,36 @@ const toHexColor = (color: string): string => {
   return `#${hexParts.join('')}`;
 };
 
+type TrackColorGroupT = {
+  name: string;
+  shades: string[];
+};
+
+const LIGHTNESS_STEPS = [-0.12, 0, 0.12, 0.24];
+
+/** Same hue and chroma, lighter or darker. For tokens that are a single color, not a scale. */
+const buildShades = (token: string): string[] =>
+  LIGHTNESS_STEPS.map((step) => {
+    const isBase = step === 0;
+    if (isBase) return `var(${token})`;
+    const sign = step < 0 ? '-' : '+';
+    return `oklch(from var(${token}) calc(l ${sign} ${Math.abs(step)}) c h)`;
+  });
+
+/** Zest's own 0–9 scales: four steps from the middle. */
+const buildScaleShades = (scale: string): string[] => [3, 4, 5, 6].map((step) => `var(--color-${scale}-${step})`);
+
+/** Preset track colors, taken from the design system so they follow the theme. */
+const TRACK_COLOR_GROUPS: TrackColorGroupT[] = [
+  { name: 'Primary', shades: buildScaleShades('primary') },
+  { name: 'Secondary', shades: buildScaleShades('secondary') },
+  { name: 'Success', shades: buildShades('--success') },
+  { name: 'Warning', shades: buildShades('--warning') },
+  { name: 'Error', shades: buildShades('--destructive') },
+];
+
+type PopoverElementT = HTMLElement & { isOpen: boolean };
+
 /**
  * The track list: one chip per track, with its color, name, mute, solo and remove.
  * Click a chip to edit that track. Double-click its name to rename it.
@@ -73,22 +103,63 @@ export class MaddieTracks extends MaddieElement {
         opacity: 0.45;
       }
       .track-color {
-        position: relative;
         flex: none;
         width: 0.75rem;
         height: 0.75rem;
+        padding: 0;
+        border: 0;
         border-radius: 50%;
         background: var(--_track-color);
         cursor: pointer;
       }
-      .track-color input {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
+      .track-color:focus-visible {
+        outline: 2px solid var(--_focus);
+        outline-offset: 2px;
+      }
+      .color-panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        color: var(--_text);
+      }
+      .color-swatches {
+        display: grid;
+        grid-template-columns: repeat(4, 1.5rem);
+        gap: var(--space-xs);
+      }
+      .swatch {
+        width: 1.5rem;
+        height: 1.5rem;
         padding: 0;
-        border: 0;
-        opacity: 0;
+        border: 1px solid var(--_border);
+        border-radius: var(--_radius-sm);
+        background: var(--_swatch);
+        cursor: pointer;
+        transition: border-color var(--_motion-fast) var(--_ease);
+      }
+      .swatch:hover {
+        border-color: var(--_text);
+      }
+      .swatch:focus-visible {
+        outline: 2px solid var(--_focus);
+        outline-offset: 2px;
+      }
+      .custom-color {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        color: var(--_text-muted);
+        font-size: var(--font-size-caption);
+        cursor: pointer;
+      }
+      .custom-color input {
+        width: 2rem;
+        height: 1.25rem;
+        padding: 0;
+        border: 1px solid var(--_border);
+        border-radius: var(--_radius-sm);
+        background: none;
         cursor: pointer;
       }
       .track-name {
@@ -191,17 +262,50 @@ export class MaddieTracks extends MaddieElement {
     />`;
   }
 
+  private pickColor(trackId: string, event: Event) {
+    const swatch = event.currentTarget as HTMLElement;
+    const resolvedColor = getComputedStyle(swatch).backgroundColor;
+    const hexColor = toHexColor(resolvedColor);
+    this.ed?.commands.setTrackColor(trackId, hexColor);
+    const popover = swatch.closest('z-popover') as PopoverElementT | null;
+    if (popover) popover.isOpen = false;
+  }
+
+  private renderSwatch(trackId: string, groupName: string, shade: string, shadeIndex: number) {
+    const label = `${groupName} ${shadeIndex + 1}`;
+    return html`<button
+      type="button"
+      class="swatch"
+      style="--_swatch: ${shade}"
+      title=${label}
+      aria-label=${label}
+      @click=${(event: Event) => this.pickColor(trackId, event)}
+    ></button>`;
+  }
+
+  private renderColorGroup(trackId: string, group: TrackColorGroupT) {
+    return group.shades.map((shade, shadeIndex) => this.renderSwatch(trackId, group.name, shade, shadeIndex));
+  }
+
   private renderColor(track: TrackMetaT) {
     const color = this.ed!.getTrackColor(track.id);
     const hexColor = toHexColor(color);
-    return html`<label class="track-color" style="--_track-color: ${color}" title="Track color" @click=${(event: Event) => event.stopPropagation()}>
-      <input
-        type="color"
-        aria-label="Track color"
-        .value=${hexColor}
-        @change=${(event: Event) => this.ed?.commands.setTrackColor(track.id, (event.currentTarget as HTMLInputElement).value)}
-      />
-    </label>`;
+    const swatches = TRACK_COLOR_GROUPS.map((group) => this.renderColorGroup(track.id, group));
+    return html`<z-popover placement="bottom-start" label="Track color" @click=${(event: Event) => event.stopPropagation()}>
+      <button slot="trigger" type="button" class="track-color" style="--_track-color: ${color}" title="Track color" aria-label="Track color"></button>
+      <div class="color-panel">
+        <div class="color-swatches">${swatches}</div>
+        <label class="custom-color">
+          Custom
+          <input
+            type="color"
+            aria-label="Custom track color"
+            .value=${hexColor}
+            @change=${(event: Event) => this.ed?.commands.setTrackColor(track.id, (event.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
+      </div>
+    </z-popover>`;
   }
 
   private renderToggle(label: string, text: string, isOn: boolean, accent: string, onToggle: (isOn: boolean) => void) {
