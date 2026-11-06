@@ -11,6 +11,7 @@ export * from './view';
 export * from './music/pitch';
 export * from './music/scale';
 export * from './music/chords';
+export * from './music/detect';
 export * from './music/grid';
 export * from './music/rowmap';
 export * from './music/timeline';

@@ -2,14 +2,17 @@ import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import {
+  analyzeChords,
   CHORD_FAMILIES,
   chordsInKey,
+  formatBBT,
   formatKey,
   invert,
   pitchClassName,
   voiceChord,
   type Chord,
   type ChordFamily,
+  type ChordSpanT,
   type Editor,
 } from '../core';
 import type { ChordDrag, Engine } from '../engine/engine';
@@ -24,6 +27,16 @@ const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
 const DRAG_THRESHOLD = 4;
 /** Where a clicked chord is auditioned: bass near G3. */
 const AUDITION_NEAR = 55;
+// Wait for edits to settle before analysing the song.
+const ANALYSIS_DEBOUNCE_MS = 300;
+// Chords shorter than an eighth note are treated as passing notes.
+const ANALYSIS_MIN_DURATION_DIVISOR = 2;
+
+type TrackChordsT = {
+  trackId: string;
+  trackName: string;
+  spans: ChordSpanT[];
+};
 
 /**
  * Chords that fit the key. Drag one onto the piano roll to place it.
@@ -143,6 +156,67 @@ export class MaddieChords extends MaddieElement {
       .empty {
         margin: var(--space-lg) var(--space-md);
       }
+      .found {
+        max-height: 14rem;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: var(--space-xs) var(--space-md) var(--space-sm);
+        border-bottom: 1px solid var(--_border);
+      }
+      .found-title {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding-block: var(--space-xs);
+        color: var(--_text-muted);
+        font-size: var(--font-size-caption);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .track-name {
+        margin-top: var(--space-xs);
+        color: var(--_text-faint);
+        font-size: var(--font-size-caption);
+        font-weight: 600;
+      }
+      .found-row {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-sm);
+        width: 100%;
+        margin: 0;
+        padding: var(--space-xs) var(--space-sm);
+        border: none;
+        border-radius: var(--_radius);
+        background: transparent;
+        color: var(--_text);
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+        transition: background-color var(--_motion-fast) var(--_ease);
+      }
+      .found-row:hover {
+        background: var(--_hover);
+      }
+      .found-row:focus-visible {
+        outline: 3px solid var(--_focus);
+        outline-offset: 2px;
+      }
+      .found-position {
+        min-width: 4.5em;
+        color: var(--_text-faint);
+        font: 500 var(--font-size-caption) var(--_font-mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .found-name {
+        font-weight: 600;
+      }
+      .found-degree {
+        margin-left: auto;
+        color: var(--_text-muted);
+        font: 600 var(--font-size-caption) var(--_font-mono);
+      }
       .ghost {
         position: fixed;
         z-index: 1000;
@@ -176,21 +250,100 @@ export class MaddieChords extends MaddieElement {
   @state() private query = '';
   /** Roots whose section differs from the default (open with a key, closed without). */
   @state() private toggled = new Set<number>();
+  /** Chords found in each track's notes, refreshed shortly after the last edit. */
+  @state() private foundChords: TrackChordsT[] = [];
   private keyId = '';
+  private wasPanelOpen = false;
+  private analysisTimer: ReturnType<typeof setTimeout> | undefined;
 
   protected attach(editor: Editor, _engine: Engine) {
+    const scheduleAnalysis = () => {
+      clearTimeout(this.analysisTimer);
+      this.analysisTimer = setTimeout(() => this.runAnalysis(), ANALYSIS_DEBOUNCE_MS);
+    };
     const update = () => {
       this.toggleAttribute('open', editor.view.chordsPanel);
       const key = editor.key;
       const id = key ? `${key.root}:${key.scale}` : '';
-      if (id !== this.keyId) {
+      const hasKeyChanged = id !== this.keyId;
+      if (hasKeyChanged) {
         this.keyId = id;
         this.toggled = new Set();
       }
       this.requestUpdate();
     };
+    const handleChange = () => {
+      update();
+      scheduleAnalysis();
+    };
+    // Zoom and scroll also fire view events. Only opening the panel needs fresh results.
+    const handleView = () => {
+      update();
+      const isPanelOpen = editor.view.chordsPanel;
+      const wasJustOpened = isPanelOpen && !this.wasPanelOpen;
+      this.wasPanelOpen = isPanelOpen;
+      if (wasJustOpened) this.runAnalysis();
+    };
     update();
-    this.track(editor.on('view', update), editor.on('change', update));
+    this.wasPanelOpen = editor.view.chordsPanel;
+    this.runAnalysis();
+    this.track(editor.on('view', handleView), editor.on('change', handleChange), () => clearTimeout(this.analysisTimer));
+  }
+
+  private runAnalysis() {
+    const ed = this.ed;
+    if (!ed) return;
+    const isPanelOpen = ed.view.chordsPanel;
+    if (!isPanelOpen) return;
+    const options = { key: ed.key, minDuration: ed.ppq / ANALYSIS_MIN_DURATION_DIVISOR };
+    const found: TrackChordsT[] = [];
+    for (const [index, track] of ed.doc.tracks.entries()) {
+      const spans = analyzeChords(track.notes, options);
+      const hasSpans = spans.length > 0;
+      if (!hasSpans) continue;
+      const trackName = track.name ?? `Track ${index + 1}`;
+      found.push({ trackId: track.id, trackName, spans });
+    }
+    this.foundChords = found;
+  }
+
+  // ── Found chords ──────────────────────────────────────────────────
+
+  /** Jump to the chord, hear it, and select its notes when its track is the active one. */
+  private onFoundClick(trackId: string, span: ChordSpanT) {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.transport.seek(span.start);
+    ed.auditionChord(span.pitches, 0.5, undefined, { humanize: true });
+    const isActiveTrack = trackId === ed.activeTrackId;
+    if (isActiveTrack) ed.select(span.noteIds);
+  }
+
+  private renderFoundRow(trackId: string, span: ChordSpanT) {
+    const ed = this.ed!;
+    const position = formatBBT(span.start, ed.meta.timeSignature, ed.ppq);
+    const hasDegree = span.chord.degree !== '';
+    const degree = hasDegree ? html`<span class="found-degree">${span.chord.degree}</span>` : nothing;
+    return html`<button type="button" class="found-row" @click=${() => this.onFoundClick(trackId, span)}>
+      <span class="found-position">${position}</span>
+      <span class="found-name">${span.chord.name}</span>
+      ${degree}
+    </button>`;
+  }
+
+  private renderFoundTrack(group: TrackChordsT, shouldShowName: boolean) {
+    const name = shouldShowName ? html`<div class="track-name">${group.trackName}</div>` : nothing;
+    return html`${name}${group.spans.map((span) => this.renderFoundRow(group.trackId, span))}`;
+  }
+
+  private renderFound() {
+    const hasFound = this.foundChords.length > 0;
+    if (!hasFound) return nothing;
+    const shouldShowTrackNames = this.ed!.trackIds.length > 1;
+    return html`<section class="found" part="found" aria-label="Chords in this song">
+      <div class="found-title">In this song</div>
+      ${this.foundChords.map((group) => this.renderFoundTrack(group, shouldShowTrackNames))}
+    </section>`;
   }
 
   // ── Drag ──────────────────────────────────────────────────────────
@@ -344,6 +497,7 @@ export class MaddieChords extends MaddieElement {
         </div>
       </div>
       <div class="list" part="list">
+        ${this.renderFound()}
         ${key ? nothing : html`<z-text class="hint" size="xs" color="muted">No key set, so every chord shows. Pick a key to see only chords that fit it.</z-text>`}
         ${groups.length
           ? groups.map((g) => {
