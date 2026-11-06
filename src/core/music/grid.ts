@@ -18,24 +18,44 @@ export const GRID_OPTIONS: { value: GridValue; label: string }[] = [
   { value: '1/4T', label: '1/4 T' },
   { value: '1/8T', label: '1/8 T' },
   { value: '1/16T', label: '1/16 T' },
+  { value: '1/4.', label: '1/4 ·' },
   { value: '1/8.', label: '1/8 ·' },
   { value: '1/16.', label: '1/16 ·' },
 ];
 
+/**
+ * How a division is bent: `straight` (`'1/8'`), `triplet` (`'1/8T'`, two thirds as long)
+ * or `dotted` (`'1/8.'`, half again as long).
+ */
+export type GridModifier = 'straight' | 'triplet' | 'dotted';
+
+export const GRID_MODIFIERS: readonly GridModifier[] = ['straight', 'triplet', 'dotted'];
+
+const MODIFIER_SUFFIX: Record<GridModifier, string> = { straight: '', triplet: 'T', dotted: '.' };
+
 /** Is this a triplet grid (`'1/8T'`)? */
 export const isTripletGrid = (grid: GridValue): boolean => /^1\/\d+T$/.test(grid);
 
-/** The grid without its triplet flag: `'1/8T'` → `'1/8'`. Other grids are unchanged. */
-export const getStraightGrid = (grid: GridValue): GridValue => (isTripletGrid(grid) ? grid.slice(0, -1) : grid);
+/** Is this a dotted grid (`'1/8.'`)? */
+export const isDottedGrid = (grid: GridValue): boolean => /^1\/\d+\.$/.test(grid);
 
-/** Only plain divisions (`'1/8'`) have a triplet version. Not auto, bar or dotted. */
-export const canBeTriplet = (grid: GridValue): boolean => /^1\/\d+T?$/.test(grid);
+/** Which modifier a grid has. `auto` and `bar` are `straight`. */
+export const getGridModifier = (grid: GridValue): GridModifier => {
+  if (isTripletGrid(grid)) return 'triplet';
+  if (isDottedGrid(grid)) return 'dotted';
+  return 'straight';
+};
 
-/** Turn the triplet flag on or off, keeping the size. Grids with no triplet version are unchanged. */
-export const setTripletGrid = (grid: GridValue, isTriplet: boolean): GridValue => {
-  if (!canBeTriplet(grid)) return grid;
-  const straight = getStraightGrid(grid);
-  return isTriplet ? `${straight}T` : straight;
+/** Only divisions (`'1/8'`, `'1/8T'`, `'1/8.'`) can be bent. Not auto or bar. */
+export const canHaveModifier = (grid: GridValue): boolean => /^1\/\d+[T.]?$/.test(grid);
+
+/** The grid without its modifier: `'1/8T'` and `'1/8.'` → `'1/8'`. Other grids are unchanged. */
+export const getStraightGrid = (grid: GridValue): GridValue => (canHaveModifier(grid) ? grid.replace(/[T.]$/, '') : grid);
+
+/** Set the modifier, keeping the size. Grids that cannot be bent are unchanged. */
+export const setGridModifier = (grid: GridValue, modifier: GridModifier): GridValue => {
+  if (!canHaveModifier(grid)) return grid;
+  return `${getStraightGrid(grid)}${MODIFIER_SUFFIX[modifier]}`;
 };
 
 /** Grid size in ticks. `null` for `'auto'` (resolve with `autoGridTicks`). */

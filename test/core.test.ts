@@ -530,20 +530,34 @@ describe('chord audition', () => {
   });
 });
 
-describe('triplet grid', () => {
-  it('turns a plain size into its triplet and back', async () => {
-    const { setTripletGrid, isTripletGrid, getStraightGrid } = await import('../src/core');
-    expect(setTripletGrid('1/8', true)).toBe('1/8T');
-    expect(setTripletGrid('1/8T', false)).toBe('1/8');
-    expect(isTripletGrid('1/16T')).toBe(true);
+describe('grid modifier', () => {
+  it('switches a size between straight, triplet and dotted', async () => {
+    const { setGridModifier, getGridModifier, getStraightGrid } = await import('../src/core');
+    expect(setGridModifier('1/8', 'triplet')).toBe('1/8T');
+    expect(setGridModifier('1/8', 'dotted')).toBe('1/8.');
+    expect(setGridModifier('1/8T', 'dotted')).toBe('1/8.');
+    expect(setGridModifier('1/8.', 'straight')).toBe('1/8');
+    expect(getGridModifier('1/16T')).toBe('triplet');
+    expect(getGridModifier('1/16.')).toBe('dotted');
+    expect(getGridModifier('1/16')).toBe('straight');
     expect(getStraightGrid('1/16T')).toBe('1/16');
+    expect(getStraightGrid('1/16.')).toBe('1/16');
   });
 
-  it('leaves auto, bar and dotted grids alone', async () => {
-    const { setTripletGrid, canBeTriplet } = await import('../src/core');
-    for (const grid of ['auto', 'bar', '1/8.']) {
-      expect(canBeTriplet(grid)).toBe(false);
-      expect(setTripletGrid(grid, true)).toBe(grid);
+  it('leaves auto and bar alone', async () => {
+    const { setGridModifier, canHaveModifier, getGridModifier } = await import('../src/core');
+    for (const grid of ['auto', 'bar']) {
+      expect(canHaveModifier(grid)).toBe(false);
+      expect(setGridModifier(grid, 'triplet')).toBe(grid);
+      expect(getGridModifier(grid)).toBe('straight');
     }
   });
+
+  it('sizes a triplet at two thirds and a dotted grid at one and a half', async () => {
+    const { gridTicks } = await import('../src/core');
+    expect(gridTicks('1/8T', 960)).toBe(320);
+    expect(gridTicks('1/8', 960)).toBe(480);
+    expect(gridTicks('1/8.', 960)).toBe(720);
+  });
 });
+

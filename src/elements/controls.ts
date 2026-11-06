@@ -12,15 +12,16 @@ import {
   pitchName,
   toMidiFile,
   GRID_OPTIONS,
-  canBeTriplet,
+  canHaveModifier,
+  getGridModifier,
   getStraightGrid,
-  isTripletGrid,
-  setTripletGrid,
+  setGridModifier,
   pitchClassName,
   SCALE_IDS,
   SCALES,
   type Editor,
   type FoldMode,
+  type GridModifier,
   type ScaleId,
   ZOOM_LIMITS,
 } from '../core';
@@ -277,20 +278,30 @@ const getSwappedItem = <T,>(items: readonly T[], current: T, isBackwards: boolea
 
 // ── Grid + snap ─────────────────────────────────────────────────────
 
-// Triplets are a toggle, not a size, so they are not in this cycle.
-const GRID_SIZES = GRID_OPTIONS.filter((option) => !isTripletGrid(option.value));
+// Straight, triplet and dotted are a modifier on a size, not sizes of their own, so they are not in this cycle.
+const GRID_SIZES = GRID_OPTIONS.filter((option) => getGridModifier(option.value) === 'straight');
 const GRID_SIZE_VALUES = GRID_SIZES.map((option) => option.value);
+
+const MODIFIER_OPTIONS: { value: GridModifier; label: string; suffix: string }[] = [
+  { value: 'straight', label: 'Straight', suffix: '' },
+  { value: 'triplet', label: 'Triplet', suffix: ' T' },
+  { value: 'dotted', label: 'Dotted', suffix: ' ·' },
+];
+
+const MODIFIER_TIP = 'Straight: plain size · Triplet: two thirds as long · Dotted: half again as long';
 
 const getGridLabel = (grid: string): string => {
   const straight = getStraightGrid(grid);
   const option = GRID_SIZES.find((size) => size.value === straight);
   const label = option?.label ?? straight;
-  return isTripletGrid(grid) ? `${label} T` : label;
+  const modifier = getGridModifier(grid);
+  const modifierOption = MODIFIER_OPTIONS.find((candidate) => candidate.value === modifier);
+  return `${label}${modifierOption?.suffix ?? ''}`;
 };
 
 /**
  * Grid size: a swap button (click for the next size, ⇧-click for the previous)
- * and a T button that makes the chosen size a triplet grid.
+ * and a Straight / Triplet / Dotted choice that bends the chosen size.
  */
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
@@ -302,28 +313,43 @@ export class MaddieGridSelect extends ControlElement {
       :host {
         --_swap-value-width: 3.25rem;
       }
+      z-toggle-button-group {
+        margin-inline-end: var(--space-sm);
+      }
     `,
   ];
 
   private swapSize(isBackwards: boolean) {
     const ed = this.ed!;
     const grid = ed.view.grid;
-    const isTriplet = isTripletGrid(grid);
+    const modifier = getGridModifier(grid);
     const straight = getStraightGrid(grid);
     const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, isBackwards);
-    ed.setView({ grid: setTripletGrid(nextSize, isTriplet) });
+    ed.setView({ grid: setGridModifier(nextSize, modifier) });
+  }
+
+  private pickModifier(event: CustomEvent<{ value?: string }>) {
+    const ed = this.ed!;
+    const pickedValue = event.detail.value;
+    // Clicking the pressed choice again deselects it; one of the three is always on.
+    if (pickedValue === undefined) return this.requestUpdate();
+    ed.setView({ grid: setGridModifier(ed.view.grid, pickedValue as GridModifier) });
   }
 
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
     const grid = ed.view.grid;
-    const isTriplet = isTripletGrid(grid);
+    const modifier = getGridModifier(grid);
     const straight = getStraightGrid(grid);
     const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, false);
-    const nextLabel = getGridLabel(setTripletGrid(nextSize, isTriplet));
-    const canTriplet = canBeTriplet(grid);
-    const tripletTip = canTriplet ? 'Triplet grid' : 'Triplets need a plain 1/2, 1/4, 1/8 … size';
+    const nextLabel = getGridLabel(setGridModifier(nextSize, modifier));
+    const canBend = canHaveModifier(grid);
+    const modifierTip = canBend ? MODIFIER_TIP : 'Auto and 1 Bar cannot be bent. Pick 1/2, 1/4, 1/8 …';
+    const modifierItems = MODIFIER_OPTIONS.map(
+      (option) =>
+        html`<z-toggle-button-group-item value=${option.value} .isPressed=${live(modifier === option.value)}>${option.label}</z-toggle-button-group-item>`,
+    );
     return html`${swapButton({
       label: 'Grid size',
       icon: icons.grid,
@@ -332,17 +358,17 @@ export class MaddieGridSelect extends ControlElement {
       isActive: false,
       onSwap: (isBackwards) => this.swapSize(isBackwards),
     })}${tooltip(
-      tripletTip,
-      html`<z-toggle-button
-        kind="ghost"
+      modifierTip,
+      html`<z-toggle-button-group
         size="sm"
+        kind="soft"
         tone="primary"
-        aria-label="Triplet grid"
-        .isPressed=${live(isTriplet)}
-        ?is-disabled=${!canTriplet}
-        @press=${(event: CustomEvent<{ pressed: boolean }>) => ed.setView({ grid: setTripletGrid(grid, event.detail.pressed) })}
-        >T</z-toggle-button
-      >`,
+        aria-label="Grid feel"
+        ?is-disabled=${!canBend}
+        @change=${(event: CustomEvent<{ value?: string }>) => this.pickModifier(event)}
+      >
+        ${modifierItems}
+      </z-toggle-button-group>`,
     )}`;
   }
 }
