@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@tasteee/zest':
         specifier: git+https://github.com/tasteee/zest.git
-        version: git+https://github.com/tasteee/zest.git#e8ec2ab94b3b8a0a20cfe87b2ecc8a8f71a56ad8
+        version: git+https://github.com/tasteee/zest.git#35f7bb0eacc9adf168c223d0f448b528c3c175c5
       lit:
         specifier: ^3.3.0
         version: 3.3.3
@@ -325,8 +325,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@tasteee/zest@git+https://github.com/tasteee/zest.git#e8ec2ab94b3b8a0a20cfe87b2ecc8a8f71a56ad8':
-    resolution: {commit: e8ec2ab94b3b8a0a20cfe87b2ecc8a8f71a56ad8, repo: https://github.com/tasteee/zest.git, type: git}
+  '@tasteee/zest@git+https://github.com/tasteee/zest.git#35f7bb0eacc9adf168c223d0f448b528c3c175c5':
+    resolution: {commit: 35f7bb0eacc9adf168c223d0f448b528c3c175c5, repo: https://github.com/tasteee/zest.git, type: git}
     version: 1.0.0
 
   '@types/chai@5.2.3':
@@ -772,7 +772,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.67.5':
     optional: true
 
-  '@tasteee/zest@git+https://github.com/tasteee/zest.git#e8ec2ab94b3b8a0a20cfe87b2ecc8a8f71a56ad8':
+  '@tasteee/zest@git+https://github.com/tasteee/zest.git#35f7bb0eacc9adf168c223d0f448b528c3c175c5':
     dependencies:
       atomico: 2.2.0
 
