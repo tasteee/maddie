@@ -1,34 +1,62 @@
 import { css, html } from 'lit';
-import { toaster } from './zest';
+import { confirmPlainChordPlacement } from './zest';
+import { showEditorToast } from './zest';
 import { customElement } from 'lit/decorators.js';
 import {
   clampPitch,
   createId,
   degreeOf,
   inScale,
+  loadScaled,
   isBlackKey,
   nearestInScale,
   pitchClass,
-  pitchName,
   pitchOfDegree,
   resolveGrid,
   snapTick,
   timeSigAt,
-  voiceChord,
+  type ChordRegion,
+  type ChordDraft,
+  type ChordTrackEdit,
   type Editor,
   type Note,
   type NoteId,
 } from '../core';
-import type { ChordDrag, ChordDragPhase, Engine, Toast } from '../engine/engine';
+import type { ChordDrag, ChordDragPhase, DisplayView, Engine, Toast } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { clampScrollRow, handleWheel, maxScrollTick } from '../engine/interact';
 import { normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
 import { icons } from './icons';
-import { importMidiFile } from './midi-io';
-import { drawGhostNotes, drawLoop, drawPlayhead, drawTimeGrid, noteFill, playingFlash, resolveTrackColor, roundRect, type NoteState, type NoteStyle } from './paint';
+import { importMidiFiles } from './midi-io';
+import { drawGhostNotes, drawPlayhead, drawTimeGrid, noteFill, playingFlash, resolveTrackColor, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 import './zest';
+
+const CHORD_ZONE_PX = 10;
+
+type ChordDropPlanT =
+  | { kind: 'place'; start: number; draft: ChordDraft; label: string }
+  | { kind: 'edit'; start: number; draft: ChordDraft; edit: ChordTrackEdit; newId: string; label: string; commitLabel: string; insertion?: number };
+
+const QUARTERS = ['', '¼', '½', '¾'];
+
+/** "¾ bar", "1¼ bars", or beats when it isn't a quarter-bar step. */
+const formatBars = (duration: number, bar: number) => {
+  const quarters = Math.round((duration / bar) * 4);
+  const isQuarterStep = Math.abs(quarters * bar / 4 - duration) < 1;
+  if (!isQuarterStep) {
+    const beats = Math.round((duration / (bar / 4)) * 100) / 100;
+    return `${beats} ${beats === 1 ? 'beat' : 'beats'}`;
+  }
+  const whole = Math.floor(quarters / 4);
+  const part = QUARTERS[quarters % 4];
+  const isUnderOne = whole === 0;
+  if (isUnderOne) return `${part} bar`;
+  const isOne = quarters === 4;
+  if (isOne) return '1 bar';
+  return `${whole}${part} bars`;
+};
 
 type Zone = 'body' | 'start' | 'end';
 
@@ -65,7 +93,7 @@ export class MaddiePianoRoll extends CanvasElement {
       }
       .drop {
         position: absolute;
-        inset: var(--space-sm);
+        inset: var(--space-2);
         display: grid;
         place-items: center;
         border: 2px dashed color-mix(in oklch, var(--_accent) 70%, transparent);
@@ -109,7 +137,7 @@ export class MaddiePianoRoll extends CanvasElement {
   protected renderOverlay() {
     return html`<div class="marquee" part="marquee"></div>
       <div class="drop" part="drop" aria-hidden="true">
-        <z-badge size="md" kind="soft" tone="primary"><span slot="prefix">${icons.upload}</span>Drop a MIDI file to replace the notes</z-badge>
+        <z-badge size="md" kind="soft" tone="primary"><span slot="prefix">${icons.upload}</span>Drop MIDI files to add tracks</z-badge>
       </div>`;
   }
 
@@ -163,15 +191,12 @@ export class MaddiePianoRoll extends CanvasElement {
     e.preventDefault();
     this.dragDepth = 0;
     this.toggleAttribute('dropping', false);
-    const file = e.dataTransfer?.files[0];
-    if (file && this.ed) importMidiFile(this.ed, file, this);
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length && this.ed) void importMidiFiles(this.ed, files, this);
   };
 
-  private showToast = ({ message, kind }: Toast) => {
-    const isError = kind === 'error'
-    const tone = isError ? 'danger' : 'neutral'
-    const duration = isError ? 4000 : 2800
-    toaster.show({ title: message, tone, duration })
+  private showToast = (toast: Toast) => {
+    showEditorToast(toast.message, toast.kind === 'capture');
   };
 
   protected firstUpdated() {
@@ -181,54 +206,142 @@ export class MaddiePianoRoll extends CanvasElement {
 
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
-    this.track(editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast), engine.onChordDrag(this.onChordDrag));
+    const warmChordTools = () => {
+      if (editor.chordRegions?.some((region) => region.performance)) void loadScaled().catch(() => {});
+    };
+    warmChordTools();
+    window.addEventListener('keydown', this.trackAlt, true);
+    window.addEventListener('keyup', this.trackAlt, true);
+    this.track(editor.on('tracks', warmChordTools), editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast), engine.onChordDrag(this.onChordDrag),
+      () => {
+        window.removeEventListener('keydown', this.trackAlt, true);
+        window.removeEventListener('keyup', this.trackAlt, true);
+      });
   }
 
   // ── Chord drop (from <maddie-chords>) ───────────────────────────
 
-  /** Stable ids while one chord is dragged, so the drop doesn't re-animate the preview. */
-  private chordIds: NoteId[] = [];
-  private chordBass: number | null = null;
-
-  /** The chord's notes under the pointer, or null when it's off the grid. */
-  private chordNotesAt(drag: ChordDrag): Note[] | null {
+  /**
+   * Where a dragged chord would land, and what dropping it does:
+   * - empty space: place, 1 bar or fitted to end where the next chord starts;
+   * - a chord's body: replace it (the new chord takes its start and length);
+   * - a seam between two touching chords: insert, sliding the later chords right.
+   * Nothing ever overlaps. Alt only skips snapping.
+   */
+  private chordDropPlan(drag: ChordDrag, isAltDown: boolean): ChordDropPlanT | undefined {
     const ed = this.ed!;
-    const { x, y } = this.local({ clientX: drag.clientX, clientY: drag.clientY });
-    if (x < 0 || y < 0 || x > this.width || y > this.height) return null;
-    const start = this.snap(this.tickAt(x), { altKey: false }, 'floor');
-    const pitches = voiceChord(drag.root, drag.intervals, this.pitchAt(y));
-    while (this.chordIds.length < pitches.length) this.chordIds.push(createId());
-    // Chords land short (one beat). Resize them after.
-    return pitches.map((pitch, i) => ({ id: this.chordIds[i], pitch, start, duration: ed.ppq, velocity: ed.view.noteVelocity }));
+    const { x, y } = this.local(drag);
+    const isOutside = x < 0 || y < 0 || x > this.width || y > this.height;
+    if (isOutside) return;
+    const view = ed.view;
+    const pointerTick = this.tickAt(x);
+    const zoneTicks = CHORD_ZONE_PX / view.pxPerTick;
+    const bar = drag.draft.region.duration;
+    const regions = ed.chordRegions;
+    const end = (region: ChordRegion) => region.start + region.duration;
+
+    if (regions) {
+      for (let index = 0; index + 1 < regions.length; index++) {
+        const left = regions[index];
+        const right = regions[index + 1];
+        const isTouching = end(left) === right.start;
+        const isNearSeam = Math.abs(pointerTick - right.start) <= zoneTicks;
+        if (!isTouching || !isNearSeam) continue;
+        const at = right.start;
+        const inserted = { ...drag.draft.region, id: createId(), start: at };
+        const shifted = regions.map((region) => (region.start >= at ? { ...region, start: region.start + bar } : region));
+        const moved = regions.length - index - 1;
+        const edit = ed.chordTrack.prepare([...shifted, inserted]);
+        if (!edit) return;
+        const label = `Insert · moves ${moved} ${moved === 1 ? 'chord' : 'chords'}`;
+        return { kind: 'edit', start: at, draft: drag.draft, edit, newId: inserted.id, label, insertion: at, commitLabel: 'Insert chord' };
+      }
+      const target = regions.find((region) => pointerTick >= region.start && pointerTick < end(region));
+      if (target) {
+        const isInBody = pointerTick - target.start > zoneTicks && end(target) - pointerTick > zoneTicks;
+        if (!isInBody) return;
+        const fitted = ed.chordTrack.fitDraft(drag.draft, target.duration);
+        const replacement = { ...fitted.region, id: createId(), start: target.start };
+        const edit = ed.chordTrack.prepare([...regions.filter((region) => region !== target), replacement]);
+        if (!edit) return;
+        return { kind: 'edit', start: target.start, draft: fitted, edit, newId: replacement.id, label: `Replace ${target.symbol}`, commitLabel: 'Replace chord' };
+      }
+    }
+
+    const start = this.snap(pointerTick, { altKey: isAltDown }, 'floor');
+    const next = regions?.find((region) => region.start > start);
+    const room = next ? next.start - start : bar;
+    const minimum = this.gridAt(start);
+    const hasRoom = room >= Math.min(minimum, bar);
+    if (!hasRoom) return;
+    const duration = Math.min(bar, room);
+    const draft = ed.chordTrack.fitDraft(drag.draft, duration);
+    const isFitted = duration < bar;
+    const label = isFitted ? `Fits ${formatBars(duration, bar)}` : '';
+    return { kind: 'place', start, draft, label };
   }
 
-  private onChordDrag = (drag: ChordDrag, phase: ChordDragPhase) => {
+  private revealChord(pitches: readonly number[]) {
+    const ed = this.ed!;
+    const rows = pitches.map((pitch) => ed.rowMap.rowOf(pitch) ?? ed.rowMap.virtual[pitch]);
+    const { rowHeight, scrollRow = 0 } = ed.view;
+    const top = scrollRow ?? 0;
+    const hi = Math.min(...rows);
+    const lo = Math.max(...rows);
+    if (hi < top || lo >= top + this.height / rowHeight) {
+      const center = (hi + lo) / 2 - this.height / rowHeight / 2;
+      ed.setView({ scrollRow: clampScrollRow(ed, center) });
+    }
+  }
+
+  private onChordDrag = async (drag: ChordDrag, phase: ChordDragPhase) => {
     const ed = this.ed;
     const engine = this.engine;
     if (!ed || !engine) return;
-    const notes = phase === 'cancel' ? null : this.chordNotesAt(drag);
-    if (phase === 'move') {
-      drag.overGrid = !!notes;
-      if (!notes) {
-        if (this.chordBass !== null) engine.clearPreview();
-        this.chordBass = null;
-        return;
-      }
-      engine.setPreview({ added: notes }, ed.view.snap);
-      const bass = notes[0].pitch;
-      if (bass !== this.chordBass) ed.auditionChord(notes.map((n) => n.pitch), 0.4);
-      this.chordBass = bass;
+    const plan = phase === 'cancel' ? undefined : this.chordDropPlan(drag, this.isAltDown);
+    if (!plan) {
+      if (drag.overGrid || phase !== 'move') engine.clearPreview();
+      drag.overGrid = false;
+      drag.label = undefined;
       return;
     }
-    if (phase === 'drop' && notes) {
-      ed.commands.add(notes);
-      ed.auditionChord(notes.map((n) => n.pitch), 0.6);
+    const draft = plan.draft;
+    const notes = draft.notes.map((note) => ({ ...note, start: plan.start + note.start }));
+    const pitches = notes.length ? notes.map((note) => note.pitch) : draft.region.pitches;
+    drag.label = plan.label || undefined;
+    if (phase === 'move') {
+      if (!drag.overGrid) this.revealChord(pitches);
+      drag.overGrid = true;
+      const isEdit = plan.kind === 'edit';
+      if (isEdit) engine.previewChords(plan.edit, plan.insertion);
+      if (!isEdit) engine.setPreview({ added: notes }, ed.view.snap);
+      return;
+    }
+    const isMidiTrack = !ed.chordRegions;
+    const isConfirmed = isMidiTrack ? await confirmPlainChordPlacement(this) : true;
+    if (!isConfirmed) {
+      engine.clearPreview();
+      return;
+    }
+    try {
+      const isEdit = plan.kind === 'edit';
+      const isAdded = isEdit
+        ? ed.chordTrack.commit(plan.edit, plan.commitLabel, [plan.newId])
+        : ed.chordTrack.placeDraft(draft, plan.start);
+      if (isAdded) {
+        this.revealChord(pitches);
+        ed.chordTrack.auditionPitches([draft.region]);
+      }
       this.focus({ preventScroll: true });
+    } catch (error) {
+      engine.toast((error as Error).message, 'error');
     }
     engine.clearPreview();
-    this.chordIds = [];
-    this.chordBass = null;
   };
+
+  /** Alt while dragging a chord from the panel skips snapping. The drag lives in another element, so track it here. */
+  private isAltDown = false;
+  private trackAlt = (event: KeyboardEvent) => { this.isAltDown = event.altKey; };
 
   protected resized() {
     if (!this.engine || !this.ed) return;
@@ -292,7 +405,7 @@ export class MaddiePianoRoll extends CanvasElement {
     const to = this.tickAt(x + 10);
     const notes = engine.visibleNotes(from, to);
     // Selected notes draw on top, so test them first.
-    notes.sort((a, b) => Number(ed.selection.has(b.id)) - Number(ed.selection.has(a.id)));
+    notes.sort((a, b) => Number(ed.isNoteSelected(b.id)) - Number(ed.isNoteSelected(a.id)));
     for (const n of notes) {
       const r = this.noteRect(n);
       if (!r || x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
@@ -313,6 +426,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
     if (e.button === 1) return this.begin(e, this.panGesture(e));
     if (e.button === 2) {
+      if (ed.chordRegions) return;
       const rightHit = this.hitTest(x, y);
       if (!rightHit) return;
       return this.begin(e, this.velocityGesture(e, rightHit.note));
@@ -322,6 +436,12 @@ export class MaddiePianoRoll extends CanvasElement {
     const hit = this.hitTest(x, y);
     const clicked = this.snap(this.tickAt(x), e, 'floor');
     ed.setView({ cursor: clicked });
+
+    if (ed.chordRegions) {
+      const chord = this.hitRegion(x, y, hit?.note.chordRegionId);
+      if (chord) return this.begin(e, this.regionGesture(e, chord.region, chord.edge));
+      return this.begin(e, this.marqueeGesture(e));
+    }
 
     if (hit) {
       if (hit.zone !== 'body') return this.begin(e, this.resizeGesture(e, hit));
@@ -345,7 +465,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   private onDoubleClick = (e: MouseEvent) => {
     const ed = this.ed;
-    if (!ed) return;
+    if (!ed || ed.chordRegions) return;
     // Double-click isn't a marker click: undo the seek its first click made.
     if (this.seekUndo && performance.now() - this.seekUndo.at < 500) ed.transport.seek(this.seekUndo.tick, { marker: !ed.transport.playing });
     this.seekUndo = null;
@@ -402,7 +522,7 @@ export class MaddiePianoRoll extends CanvasElement {
     window.addEventListener('keydown', esc, true);
   }
 
-  /** Scroll when dragging near an edge. Speed grows with distance past the edge. */
+  /** Scroll horizontally when dragging near a time-axis edge. */
   private autoScroll() {
     if (this.autoScrollRaf) return;
     const step = () => {
@@ -410,21 +530,95 @@ export class MaddiePianoRoll extends CanvasElement {
       const e = this.lastPointer;
       const ed = this.ed;
       if (!e || !ed || !this.gesture) return;
-      const { x, y } = this.local(e);
+      const { x } = this.local(e);
       const edge = 28;
       const speed = (d: number) => Math.sign(d) * Math.min(24, Math.pow(Math.abs(d) / edge, 1.6) * 10);
       const dx = x < edge ? speed(x - edge) : x > this.width - edge ? speed(x - (this.width - edge)) : 0;
-      const dy = y < edge ? speed(y - edge) : y > this.height - edge ? speed(y - (this.height - edge)) : 0;
-      if (!dx && !dy) return;
+      if (!dx) return;
       const v = ed.view;
       ed.setView({
         scrollTick: clamp(v.scrollTick + dx / v.pxPerTick, 0, maxScrollTick(ed)),
-        scrollRow: clampScrollRow(ed, (v.scrollRow ?? 0) + dy / v.rowHeight),
       });
       this.gesture.move(e);
       this.autoScrollRaf = requestAnimationFrame(step);
     };
     this.autoScrollRaf = requestAnimationFrame(step);
+  }
+
+  private regionRect(region: ChordRegion, view: Pick<DisplayView, 'scrollTick' | 'scrollRow' | 'pxPerTick' | 'rowHeight'>, pitches = region.pitches) {
+    const map = this.ed!.rowMap;
+    const rows = pitches.map((pitch) => map.rowOf(pitch) ?? map.virtual[pitch]);
+    const y = clamp((Math.min(...rows) - (view.scrollRow ?? 0)) * view.rowHeight - 17, 0, Math.max(0, this.height - 17));
+    const bottom = clamp((Math.max(...rows) + 1 - (view.scrollRow ?? 0)) * view.rowHeight + 2, y + 17, Math.max(y + 17, this.height));
+    return { x: (region.start - view.scrollTick) * view.pxPerTick, y, w: Math.max(3, region.duration * view.pxPerTick), h: bottom - y };
+  }
+
+  private hitRegion(x: number, y: number, owner?: string) {
+    const ed = this.ed!;
+    for (const region of ed.chordRegions ?? []) {
+      const rect = this.regionRect(region, { ...ed.view, scrollRow: ed.view.scrollRow ?? 0 });
+      if (owner !== region.id && (owner || x < rect.x || x >= rect.x + rect.w || y < rect.y || y >= rect.y + rect.h)) continue;
+      const edge = Math.min(7, rect.w / 4);
+      const zone: Zone = x > rect.x + rect.w - edge ? 'end' : x < rect.x + edge ? 'start' : 'body';
+      return { region, edge: zone };
+    }
+    return null;
+  }
+
+  private regionGesture(down: PointerEvent, region: ChordRegion, edge: Zone): Gesture {
+    const ed = this.ed!;
+    const engine = this.engine!;
+    const source = ed.chordRegions;
+    const track = ed.activeTrackId;
+    const origin = this.local(down);
+    const add = down.shiftKey || down.metaKey || down.ctrlKey;
+    const wasSelected = ed.selection.has(region.id);
+    if (!wasSelected) ed.select([region.id], add ? 'add' : 'replace');
+    const selected = ed.selectedChordRegions;
+    let dragging = false;
+    let edit: ChordTrackEdit | undefined;
+    let lastPosition = '';
+    let error = '';
+    const move = (event: PointerEvent) => {
+      if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
+      const p = this.local(event);
+      if (!dragging && Math.hypot(p.x - origin.x, p.y - origin.y) < DRAG_THRESHOLD) return;
+      dragging = true;
+      const raw = this.tickAt(p.x) - this.tickAt(origin.x) + (edge === 'end' ? region.start + region.duration : region.start);
+      const tick = this.snap(raw, event);
+      const octave = edge === 'body' ? Math.round((this.pitchAt(p.y) - this.pitchAt(origin.y)) / 12) : 0;
+      const location = tick + ':' + octave;
+      if (lastPosition === location) return;
+      lastPosition = location;
+      const regions = edge === 'body' ? ed.chordTrack.planMove(region.id, tick, octave, selected) : ed.chordTrack.planResize(region.id, edge, tick);
+      try {
+        edit = regions && ed.chordTrack.prepare(regions);
+        error = '';
+      } catch (cause) {
+        edit = undefined;
+        error = (cause as Error).message;
+      }
+      if (edit) {
+        const placed = edit.regions.find((item) => item.id === region.id)!;
+        const reordered = edit.regions.some((item, i) => item.id !== source?.[i]?.id);
+        engine.previewChords(edit, reordered ? placed.start : undefined);
+      } else engine.clearPreview();
+    };
+    return {
+      move,
+      up: (event) => {
+        if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
+        if (!dragging) {
+          if (wasSelected) ed.select([region.id], add ? 'toggle' : 'replace');
+          ed.chordTrack.auditionPitches([region]);
+          return;
+        }
+        move(event);
+        if (edit) ed.chordTrack.commit(edit, edge === 'body' ? 'Move chords' : 'Resize chord');
+        else if (error) engine.toast(error, 'error');
+      },
+      cancel() {},
+    };
   }
 
   private defaultLength(at: number) {
@@ -629,6 +823,7 @@ export class MaddiePianoRoll extends CanvasElement {
   private panGesture(down: PointerEvent): Gesture {
     const ed = this.ed!;
     const start = { x: down.clientX, y: down.clientY, tick: ed.view.scrollTick, row: ed.view.scrollRow ?? 0 };
+    this.engine?.pauseFollow();
     this.setCursor('grabbing');
     return {
       move: (e) => {
@@ -671,6 +866,11 @@ export class MaddiePianoRoll extends CanvasElement {
     this.hover = { id: hit?.note.id ?? null, zone: hit?.zone ?? null };
     this.engine?.setHover(this.hover.id);
     if (prev.id !== this.hover.id) this.engine?.invalidate();
+    if (ed.chordRegions && e) {
+      const { x, y } = this.local(e);
+      const chord = this.hitRegion(x, y, hit?.note.chordRegionId);
+      return this.setCursor(chord ? (chord.edge === 'body' ? 'grab' : 'ew-resize') : 'default');
+    }
     if (hit) return this.setCursor(hit.zone === 'body' ? 'grab' : 'ew-resize');
     this.setCursor('default');
   }
@@ -688,6 +888,46 @@ export class MaddiePianoRoll extends CanvasElement {
 
   // ── Drawing ─────────────────────────────────────────────────────
 
+  private drawRegions(ctx: CanvasRenderingContext2D, ed: Editor, engine: Engine, view: DisplayView, p: Palette, color: string, notes: readonly Note[]) {
+    const regions = engine.preview.regions ?? ed.chordRegions;
+    if (!regions) return;
+    const pitchesByRegion = new Map<string, Set<number>>();
+    for (const note of notes) {
+      if (!note.chordRegionId) continue;
+      const pitches = pitchesByRegion.get(note.chordRegionId) ?? new Set<number>();
+      pitches.add(note.pitch);
+      pitchesByRegion.set(note.chordRegionId, pitches);
+    }
+    ctx.save();
+    ctx.font = `600 11px ${p.font}`;
+    ctx.textBaseline = 'middle';
+    for (const region of regions) {
+      const x = (region.start - view.scrollTick) * view.pxPerTick;
+      if (x >= this.width || x + region.duration * view.pxPerTick < 0) continue;
+      const pitches = [...region.pitches, ...pitchesByRegion.get(region.id) ?? []];
+      const box = this.regionRect(region, view, pitches);
+      const selected = ed.selection.has(region.id);
+      ctx.fillStyle = withAlpha(color, selected ? 0.22 : 0.10);
+      ctx.strokeStyle = withAlpha(color, selected ? 0.95 : 0.55);
+      roundRect(ctx, box.x + 0.5, box.y + 0.5, Math.max(1, box.w - 1), box.h - 1, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(box.x + 2, box.y + 1, Math.max(0, box.w - 4), 16);
+      ctx.clip();
+      ctx.fillStyle = p.text;
+      ctx.fillText(region.symbol, box.x + 6, box.y + 9);
+      ctx.restore();
+    }
+    if (engine.preview.insertion !== undefined) {
+      ctx.fillStyle = p.accent;
+      const x = (engine.preview.insertion - view.scrollTick) * view.pxPerTick;
+      ctx.fillRect(x - 1.5, 0, 3, this.height);
+    }
+    ctx.restore();
+  }
+
   protected draw(ctx: CanvasRenderingContext2D, now: number, ed: Editor, engine: Engine, p: Palette) {
     const { width: w, height: h } = this;
     const v = engine.displayView(now);
@@ -700,7 +940,7 @@ export class MaddiePianoRoll extends CanvasElement {
     // and the keyboard alone shows black/white. Without a key, rows mark black keys.
     ctx.fillStyle = p['row-white'];
     ctx.fillRect(0, 0, w, h);
-    const rootTint = withAlpha(p.scale, p.dark ? 0.13 : 0.075);
+    const rootTint = withAlpha(p.scale, 0.07);
     for (const pitch of rows.pitches()) {
       const y = (rows.rowOf(pitch, now) - v.scrollRow) * rh;
       if (y > h || y + rh < 0) continue;
@@ -722,11 +962,10 @@ export class MaddiePianoRoll extends CanvasElement {
         ctx.globalAlpha = 1;
       }
       // Octave boundary under each C, faint line under the rest.
-      ctx.fillStyle = pitchClass(pitch) === 0 ? p['line-beat'] : p['line-row'];
+      ctx.fillStyle = pitchClass(pitch) === 0 ? p.border : p['line-row'];
       ctx.fillRect(0, Math.round(y + rh) - 1, w, 1);
     }
 
-    drawLoop(ctx, ed, v, p, h);
     drawTimeGrid(ctx, ed, engine, v, p, w, 0, h, now);
 
     // Other tracks sit behind the active one.
@@ -736,7 +975,8 @@ export class MaddiePianoRoll extends CanvasElement {
     const from = v.scrollTick;
     const to = from + w / v.pxPerTick;
     const notes = engine.visibleNotes(from, to);
-    notes.sort((a, b) => Number(ed.selection.has(a.id)) - Number(ed.selection.has(b.id)));
+    const isSelected = (n: Note) => ed.chordRegions && n.chordRegionId ? ed.selection.has(n.chordRegionId) : ed.isNoteSelected(n.id);
+    notes.sort((a, b) => Number(isSelected(a)) - Number(isSelected(b)));
     const pos = ed.transport.position;
     const dragging = engine.previewing;
     const radius = p.noteRadius;
@@ -745,13 +985,17 @@ export class MaddiePianoRoll extends CanvasElement {
 
     // The active track's notes keep the track color, drawn fully solid (other tracks are ghosts).
     const activeTrackColor = resolveTrackColor(p, ed.getTrackColor(ed.activeTrackId));
+    this.drawRegions(ctx, ed, engine, v, p, activeTrackColor, notes);
 
+    const isTrackAudible = ed.isTrackAudible(ed.activeTrackId);
+    // TODO(design): Decide whether inactive notes should become editable.
     const drawNote = (n: Note, d: ReturnType<typeof engine.notes.resolve>, state: NoteState) => {
       const x = (d.start - v.scrollTick) * v.pxPerTick;
       const nw = Math.max(3, d.duration * v.pxPerTick);
       if (x > w || x + nw < 0) return;
       const row = rows.rowOf(d.pitch, now);
-      const alpha = d.alpha * rows.alphaOf(Math.round(d.pitch), now);
+      const isSilent = !isTrackAudible || Boolean(n.muted);
+      const alpha = d.alpha * rows.alphaOf(Math.round(d.pitch), now) * (isSilent ? 0.3 : 1);
       if (alpha <= 0.01) return;
       const inner = Math.max(2, rh - 2);
       const nh = inner * d.scale;
@@ -760,40 +1004,21 @@ export class MaddiePianoRoll extends CanvasElement {
       const style = this.noteStyle?.(n, state);
       const base = style?.fill ? normalizeColor(style.fill) : activeTrackColor;
       ctx.globalAlpha = alpha;
-      roundRect(ctx, x + 0.5, y, nw - 1, nh, radius);
-      ctx.fillStyle = noteFill(p, base, { velocity: 1, muted: n.muted }, state);
+      roundRect(ctx, x, y, nw - 2, nh, radius);
+      ctx.fillStyle = noteFill(p, base, { velocity: 1 }, state);
       ctx.fill();
-      // Crisp edge so quiet notes still read as shapes.
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = n.muted ? withAlpha(base, 0.5) : base;
-      if (n.muted) ctx.setLineDash([3, 2]);
-      roundRect(ctx, x + 1, y + 0.5, nw - 2, nh - 1, radius - 0.5);
-      ctx.stroke();
-      ctx.setLineDash([]);
       if (state.selected) {
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = style?.outline ?? p['note-outline'];
         roundRect(ctx, x + 1.25, y + 0.75, nw - 2.5, nh - 1.5, radius - 0.5);
         ctx.stroke();
       }
-      // Label.
-      if (nw > 34 && rh >= 14 && d.scale > 0.95) {
-        const strong = !n.muted;
-        ctx.fillStyle = strong ? p['note-text'] : p.text;
-        ctx.globalAlpha = alpha * 0.9;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x, y, nw - 4, nh);
-        ctx.clip();
-        ctx.fillText(pitchName(n.pitch), x + 6, y + nh / 2 + 0.5);
-        ctx.restore();
-      }
       ctx.globalAlpha = 1;
     };
 
     for (const n of notes) {
       const d = engine.notes.resolve(n, now);
-      const selected = ed.selection.has(n.id) || n.id.startsWith('copy:');
+      const selected = isSelected(n) || n.id.startsWith('copy:');
       drawNote(n, d, {
         selected,
         hovered: !dragging && engine.hoverId === n.id,

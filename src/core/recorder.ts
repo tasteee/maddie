@@ -28,7 +28,7 @@ export class Recorder {
 
   /** Start a take: play from the marker and record live notes until stop. */
   async start() {
-    if (this.recording) return;
+    if (this.recording || this.editor.chordRegions) return;
     this.recording = true;
     this.takeId = `record-${++this.takes}-${Date.now()}`;
     this.takeNotes = [];
@@ -75,13 +75,14 @@ export class Recorder {
   }
 
   private get canCapture() {
-    return this.recording && this.editor.transport.playing;
+    return this.recording && this.editor.transport.playing && !this.editor.chordRegions;
   }
 
   private close(pitch: number, at: Tick) {
     const p = this.pending.get(pitch);
     if (!p) return;
     this.pending.delete(pitch);
+    if (this.editor.chordRegions) return;
     const { loop } = this.editor.transport;
     // Wrapped past the loop end while held: end the note at the loop end.
     let end = Math.round(at);

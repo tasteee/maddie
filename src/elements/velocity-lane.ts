@@ -58,7 +58,7 @@ export class MaddieVelocityLane extends CanvasElement {
     let best: Note | null = null;
     let bestD = 7;
     for (const n of notes) {
-      const d = Math.abs(this.x(n.start) - x) - (ed.selection.has(n.id) ? 0.5 : 0);
+      const d = Math.abs(this.x(n.start) - x) - (ed.isNoteSelected(n.id) ? 0.5 : 0);
       if (d < bestD) {
         bestD = d;
         best = n;
@@ -71,6 +71,7 @@ export class MaddieVelocityLane extends CanvasElement {
     const ed = this.ed;
     const engine = this.engine;
     if (!ed || !engine || e.button !== 0) return;
+    if (ed.chordRegions) return;
     this.setPointerCapture(e.pointerId);
     const gestureId = createId();
     const { x, y } = this.local(e);
@@ -80,7 +81,7 @@ export class MaddieVelocityLane extends CanvasElement {
 
     if (hit) {
       // Drag one stem; selected stems follow relatively.
-      const group = ed.selection.has(hit.id) ? ed.selectedNotes : [hit];
+      const group = ed.isNoteSelected(hit.id) ? ed.selectedNotes : [hit];
       const delta = this.valueAt(y) - hit.velocity;
       update = (ev) => {
         const d = this.valueAt(this.local(ev).y) - hit.velocity - delta;
@@ -137,7 +138,7 @@ export class MaddieVelocityLane extends CanvasElement {
     const from = v.scrollTick;
     const to = from + w / v.pxPerTick;
     const notes = engine.visibleNotes(from - 1, to);
-    notes.sort((a, b) => Number(ed.selection.has(a.id)) - Number(ed.selection.has(b.id)));
+    notes.sort((a, b) => Number(ed.isNoteSelected(a.id)) - Number(ed.isNoteSelected(b.id)));
     const pos = ed.transport.position;
     const activeTrackColor = resolveTrackColor(p, ed.getTrackColor(ed.activeTrackId));
     for (const n of notes) {

@@ -1,4 +1,4 @@
-import { toMidiVelocity, type Editor, type Output } from '../core';
+import { toMidiVelocity, type Editor, type Output, type TrackRouteT } from '../core';
 import { Engine } from './engine';
 
 /** A built-in sound the host provides (a sampler, a synth). */
@@ -14,6 +14,9 @@ export interface MidiPort {
 }
 
 type Status = 'idle' | 'pending' | 'ready' | 'unsupported' | 'denied';
+
+/** Can a route sound right now? `needs-access` means the browser has not granted MIDI yet. */
+export type RouteStatusT = 'ready' | 'missing' | 'needs-access' | 'unsupported' | 'denied';
 
 export const MIDI_SOURCE = 'midi';
 
@@ -76,8 +79,12 @@ export class OutputRouter {
   status: Status = 'idle';
   private access: MIDIAccess | null = null;
   private listeners = new Set<() => void>();
+  private choice = 0;
 
-  private constructor(private editor: Editor) {}
+  private constructor(private editor: Editor) {
+    editor.outputResolver = (route) => this.resolveRoute(route);
+    editor.on('tracks', () => this.onTracks());
+  }
 
   get supported() {
     return typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function';
@@ -99,22 +106,50 @@ export class OutputRouter {
     this.sounds = sounds;
     if (this.source !== MIDI_SOURCE && !sounds.some((s) => s.id === this.source)) this.source = sounds[0]?.id ?? '';
     this.apply();
+    this.primeTrackSounds();
   }
 
   selectSound(id: string) {
+    this.restoreRoute(id, this.portId);
+  }
+
+  restoreRoute(id: string, portId: string | null) {
+    this.choice++;
     this.source = id;
+    this.portId = portId;
     this.apply();
   }
 
   async selectMidi() {
-    if (!(await this.request())) {
-      const message = this.status === 'unsupported' ? "This browser can't send MIDI" : 'MIDI access was blocked';
-      Engine.for(this.editor).toast(message, 'error');
+    const choice = ++this.choice;
+    const allowed = await this.request();
+    if (choice !== this.choice) return;
+    if (!allowed) {
+      this.toastMidiBlocked();
       return;
     }
     this.source = MIDI_SOURCE;
-    if (!this.ports.some((p) => p.id === this.portId)) this.portId = this.ports[0]?.id ?? null;
+    if (this.portId === null) this.portId = this.ports[0]?.id ?? null;
     this.apply();
+  }
+
+  /** Send one track to a MIDI port. Asks the browser for MIDI access first. Keeps the port and channel it already had. */
+  async routeTrackToMidi(trackId: string) {
+    const isAllowed = await this.request();
+    if (!isAllowed) {
+      this.toastMidiBlocked();
+      return;
+    }
+    const currentRoute = this.editor.trackList.find((track) => track.id === trackId)?.route;
+    const wasMidi = currentRoute?.kind === 'midi';
+    const portId = wasMidi ? currentRoute.portId : this.ports[0]?.id ?? null;
+    const channel = wasMidi ? currentRoute.channel ?? 0 : 0;
+    this.editor.commands.setTrackRoute(trackId, { kind: 'midi', portId, channel });
+  }
+
+  private toastMidiBlocked() {
+    const message = this.status === 'unsupported' ? "This browser can't send MIDI" : 'MIDI access was blocked';
+    Engine.for(this.editor).toast(message, 'error');
   }
 
   selectPort(id: string) {
@@ -122,7 +157,7 @@ export class OutputRouter {
     this.apply();
   }
 
-  private async request(): Promise<boolean> {
+  async request(): Promise<boolean> {
     if (this.access) return true;
     if (!this.supported) {
       this.setStatus('unsupported');
@@ -133,6 +168,7 @@ export class OutputRouter {
       this.access = await navigator.requestMIDIAccess();
       this.access.onstatechange = () => this.onPorts();
       this.setStatus('ready');
+      this.apply();
       return true;
     } catch {
       this.setStatus('denied');
@@ -140,8 +176,47 @@ export class OutputRouter {
     }
   }
 
+  /** Can this route sound right now? Use it to explain a silent track. */
+  getRouteStatus(route: TrackRouteT): RouteStatusT {
+    if (route.kind === 'sound') return this.sounds.some((sound) => sound.id === route.soundId) ? 'ready' : 'missing';
+    if (!this.access) {
+      if (this.status === 'unsupported' || !this.supported) return 'unsupported';
+      if (this.status === 'denied') return 'denied';
+      return 'needs-access';
+    }
+    return this.findPort(route) ? 'ready' : 'missing';
+  }
+
+  /** The output a track route sounds through, or null when it cannot sound right now. */
+  resolveRoute(route: TrackRouteT): Output | null {
+    if (route.kind === 'sound') return this.sounds.find((sound) => sound.id === route.soundId)?.output ?? null;
+    const port = this.findPort(route);
+    if (!port) return null;
+    return this.getMidiOutput(port, route.channel ?? 0);
+  }
+
+  private findPort(route: Extract<TrackRouteT, { kind: 'midi' }>): MIDIOutput | undefined {
+    if (!this.access) return undefined;
+    const portId = route.portId ?? this.ports[0]?.id;
+    if (!portId) return undefined;
+    return this.access.outputs.get(portId);
+  }
+
+  // Sounds load on first use. Touch each track's sound now, so it is ready by the time it plays.
+  private primeTrackSounds() {
+    for (const track of this.editor.trackList) {
+      const route = track.route;
+      if (route?.kind === 'sound') this.resolveRoute(route);
+    }
+  }
+
+  private onTracks() {
+    this.primeTrackSounds();
+    this.notify();
+  }
+
   private onPorts() {
-    if (this.source === MIDI_SOURCE && !this.ports.some((p) => p.id === this.portId)) {
+    if (this.source === MIDI_SOURCE && this.portId === null) {
       this.portId = this.ports[0]?.id ?? null;
     }
     this.apply();
@@ -151,6 +226,7 @@ export class OutputRouter {
     if (this.sounds.length || this.source === MIDI_SOURCE) {
       const out = this.resolve();
       if (out !== this.editor.output) {
+        this.editor.stopChord();
         this.editor.output?.allNotesOff();
         this.editor.output = out;
         this.editor.setVolume({});
@@ -163,16 +239,22 @@ export class OutputRouter {
     if (this.source === MIDI_SOURCE) {
       const port = this.portId ? this.access?.outputs.get(this.portId) : undefined;
       if (!port) return null;
-      return (this.midiOutputs.get(port) ?? this.cache(port));
+      return this.getMidiOutput(port, 0);
     }
     return this.sounds.find((s) => s.id === this.source)?.output ?? null;
   }
 
-  private midiOutputs = new WeakMap<MIDIOutput, Output>();
-  private cache(port: MIDIOutput) {
-    const out = createMidiOutput(port, () => this.editor.audioContext);
-    this.midiOutputs.set(port, out);
-    return out;
+  // One output per port and channel, so the default and any track on the same port and channel share it.
+  private midiOutputs = new WeakMap<MIDIOutput, Map<number, Output>>();
+  private getMidiOutput(port: MIDIOutput, channel: number): Output {
+    const safeChannel = Math.max(0, Math.min(15, Math.round(channel)));
+    const channels = this.midiOutputs.get(port) ?? new Map<number, Output>();
+    this.midiOutputs.set(port, channels);
+    const existing = channels.get(safeChannel);
+    if (existing) return existing;
+    const created = createMidiOutput(port, () => this.editor.audioContext, safeChannel);
+    channels.set(safeChannel, created);
+    return created;
   }
 
   private setStatus(status: Status) {

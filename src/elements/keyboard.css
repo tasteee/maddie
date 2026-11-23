@@ -1,0 +1,5 @@
+:host {
+  width: var(--_keyboard-width);
+  cursor: ns-resize;
+  background: var(--_key-white);
+}

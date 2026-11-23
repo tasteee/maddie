@@ -1,0 +1,8 @@
+:host {
+  height: var(--maddie-editbar-height, 48px);
+  background: var(--surface-default);
+  gap: var(--space-4);
+  overflow: visible;
+}
+.tracks { flex: 1; min-width: 0; }
+.group { gap: 6px; }

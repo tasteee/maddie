@@ -1,0 +1,33 @@
+:host {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--_toolbar-height);
+  padding: 0 12px;
+  background: var(--_surface);
+  border-bottom: 1px solid var(--_border);
+  box-sizing: border-box;
+  min-width: 0;
+  color: var(--_text);
+  position: relative;
+  z-index: 3;
+  container-type: inline-size;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+
+  /* The bars run one size tighter than stock Zest: 28px buttons, 30px chips, 13px text. */
+  --control-height-sm: 1.75rem;
+  --control-height-md: 1.875rem;
+  --font-size-sm: 0.8125rem;
+}
+.group {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+.spacer {
+  flex: 1;
+  min-width: 8px;
+}

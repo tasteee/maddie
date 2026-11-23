@@ -508,6 +508,26 @@ describe('metronome', () => {
 });
 
 describe('chord audition', () => {
+  it('releases sounding notes and cancels pending performance hits when the preview stops', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    try {
+      const on = vi.fn();
+      const off = vi.fn();
+      const ed = createEditor({ output: { noteOn: on, noteOff: off, allNotesOff: vi.fn() } });
+      const stop = ed.auditionNotes([
+        { id: 'first', pitch: 60, start: 0, duration: ed.ppq, velocity: 0.8 },
+        { id: 'second', pitch: 64, start: ed.ppq, duration: ed.ppq, velocity: 0.8 },
+      ], 0);
+      stop?.();
+      vi.runAllTimers();
+      expect(on).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ pitch: 60 }));
+      expect(off).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ pitch: 60 }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('humanizes velocity to 60–80 and strums within 40ms, then releases every note', async () => {
     const { vi } = await import('vitest');
     vi.useFakeTimers();

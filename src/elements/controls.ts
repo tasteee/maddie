@@ -1,137 +1,59 @@
-import { css, html, nothing } from 'lit';
+import { unsafeCSS, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { keyed } from 'lit/directives/keyed.js';
+import { ref } from 'lit/directives/ref.js';
 import { live } from 'lit/directives/live.js';
 import {
-  detectKey,
-  downloadMidi,
+  ticksToSeconds,
   exportFilename,
   formatBBT,
-  formatKey,
-  inScale,
-  pitchName,
-  toMidiFile,
   GRID_OPTIONS,
+  GRID_MODIFIERS,
   canHaveModifier,
   getGridModifier,
   getStraightGrid,
   setGridModifier,
-  pitchClassName,
-  SCALE_IDS,
+  displayPitchClass,
+  getEditorScaleId,
   SCALES,
+  EDITOR_SCALE_IDS,
   type Editor,
   type FoldMode,
-  type GridModifier,
   type ScaleId,
   ZOOM_LIMITS,
 } from '../core';
 import type { Engine } from '../engine/engine';
-import { pitchForOffset, scaleMapped, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
-import { captureMidi, modKeyLabel, rowZoomBy } from '../engine/keymap';
+import { clamp } from '../engine/ease';
+import { setBaseOctave, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
+import { captureMidi, modKeyLabel } from '../engine/keymap';
 import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
 import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
+import { applyTheme, readAppSettings, writeAppSettings, type ExperimentalThemeKeyT, type ThemePreferenceT } from '../engine/app-settings';
+import { getSoundOptions } from './sound-options';
 import { MaddieElement } from './base';
 import { icons } from './icons';
-import { pickMidiFile } from './midi-io';
+import { pickMidiFile, requestMidiExport } from './midi-io';
 import { tokens } from './tokens';
-import type { ZestTone, ZestOption } from './zest';
-import './zest';
+import type { ZestTone, ZestOptionT } from './zest';
+import { allowClicksThroughClosingPopover, sizeEditorMenu } from './zest';
+import dividerCss from './toolbar-divider.css?raw';
+import panelCss from './controls.css?raw';
+import controlCss from './control.css?raw';
+import transportCss from './transport.css?raw';
+import zoomCss from './zoom-pad.css?raw';
+import barCss from './toolbar-bar.css?raw';
+import topbarCss from './topbar.css?raw';
+import editbarCss from './editor-bar.css?raw';
+import toolbarCss from './toolbar.css?raw';
 
 /** The vertical divider between groups. Shared by the top bar, the edit bar and the selection bar so all three space it alike. */
-export const dividerStyles = css`
-  /* One divider for every bar: full height inside the bar, the same space on both sides. */
-  z-separator[is-vertical] {
-    flex: none;
-    align-self: stretch;
-    margin-block: var(--space-sm);
-    margin-inline: var(--space-sm);
-  }
-`;
+export const dividerStyles = unsafeCSS(dividerCss);
 
 /** Pieces shared by controls and the panels around them: layout and type only. Color, shape and state come from the Zest elements. */
-export const partStyles = css`
-  /* An icon-only <z-button>: Zest sizes the icon and the height; this makes the cap square. */
-  z-button.icon {
-    width: var(--control-height-sm);
-  }
-  .label {
-    margin-inline: var(--space-xs) 0;
-    color: var(--_text-muted);
-    font-size: var(--font-size-caption);
-    font-weight: 500;
-    white-space: nowrap;
-  }
-  /* In a narrow bar the field names go first; each control still has its tooltip and accessible name. */
-  @container (max-width: 1280px) {
-    .label.optional {
-      display: none;
-    }
-  }
-  .value {
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .unit {
-    color: var(--_text-muted);
-    font-size: var(--font-size-caption);
-    font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-  z-select {
-    min-width: 6.5rem;
-  }
-  z-popover {
-    --z-overlay-padding: var(--space-md);
-    --z-overlay-max-width: 20rem;
-  }
-  /* Panels inside a popover. */
-  .panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-    min-width: 15.5rem;
-    color: var(--_text);
-  }
-  .panel-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-  }
-  .setting {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-  .setting .hint {
-    padding-inline-start: 2.5rem;
-    margin-top: -0.25rem;
-  }
-  .panel z-select {
-    min-width: 0;
-  }
-  .panel z-separator {
-    margin-block: 0;
-  }
-`;
+export const partStyles = unsafeCSS(panelCss);
 
 /** Shared look for a single control: an inline row of Zest elements. */
 export const controlStyles = [
-  css`
-    :host {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-xs);
-      color: var(--_text);
-      font-size: var(--control-font-size-sm);
-      font-weight: 500;
-    }
-  `,
+  unsafeCSS(controlCss),
   partStyles,
 ];
 
@@ -150,7 +72,7 @@ const tip = (label: string, shortcut?: string) => (shortcut ? `${label}   ${shor
 const tooltip = (content: string, control: unknown, placement: 'top' | 'bottom' = 'bottom') =>
   html`<z-tooltip content=${content} placement=${placement}>${control}</z-tooltip>`;
 
-interface IconAction {
+type IconActionT = {
   label: string;
   tip: string;
   icon: unknown;
@@ -158,14 +80,14 @@ interface IconAction {
   disabled?: boolean;
   tone?: ZestTone;
   placement?: 'top' | 'bottom';
-}
+};
 
 /** Icon-only action: a ghost `<z-button>` with a tooltip. */
-const iconButton = (a: IconAction) =>
+const iconButton = (a: IconActionT) =>
   tooltip(
     a.tip,
     html`<z-button
-      class="icon"
+      is-icon
       kind="ghost"
       size="sm"
       tone=${a.tone ?? 'neutral'}
@@ -177,7 +99,7 @@ const iconButton = (a: IconAction) =>
     a.placement,
   );
 
-interface IconToggle {
+type IconToggleT = {
   label: string;
   tip: string;
   icon: unknown;
@@ -187,16 +109,16 @@ interface IconToggle {
   tone?: ZestTone;
   /** A visible label next to the icon. */
   text?: string;
-}
+};
 
 /** On/off control: a ghost `<z-toggle-button>`; on is the filled accent. The editor owns the state, so `live` keeps the two in step. */
-const iconToggle = (t: IconToggle) =>
+const iconToggle = (t: IconToggleT) =>
   tooltip(
     t.tip,
     html`<z-toggle-button
       kind="ghost"
       size="sm"
-      tone=${t.tone ?? 'primary'}
+      tone=${t.tone ?? 'secondary'}
       ?is-icon=${!t.text}
       aria-label=${t.label}
       .isPressed=${live(t.on)}
@@ -207,171 +129,131 @@ const iconToggle = (t: IconToggle) =>
   );
 
 /** A Zest select that shows the editor's value. */
-const select = (label: string, value: string, options: ZestOption[], onPick: (value: string) => void, placeholder?: string) =>
+const select = (label: string, value: string, options: ZestOptionT[], onPick: (value: string) => void, placeholder?: string) =>
   html`<z-select
     size="sm"
-    label=${label}
+    aria-label=${label}
     placeholder=${placeholder ?? nothing}
     .options=${options}
     .value=${live(value)}
     @change=${(e: CustomEvent<{ value: string }>) => onPick(e.detail.value)}
   ></z-select>`;
 
-// ── Swap button ─────────────────────────────────────────────────────
+type ChoiceT = { value: string; label: string; isDisabled?: boolean };
 
-/** Styles for `swapButton`. The value slides in each time it changes. */
-const swapStyles = css`
-  .swap-value {
-    display: inline-block;
-    margin-top: 1px;
-    min-width: var(--_swap-value-width, 2.75rem);
-    text-align: left;
-    animation: swap-in var(--_motion-medium) var(--_ease);
-  }
-  @keyframes swap-in {
-    from {
-      opacity: 0;
-      transform: translateY(0.4em);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .swap-value {
-      animation: none;
-    }
-  }
-`;
+// A toggle item centers its label inside its own shadow root, and exposes no part to change that.
+const startAlignSheet = new CSSStyleSheet();
+startAlignSheet.replaceSync('button { justify-content: flex-start; }');
 
-type SwapButtonT = {
-  /** Names the control for tooltips and screen readers. Not drawn. */
-  label: string;
-  icon: unknown;
-  value: string;
-  tip: string;
-  isActive: boolean;
-  onSwap: (isBackwards: boolean) => void;
+const alignItemStart = (element?: Element) => {
+  if (!element) return;
+  const addSheet = () => {
+    const root = element.shadowRoot;
+    if (!root) return false;
+    const hasSheet = root.adoptedStyleSheets.includes(startAlignSheet);
+    if (!hasSheet) root.adoptedStyleSheets = [...root.adoptedStyleSheets, startAlignSheet];
+    return true;
+  };
+  const isAdded = addSheet();
+  if (!isAdded) requestAnimationFrame(addSheet);
 };
 
-/** One button that shows an icon and a value. Click swaps to the next value; ⇧-click goes back. */
-const swapButton = (swap: SwapButtonT) => {
-  const tone = swap.isActive ? 'primary' : 'neutral';
-  return tooltip(
-    swap.tip,
-    html`<z-button
-      kind="outline"
-      size="sm"
-      tone=${tone}
-      aria-label=${`${swap.label}: ${swap.value}`}
-      @click=${(event: MouseEvent) => swap.onSwap(event.shiftKey)}
-    >
-      ${swap.icon}
-      ${keyed(swap.value, html`<span class="swap-value">${swap.value}</span>`)}
-    </z-button>`,
-  );
+const renderChoices = (
+  label: string,
+  choices: readonly ChoiceT[],
+  selected: string,
+  pick: (value: string) => void,
+  columns?: number,
+  align: 'center' | 'start' = 'center',
+) => {
+  const alignStart = align === 'start' ? ref(alignItemStart) : nothing;
+  const buttons = choices.map((choice) => {
+    const isPressed = choice.value === selected;
+    const choose = (event: CustomEvent<{ pressed: boolean }>) => {
+      const didUnpress = !event.detail.pressed;
+      if (didUnpress) {
+        const item = event.currentTarget as HTMLElement & { isPressed: boolean };
+        queueMicrotask(() => { item.isPressed = true; });
+        return;
+      }
+      pick(choice.value);
+    };
+
+    return html`<z-toggle-button-group-item ${alignStart} value=${choice.value} .isPressed=${live(isPressed)}
+      ?is-disabled=${choice.isDisabled} @press=${choose}>${choice.label}</z-toggle-button-group-item>`;
+  });
+
+  return html`<z-toggle-button-group class="choices" kind="ghost" size="sm" aria-label=${label} columns=${columns ?? nothing}>
+    ${buttons}
+  </z-toggle-button-group>`;
 };
 
-/** The item after (or before) `current` in a list, wrapping around. */
-const getSwappedItem = <T,>(items: readonly T[], current: T, isBackwards: boolean): T => {
-  const currentIndex = items.indexOf(current);
-  const step = isBackwards ? -1 : 1;
-  const nextIndex = (currentIndex + step + items.length) % items.length;
-  return items[nextIndex];
-};
+const GRID_DIVISIONS = GRID_OPTIONS.filter((option) =>
+  ['1/4', '1/8', '1/16', '1/32', '1/64'].includes(option.value),
+);
+const GRID_FEELS = [
+  { label: 'Straight', value: 'straight' },
+  { label: 'Triplet', value: 'triplet' },
+  { label: 'Dotted', value: 'dotted' },
+] as const;
 
-// ── Grid + snap ─────────────────────────────────────────────────────
-
-// Straight, triplet and dotted are a modifier on a size, not sizes of their own, so they are not in this cycle.
-const GRID_SIZES = GRID_OPTIONS.filter((option) => getGridModifier(option.value) === 'straight');
-const GRID_SIZE_VALUES = GRID_SIZES.map((option) => option.value);
-
-const MODIFIER_OPTIONS: { value: GridModifier; label: string; suffix: string }[] = [
-  { value: 'straight', label: 'Straight', suffix: '' },
-  { value: 'triplet', label: 'Triplet', suffix: ' T' },
-  { value: 'dotted', label: 'Dotted', suffix: ' ·' },
-];
-
-const MODIFIER_TIP = 'Straight: plain size · Triplet: two thirds as long · Dotted: half again as long';
-
-const getGridLabel = (grid: string): string => {
-  const straight = getStraightGrid(grid);
-  const option = GRID_SIZES.find((size) => size.value === straight);
-  const label = option?.label ?? straight;
-  const modifier = getGridModifier(grid);
-  const modifierOption = MODIFIER_OPTIONS.find((candidate) => candidate.value === modifier);
-  return `${label}${modifierOption?.suffix ?? ''}`;
-};
-
-/**
- * Grid size: a swap button (click for the next size, ⇧-click for the previous)
- * and a Straight / Triplet / Dotted choice that bends the chosen size.
- */
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
-  static styles = [
-    tokens,
-    controlStyles,
-    swapStyles,
-    css`
-      :host {
-        --_swap-value-width: 3.25rem;
-      }
-      z-toggle-button-group {
-        margin-inline-end: var(--space-sm);
-      }
-    `,
-  ];
-
-  private swapSize(isBackwards: boolean) {
-    const ed = this.ed!;
-    const grid = ed.view.grid;
-    const modifier = getGridModifier(grid);
-    const straight = getStraightGrid(grid);
-    const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, isBackwards);
-    ed.setView({ grid: setGridModifier(nextSize, modifier) });
-  }
-
-  private pickModifier(event: CustomEvent<{ value?: string }>) {
-    const ed = this.ed!;
-    const pickedValue = event.detail.value;
-    // Clicking the pressed choice again deselects it; one of the three is always on.
-    if (pickedValue === undefined) return this.requestUpdate();
-    ed.setView({ grid: setGridModifier(ed.view.grid, pickedValue as GridModifier) });
-  }
-
-  render() {
+  render = () => {
     const ed = this.ed;
-    if (!ed) return nothing;
-    const grid = ed.view.grid;
-    const modifier = getGridModifier(grid);
-    const straight = getStraightGrid(grid);
-    const nextSize = getSwappedItem(GRID_SIZE_VALUES, straight, false);
-    const nextLabel = getGridLabel(setGridModifier(nextSize, modifier));
-    const canBend = canHaveModifier(grid);
-    const modifierTip = canBend ? MODIFIER_TIP : 'Auto and 1 Bar cannot be bent. Pick 1/2, 1/4, 1/8 …';
-    const modifierItems = MODIFIER_OPTIONS.map(
-      (option) =>
-        html`<z-toggle-button-group-item value=${option.value} .isPressed=${live(modifier === option.value)}>${option.label}</z-toggle-button-group-item>`,
-    );
-    return html`${swapButton({
-      label: 'Grid size',
-      icon: icons.grid,
-      value: getGridLabel(grid),
-      tip: `Grid size · click for ${nextLabel} · ⇧-click to go back`,
-      isActive: false,
-      onSwap: (isBackwards) => this.swapSize(isBackwards),
-    })}${tooltip(
-      modifierTip,
-      html`<z-toggle-button-group
-        size="sm"
-        kind="soft"
-        tone="primary"
-        aria-label="Grid feel"
-        ?is-disabled=${!canBend}
-        @change=${(event: CustomEvent<{ value?: string }>) => this.pickModifier(event)}
-      >
-        ${modifierItems}
-      </z-toggle-button-group>`,
-    )}`;
-  }
+    const hasEditor = Boolean(ed);
+    if (!hasEditor || !ed) return nothing;
+    const size = getStraightGrid(ed.view.grid);
+    const feel = getGridModifier(ed.view.grid);
+    const isTriplet = feel === 'triplet';
+    const isDotted = feel === 'dotted';
+    let suffix = '';
+    if (isTriplet) suffix = 'T';
+    if (isDotted) suffix = '.';
+    // Straight renders nothing, so it adds no gap before the chevron.
+    const hasSuffix = suffix !== '';
+    const suffixBadge = hasSuffix ? html`<span class="accent-icon">${suffix}</span>` : nothing;
+    const pickSize = (value: string) => {
+      const division = GRID_DIVISIONS.find((option) => option.value === value)?.value;
+      if (!division) return;
+      ed.setView({ grid: setGridModifier(division, feel) });
+    };
+    const pickFeel = (value: string) => {
+      const modifier = GRID_MODIFIERS.find((option) => option === value);
+      if (!modifier) return;
+      ed.setView({ grid: setGridModifier(size, modifier) });
+    };
+    const feels = GRID_FEELS.map((option) => ({
+      ...option,
+      isDisabled: option.value !== 'straight' && !canHaveModifier(size),
+    }));
+    const divisions = renderChoices('Division', GRID_DIVISIONS, size, pickSize, GRID_DIVISIONS.length);
+    const modifiers = renderChoices('Feel', feels, feel, pickFeel, feels.length);
+    const snap = switchRow('Snap to grid', 'Hold Alt while dragging to bypass', ed.view.snap,
+      (isChecked) => ed.setView({ snap: isChecked }));
+    const toggle = iconToggle({
+      label: 'Snap to grid',
+      tip: 'Snap to grid',
+      icon: icons.magnet,
+      on: ed.view.snap,
+      onToggle: (isChecked) => ed.setView({ snap: isChecked }),
+    });
+
+    return html`<z-button-group class="grid-chip" aria-label="Grid">
+      ${toggle}
+      <z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Grid">
+        <z-button class="grid-value" slot="trigger" kind="ghost" size="sm" aria-label="Grid settings">
+          ${size}${suffixBadge}${icons.chevron}
+        </z-button>
+        <div class="panel standard-panel">
+          <strong>Grid</strong>
+          <div class="field"><span class="hint">Division</span>${divisions}</div>
+          <div class="field"><span class="hint">Feel</span>${modifiers}</div>
+          <z-separator></z-separator>${snap}
+        </div>
+      </z-popover>
+    </z-button-group>`;
+  };
 }
 
 @customElement('maddie-snap-toggle')
@@ -383,6 +265,7 @@ export class MaddieSnapToggle extends ControlElement {
       label: 'Snap to grid',
       tip: tip('Snap · hold ⌥ to bypass', 'S'),
       icon: icons.magnet,
+      tone: 'secondary',
       on: ed.view.snap,
       onToggle: (snap) => ed.setView({ snap }),
     });
@@ -408,56 +291,84 @@ export class MaddieChordsToggle extends ControlElement {
   }
 }
 
-const NO_KEY = '';
-
 @customElement('maddie-key-select')
 export class MaddieKeySelect extends ControlElement {
-  render() {
+  @state() private query = '';
+  private lastScale: ScaleId = 'minor';
+
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
     const key = ed.key;
-    const setRoot = (v: string) => {
-      ed.commands.setKey(v === NO_KEY ? null : { root: Number(v), scale: key?.scale ?? 'major' });
+    const hasKey = Boolean(key);
+    const isLocked = hasKey && ed.view.scaleLock;
+    const label = key ? formatEditorKey(key) : 'No key';
+    const lock = isLocked ? html`<span class="accent-icon">${icons.lock}</span>` : nothing;
+    const pickRoot = (value: string) => ed.commands.setKey({
+      root: Number(value),
+      scale: key?.scale ?? this.lastScale,
+    });
+    const pickScale = (value: string) => {
+      const scale = EDITOR_SCALE_IDS.find((id) => id === value);
+      if (!scale) return;
+      this.lastScale = scale;
+      ed.commands.setKey({ root: key?.root ?? 0, scale });
     };
-    const setScale = (id: string) => {
-      ed.commands.setKey({ root: key?.root ?? 0, scale: id as ScaleId });
+    const clear = () => {
+      if (key) this.lastScale = key.scale;
+      ed.commands.setKey(null);
+      const isFoldedInKey = ed.view.fold === 'scale';
+      if (isFoldedInKey) ed.setView({ fold: 'none' }, { animate: true });
     };
-    // The key of the song: notes from every track, not only the one being edited.
-    const notes = ed.doc.tracks.flatMap((track) => track.notes).filter((n) => !n.muted);
-    const auto = () => {
-      const guess = detectKey(notes);
-      if (!guess) return;
-      // A key is already set and every note fits it: leave it alone.
-      if (key && notes.every((n) => inScale(n.pitch, key))) {
-        this.engine?.toast(`Key: ${formatKey(key)} · every note fits`);
-        return;
-      }
-      ed.commands.setKey(guess.key);
-      const pct = Math.round(guess.fit * 100);
-      this.engine?.toast(guess.outside ? `Key: ${formatKey(guess.key)} · ${pct}% fits, ${guess.outside} notes outside` : `Key: ${formatKey(guess.key)} · every note fits`);
+    const roots = Array.from({ length: 12 }, (_, index) => ({
+      value: String(index),
+      label: displayPitchClass(index),
+    }));
+    const query = this.query.trim().toLowerCase();
+    const scales = EDITOR_SCALE_IDS.map((id) => ({
+      value: id,
+      label: SCALES[id].name,
+    })).filter((item) => item.label.toLowerCase().includes(query));
+    const rootPicker = renderChoices('Root', roots, String(key?.root ?? ''), pickRoot, 6);
+    const hasMatches = scales.length > 0;
+    const currentScale = key ? getEditorScaleId(key.scale) : '';
+    const scalePicker = hasMatches ? renderChoices('Scale', scales, currentScale, pickScale, 2, 'start') : html`<p>No scales match.</p>`;
+    const clearButton = hasKey ? html`<z-button kind="ghost" tone="secondary" size="xs" @click=${clear}>Clear</z-button>` : nothing;
+    const updateSearch = (event: CustomEvent<{ value: string }>) => { this.query = event.detail.value; };
+    const resetSearch = (event: Event) => {
+      const isOwnEvent = event.target === event.currentTarget;
+      if (isOwnEvent) this.query = '';
     };
-    return html`
-      ${select(
-        'Key',
-        key ? String(key.root) : NO_KEY,
-        [{ value: NO_KEY, label: 'No key' }, ...Array.from({ length: 12 }, (_, pc) => ({ value: String(pc), label: pitchClassName(pc) }))],
-        setRoot,
-      )}
-      ${key
-        ? select(
-            'Scale',
-            key.scale,
-            SCALE_IDS.map((id) => ({ value: id, label: SCALES[id].name })),
-            setScale,
-          )
-        : nothing}
-      ${tooltip(
-        notes.length ? 'Detect key and scale from the notes' : 'Add notes to detect the key',
-        html`<z-button kind="ghost" size="sm" aria-label="Detect key" ?is-disabled=${!notes.length} @click=${auto}>${icons.wand}Auto</z-button>`,
-      )}
-    `;
-  }
+    // TODO(design): Connect detection once its behavior is decided.
+    const detect = () => this.engine?.toast("Couldn't detect a key.");
+    const highlight = switchRow('Highlight key', 'Shade rows outside the key', ed.view.scaleHighlight,
+      (isChecked) => ed.setView({ scaleHighlight: isChecked }));
+    const lockSetting = switchRow('Lock to key', 'New and moved notes stay in key', ed.view.scaleLock,
+      (isChecked) => ed.setView({ scaleLock: isChecked }));
+
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Key" @toggle=${resetSearch}>
+      <z-button class="chip" slot="trigger" kind="outline" size="md">
+        ${icons.music}<span class="key-value" ?data-unset=${!hasKey}>${label}</span>${lock}${icons.chevron}
+      </z-button>
+      <div class="panel wide-panel">
+        <div class="panel-title"><strong>Key</strong>${clearButton}</div>
+        <div class="field"><span class="hint">Root</span>${rootPicker}</div>
+        <div class="field">
+          <div class="level-label"><span>Scale</span><span>${EDITOR_SCALE_IDS.length} scales</span></div>
+          <z-input type="search" size="sm" aria-label="Search scales" placeholder="Search scales"
+            .value=${live(this.query)} @input=${updateSearch}></z-input>
+          <z-scroll-area class="scale-list">${scalePicker}</z-scroll-area>
+        </div>
+        <z-button kind="outline" size="sm" is-full-width @click=${detect}>${icons.wand}Detect from notes</z-button>
+        <z-separator></z-separator>
+        ${highlight}${lockSetting}
+      </div>
+    </z-popover>`;
+  };
 }
+
+const formatEditorKey = (key: NonNullable<Editor['key']>) =>
+  `${displayPitchClass(key.root)} ${SCALES[key.scale].name.toLowerCase()}`;
 
 @customElement('maddie-scale-lock')
 export class MaddieScaleLock extends ControlElement {
@@ -475,49 +386,39 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLD_CYCLE: FoldMode[] = ['none', 'scale', 'used'];
+const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
+  { value: 'none', label: 'Off' },
+  { value: 'used', label: 'Notes' },
+  { value: 'scale', label: 'In key' },
+];
 
-const FOLD_LABELS: Record<FoldMode, string> = {
-  none: 'Off',
-  scale: 'Scale',
-  used: 'Notes',
-};
-
-const FOLD_TIPS: Record<FoldMode, string> = {
-  none: 'Show every row',
-  scale: 'Only rows in the key (plus rows with notes)',
-  used: 'Only rows that have notes',
-};
-
-/** The next fold in Off → Scale → Notes. Scale is skipped when there is no key. */
-const getNextFold = (current: FoldMode, hasKey: boolean): FoldMode => {
-  const currentIndex = FOLD_CYCLE.indexOf(current);
-  const nextIndex = (currentIndex + 1) % FOLD_CYCLE.length;
-  const next = FOLD_CYCLE[nextIndex];
-  const isBlocked = next === 'scale' && !hasKey;
-  if (isBlocked) return FOLD_CYCLE[(nextIndex + 1) % FOLD_CYCLE.length];
-  return next;
-};
-
-/** Fold rows: one button. Click to swap the value: Off → Scale → Notes → Off. */
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
-  static styles = [tokens, controlStyles, swapStyles];
-  render() {
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
+    const hasKey = Boolean(ed.key);
     const fold = ed.view.fold;
-    const nextFold = getNextFold(fold, !!ed.key);
-    const tipText = `${FOLD_TIPS[fold]} · click for ${FOLD_LABELS[nextFold]}`;
-    return swapButton({
-      label: 'Fold rows',
-      icon: icons.fold,
-      value: FOLD_LABELS[fold],
-      tip: tipText,
-      isActive: fold !== 'none',
-      onSwap: () => ed.setView({ fold: nextFold }, { animate: true }),
-    });
-  }
+    const isFolded = fold !== 'none' && (fold !== 'scale' || hasKey);
+    const isNotesMode = fold === 'used';
+    const isKeyMode = isFolded && fold === 'scale';
+    const mode = FOLD_CHOICES.find((choice) => choice.value === fold);
+    const label = isFolded ? mode?.label : nothing;
+    const keyDescription = ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first';
+    const pick = (event: CustomEvent<{ value: FoldMode }>) => {
+      ed.setView({ fold: event.detail.value }, { animate: true });
+    };
+    const button = html`<z-toggle-button class="fold" kind="ghost" size="sm" tone="secondary" ?is-icon=${!isFolded}
+      aria-label="Fold rows" .isPressed=${live(isFolded)}>${icons.fold}${label}</z-toggle-button>`;
+
+    return html`<z-menu ${ref(sizeEditorMenu)} align="end" aria-label="Fold rows" @select=${pick}>
+      <z-tooltip slot="trigger" content="Fold rows" placement="bottom">${button}</z-tooltip>
+      <z-menu-item type="radio" value="none" ?is-checked=${!isFolded} description="Show every pitch">Off</z-menu-item>
+      <z-menu-item type="radio" value="used" ?is-checked=${isNotesMode} description="Only rows with notes">Notes</z-menu-item>
+      <z-menu-item type="radio" value="scale" ?is-checked=${isKeyMode}
+        ?is-disabled=${!hasKey} description=${keyDescription}>In key</z-menu-item>
+    </z-menu>`;
+  };
 }
 
 // ── Transport ───────────────────────────────────────────────────────
@@ -528,147 +429,161 @@ export class MaddieTransport extends ControlElement {
   static styles = [
     tokens,
     controlStyles,
-    css`
-      z-badge.position {
-        margin-inline-start: var(--space-xs);
-        font-family: var(--_font-mono);
-        font-variant-numeric: tabular-nums;
-      }
-      .dot {
-        color: var(--_text-faint);
-      }
-      /* The record light breathes while recording. */
-      z-toggle-button[aria-label='Stop recording'] svg {
-        animation: pulse 1s var(--_ease) infinite alternate;
-      }
-      @keyframes pulse {
-        to {
-          opacity: 0.35;
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        z-toggle-button[aria-label='Stop recording'] svg {
-          animation: none;
-        }
-      }
-    `,
+    unsafeCSS(transportCss),
   ];
 
-  @state() private position = '1.1.1';
+  @state() private tickPosition = 0;
   private raf = 0;
 
   protected attach(editor: Editor, engine: Engine) {
     super.attach(editor, engine);
+
     this.track(
-      editor.on('transport', () => this.tick()),
+      editor.on('transport', this.updatePosition),
       editor.capture.onChange(() => this.requestUpdate()),
       () => cancelAnimationFrame(this.raf),
     );
-    this.tick();
+    this.updatePosition();
   }
 
-  private tick = () => {
+  private updatePosition = () => {
     const ed = this.ed;
     if (!ed) return;
-    this.position = formatBBT(ed.transport.position, ed.meta.timeSignature, ed.ppq);
+    this.tickPosition = ed.transport.position;
     cancelAnimationFrame(this.raf);
-    if (ed.transport.playing) this.raf = requestAnimationFrame(this.tick);
+    const isPlaying = ed.transport.playing;
+    if (isPlaying) this.raf = requestAnimationFrame(this.updatePosition);
   };
 
-  render() {
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
-    const t = ed.transport;
-    const rec = ed.recorder;
-    const [bar, beat, six] = this.position.split('.');
-    const capturedCount = ed.capture.count;
-    const canCapture = capturedCount > 0 && !rec.recording;
-    const record = () => {
-      if (!rec.recording && !ed.view.computerKeyboard && !ed.view.midiInput) {
-        this.engine?.toast('Turn on keyboard or MIDI input to play while recording');
-      }
-      rec.toggle();
+    const transport = ed.transport;
+    const recorder = ed.recorder;
+    const isPlaying = transport.playing;
+    const playLabel = isPlaying ? 'Stop' : 'Play';
+    const playIcon = isPlaying ? icons.pause : icons.play;
+    const togglePlay = () => {
+      transport.toggle();
     };
-    return html`
-      ${tooltip(
-        tip(t.playing ? 'Stop · back to marker' : 'Play from marker', 'Space'),
-        html`<z-button class="icon" kind="solid" tone="primary" size="sm" aria-label=${t.playing ? 'Stop' : 'Play'} @click=${() => t.toggle()}
-          >${t.playing ? icons.stop : icons.play}</z-button
-        >`,
-      )}
-      ${tooltip(
-        tip(rec.recording ? 'Stop recording' : 'Record from marker', 'R'),
-        html`<z-toggle-button
-          is-icon
-          kind="ghost"
-          size="sm"
-          tone="secondary"
-          aria-label=${rec.recording ? 'Stop recording' : 'Record'}
-          .isPressed=${live(rec.recording)}
-          @press=${record}
-          >${icons.record}</z-toggle-button
-        >`,
-      )}
-      ${tooltip(
-        tip(canCapture ? `Keep what you just played (${capturedCount})` : 'Play something to capture it', 'Shift+R'),
-        html`<z-button
-          class="icon"
-          kind="ghost"
-          size="sm"
-          aria-label="Capture MIDI"
-          ?is-disabled=${!canCapture}
-          @click=${() => captureMidi(ed)}
-          >${icons.capture}</z-button
-        >`,
-      )}
-      ${tooltip(
-        t.playing ? 'Back to marker · double-click: to start' : tip('Back to start', '↵'),
-        html`<z-button
-          class="icon"
-          kind="ghost"
-          size="sm"
-          aria-label=${t.playing ? 'Back to marker' : 'Back to start'}
-          @click=${() => {
-            // Playing: jump back to where play started and keep going.
-            if (t.playing) return t.seek(t.marker);
-            t.stop();
-            if (t.position !== 0) t.stop();
-          }}
-          @dblclick=${() => t.playing && t.seek(0)}
-          >${icons.rewind}</z-button
-        >`,
-      )}
-      <z-badge class="position" aria-label="Position" role="timer">
-        ${bar}<span class="dot">.</span>${beat}<span class="dot">.</span>${six}
-      </z-badge>
-    `;
-  }
+    const start = iconButton({
+      label: 'Go to start',
+      tip: 'Go to start',
+      icon: icons.rewind,
+      onClick: () => {
+        transport.seek(0);
+        ed.setView({ cursor: 0 });
+      },
+    });
+    const recordLabel = recorder.recording ? 'Stop recording' : 'Record';
+    const record = iconToggle({
+      label: recordLabel,
+      tip: recordLabel,
+      on: recorder.recording,
+      icon: icons.record,
+      tone: 'danger',
+      onToggle: () => {
+        const shouldHint = !recorder.recording && !ed.view.computerKeyboard && !ed.view.midiInput;
+        if (shouldHint) this.engine?.toast('Turn on keyboard or MIDI input to play while recording');
+        recorder.toggle();
+      },
+    });
+    const canCapture = ed.capture.count > 0 && !recorder.recording && !ed.chordRegions;
+    const captureLabel = canCapture ? 'Capture what you just played.' : 'Play something to capture it.';
+    const capture = iconButton({
+      label: captureLabel,
+      tip: captureLabel,
+      icon: icons.capture,
+      disabled: !canCapture,
+      onClick: () => captureMidi(ed),
+    });
+    const position = formatBBT(this.tickPosition, ed.meta.timeSignature, ed.ppq).split('.');
+    const seconds = ticksToSeconds(this.tickPosition, ed.meta.tempo, ed.ppq);
+    const tenths = Math.floor(seconds * 10);
+    const time = `${Math.floor(tenths / 600)}:${String(Math.floor(tenths / 10) % 60).padStart(2, '0')}.${tenths % 10}`;
+    const loop = iconToggle({
+      label: 'Loop',
+      tip: 'Loop',
+      icon: icons.loop,
+      on: transport.loop.enabled,
+      onToggle: (enabled) => {
+        const hasRange = transport.loop.end > transport.loop.start;
+        if (!hasRange) {
+          const signature = ed.meta.timeSignature[0];
+          const end = ed.ppq * 8 * (signature.numerator / signature.denominator);
+          transport.setLoop({ start: 0, end });
+        }
+        transport.setLoop({ enabled });
+      },
+    });
+    const follow = iconToggle({
+      label: 'Follow playhead',
+      tip: 'Follow playhead',
+      icon: icons.follow,
+      on: ed.view.follow,
+      onToggle: (isFollowing) => ed.setView({ follow: isFollowing }),
+    });
+    const metronome = iconToggle({
+      label: 'Metronome',
+      tip: 'Metronome',
+      icon: icons.metronome,
+      on: transport.metronome.enabled,
+      onToggle: (enabled) => transport.setMetronome({ enabled }),
+    });
+
+    return html`<z-toolbar aria-label="Transport">
+      <z-toolbar-group>
+        ${start}
+        <z-tooltip content=${playLabel} placement="bottom">
+          <z-button class="play" kind="solid" tone="secondary" size="sm"
+            aria-label=${playLabel} @click=${togglePlay}>${playIcon}</z-button>
+        </z-tooltip>
+        ${record}<span class="capture" ?data-ready=${canCapture}>${capture}</span>
+      </z-toolbar-group>
+      <z-separator is-vertical></z-separator>
+      <z-toolbar-group>
+        <div class="position" aria-label="Playback position" role="timer">
+          <span>${position[0]}<span class="dot">.</span>${position[1]}<span class="dot">.</span>${position[2]}</span>
+          <span class="elapsed">${time}</span>
+        </div>
+      </z-toolbar-group>
+      <z-separator is-vertical></z-separator>
+      <z-toolbar-group>${renderTempo(ed)}</z-toolbar-group>
+      <z-separator is-vertical></z-separator>
+      <z-toolbar-group>${loop}${follow}${metronome}</z-toolbar-group>
+    </z-toolbar>`;
+  };
 }
 
-/** A labelled Zest switch with a hint underneath. */
-function switchRow(label: string, hint: string, on: boolean, onToggle: (on: boolean) => void, disabled = false) {
-  return html`<div class="setting">
-    <z-switch size="sm" tone="primary" label=${label} .isChecked=${live(on)} ?is-disabled=${disabled} @change=${(e: CustomEvent<{ checked: boolean }>) => onToggle(e.detail.checked)}
-      >${label}</z-switch
-    >
-    <z-text class="hint" size="xs" color="muted">${hint}</z-text>
+const switchRow = (label: string, hint: string, on: boolean, onToggle: (on: boolean) => void, isDisabled = false) => {
+  const change = (event: CustomEvent<{ checked: boolean }>) => onToggle(event.detail.checked);
+
+  return html`<div class="switch-row">
+    <span class="switch-copy" aria-hidden="true"><span>${label}</span><span class="hint">${hint}</span></span>
+    <z-switch size="sm" tone="secondary" aria-label=${label} description=${hint}
+      .isChecked=${live(on)} ?is-disabled=${isDisabled} @change=${change}></z-switch>
   </div>`;
-}
+};
 
-/** A 0–1 level on a Zest slider (which counts in whole percent). */
-function levelSlider(label: string, value: number, onInput: (v: number) => void) {
-  return html`<z-slider
-    label=${label}
-    tone="primary"
-    min="0"
-    max="100"
-    step="1"
-    does-show-value
-    value-suffix="%"
-    .value=${live(Math.round(value * 100))}
-    @input=${(e: CustomEvent<{ value: number }>) => onInput(e.detail.value / 100)}
-  ></z-slider>`;
-}
+const levelSlider = (label: string, value: number, onInput: (v: number) => void) => {
+  const percent = Math.round(value * 100);
+  const update = (event: CustomEvent<{ value: number }>) => onInput(event.detail.value / 100);
+  const nudge = (event: KeyboardEvent) => {
+    const isRight = event.key === 'ArrowRight';
+    const isLeft = event.key === 'ArrowLeft';
+    const shouldNudge = event.shiftKey && (isRight || isLeft);
+    if (!shouldNudge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const amount = isRight ? 10 : -10;
+    onInput(Math.min(100, Math.max(0, percent + amount)) / 100);
+  };
+
+  return html`<z-slider aria-label=${label} tone="primary" min="0" max="100" step="1"
+    .value=${live(percent)} @input=${update} @keydown=${nudge}>
+
+  </z-slider>`;
+};
 
 /** Mute toggle; open for master volume. */
 @customElement('maddie-volume')
@@ -734,56 +649,81 @@ export class MaddieInput extends ControlElement {
     this.track(MidiInput.for(editor).onChange(() => this.requestUpdate()));
   }
 
-  render() {
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
-    const { computerKeyboard, midiInput, keyboardScale } = ed.view;
+    const view = ed.view;
     const midi = MidiInput.for(ed);
-    const devices = midi.devices;
-    const current = devices.find((d) => d.id === ed.view.midiDevice);
     const key = ed.key;
-    const z = pitchForOffset(ed, 0);
-    const midiHint =
-      midi.status === 'unsupported'
-        ? "This browser can't read MIDI devices"
-        : midi.status === 'denied'
-          ? 'MIDI access was blocked'
-          : midiInput && midi.status === 'ready' && !devices.length
-            ? 'No devices found · plug one in'
-            : 'Notes play and record like keys';
-    const keysHint = computerKeyboard
-      ? `${scaleMapped(ed) ? 'Each key steps up the scale' : 'Each key steps up a semitone'}${z !== null ? ` · Z = ${pitchName(z)}` : ''} · + − octave`
-      : 'Play with the keys (`)';
-    const active = computerKeyboard || midiInput;
-    const showZ = computerKeyboard && z !== null;
-    return html`<z-popover placement="bottom-start" label="Input options">
-      <z-button slot="trigger" kind=${active ? 'soft' : 'ghost'} tone=${active ? 'primary' : 'neutral'} size="sm" aria-label="Input"
-        >${icons.keyboard}Input<z-badge kind="solid" tone="primary" size="sm" ?hidden=${!showZ} style=${showZ ? '' : 'display:none'}>${showZ ? pitchName(z) : ''}</z-badge></z-button
-      >
-      <div class="panel">
-        <z-text class="panel-title" size="sm" weight="600">Input</z-text>
-        ${switchRow('Computer keyboard', keysHint, computerKeyboard, (on) => setComputerKeyboard(ed, on))}
-        ${switchRow('MIDI controller', midiHint, midiInput, (on) => setMidiInput(ed, on))}
-        ${midiInput && midi.status === 'ready' && devices.length
-          ? select(
-              'MIDI device',
-              current?.id ?? '',
-              [{ value: '', label: 'All devices' }, ...devices.map((d) => ({ value: d.id, label: d.name }))],
-              (id) => setMidiDevice(ed, id || null),
-            )
-          : nothing}
-        <z-separator></z-separator>
-        ${switchRow(
-          'Scale notes only',
-          key ? `Out-of-scale notes snap to ${formatKey(key)}` : 'Set a key to use this',
-          keyboardScale,
-          (on) => setKeyboardScale(ed, on),
-          !key,
-        )}
+    const hint = key ? `Only play notes in ${formatEditorKey(key)}` : 'Pick a key first';
+    // TODO(design): Decide whether disconnect changes the status dot.
+    const status = view.midiInput && midi.status === 'ready' ? 'online' : 'offline';
+    const keyboard = view.computerKeyboard ? html`<span class="accent-icon">${icons.keyboard}</span>` : nothing;
+    const octave = Math.floor(view.keyboardBase / 12) - 1;
+    const changeOctave = (event: CustomEvent<{ value: number }>) => setBaseOctave(ed, event.detail.value);
+    const playInKey = switchRow('Play in key', hint, view.keyboardScale, (on) => setKeyboardScale(ed, on), !key);
+    const keyboardSettings = view.computerKeyboard ? html`<div class="sub-panel">${playInKey}
+      <div class="octave">
+        <div class="field"><span>Base octave</span><span class="hint">Shift with − and =</span></div>
+        <z-number-input size="sm" has-stepper-buttons min="0" max="7" aria-label="Base octave"
+          .value=${live(octave)} @change=${changeOctave}></z-number-input>
+      </div>
+    </div>` : nothing;
+    const devices = [{ value: '', label: 'All devices' }, ...midi.devices.map((device) => ({
+      value: device.id, label: device.name,
+    }))];
+    const current = midi.devices.find((device) => device.id === view.midiDevice);
+    // TODO(design): Decide whether to display disconnected devices.
+    const deviceSelect = view.midiInput
+      ? select('MIDI device', current?.id ?? '', devices, (id) => setMidiDevice(ed, id || null))
+      : nothing;
+    const isUnsupported = midi.status === 'unsupported';
+    const isDenied = midi.status === 'denied';
+    let midiHint = 'Notes play and record like keys';
+    if (isUnsupported) midiHint = "This browser can't read MIDI devices";
+    if (isDenied) midiHint = 'MIDI access was blocked';
+    const keyboardSwitch = switchRow('Computer keyboard', 'Play notes with your QWERTY keys', view.computerKeyboard,
+      (on) => setComputerKeyboard(ed, on));
+    const midiSwitch = switchRow('MIDI controller', midiHint, view.midiInput, (on) => setMidiInput(ed, on));
+
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Input">
+      <z-button class="chip" slot="trigger" kind="outline" size="md" aria-label="Input"><z-status-dot aria-hidden="true" status=${status}></z-status-dot>Input${keyboard}${icons.chevron}</z-button>
+      <div class="panel wide-panel"><strong>Input</strong>${keyboardSwitch}${keyboardSettings}
+        <z-separator></z-separator>${midiSwitch}${deviceSelect}
       </div>
     </z-popover>`;
-  }
+  };
 }
+
+type VolumeRowT = {
+  name: string;
+  icon: unknown;
+  action: string;
+  offLabel: string;
+  isDim: boolean;
+  isPressed: boolean;
+  level: number;
+  change: (level: number) => void;
+  toggle: (isPressed: boolean) => void;
+};
+
+const renderVolumeRow = (row: VolumeRowT) => {
+  const value = row.isDim ? row.offLabel : `${Math.round(row.level * 100)}%`;
+  const classes = row.isDim ? 'level-controls isDim' : 'level-controls';
+  const toggle = (event: CustomEvent<{ pressed: boolean }>) => row.toggle(event.detail.pressed);
+  const slider = levelSlider(row.name, row.level, row.change);
+
+  return html`<div class="level-row">
+    <div class="level-label"><span>${row.name}</span><span>${value}</span></div>
+    <div class=${classes}>
+      <z-tooltip content=${row.action} placement="bottom">
+        <z-toggle-button size="xs" is-icon kind="ghost" tone="secondary" aria-label=${row.action}
+          .isPressed=${live(row.isPressed)} @press=${toggle}>${row.icon}</z-toggle-button>
+      </z-tooltip>
+      ${slider}
+    </div>
+  </div>`;
+};
 
 /**
  * Where notes sound: one of the host's sounds or a MIDI port, master volume, and the metronome.
@@ -821,85 +761,183 @@ export class MaddieOutput extends ControlElement {
     icon.animate([{ transform: `scale(${accent ? 1.5 : 1.3})`, color }, { transform: 'scale(1)' }], { duration: 160, easing: 'ease-out' });
   }
 
-  render() {
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
     const router = OutputRouter.for(ed);
-    const { level, muted } = ed.volume;
-    const value = muted ? 0 : level;
-    const metro = ed.transport.metronome;
-    const midiOn = router.source === MIDI_SOURCE;
-    const sources = [
-      ...router.sounds.map((s) => ({ value: s.id, label: s.label })),
-      ...(router.supported ? [{ value: MIDI_SOURCE, label: 'MIDI output' }] : []),
-    ];
-    const ports = router.ports;
-    return html`<z-popover placement="bottom-start" label="Output options">
-      <z-button slot="trigger" kind="ghost" size="sm" aria-label="Output">${muted || level === 0 ? icons.mute : icons.volume}Output</z-button>
-      <div class="panel">
-        <div class="panel-title"><z-text size="sm" weight="600">Output</z-text><z-kbd size="xs">⇧M</z-kbd></div>
-        ${router.sounds.length
-          ? html`<div class="field">
-              <z-text class="field-label" size="xs" color="muted">Sound</z-text>
-              ${select('Sound', router.source, sources, (id) => (id === MIDI_SOURCE ? router.selectMidi() : router.selectSound(id)))}
-            </div>`
-          : nothing}
-        ${midiOn
-          ? ports.length
-            ? html`<div class="field">
-                <z-text class="field-label" size="xs" color="muted">MIDI port</z-text>
-                ${select('MIDI port', router.portId ?? '', ports.map((p) => ({ value: p.id, label: p.name })), (id) => router.selectPort(id))}
-              </div>`
-            : html`<z-text class="hint" size="xs" color="muted">No MIDI outputs found · plug one in</z-text>`
-          : nothing}
-        ${router.sounds.length ? html`<z-separator></z-separator>` : nothing}
-        ${levelSlider('Volume', value, (v) => ed.setVolume({ level: v, muted: v === 0 }))}
-        ${switchRow('Muted', 'Silence every sound', muted, (on) => ed.setVolume({ muted: on }))}
-        <z-separator></z-separator>
-        ${switchRow('Metronome', 'Click on every beat', metro.enabled, (on) => ed.transport.setMetronome({ enabled: on }))}
-        ${levelSlider('Metronome volume', metro.volume, (v) => ed.transport.setMetronome({ volume: v, enabled: true }))}
+    const volume = ed.volume;
+    const metronome = ed.transport.metronome;
+    const isMidi = router.source === MIDI_SOURCE;
+    const chooseSound = (id: string) => {
+      const isMidiOutput = id === MIDI_SOURCE;
+      if (isMidiOutput) {
+        void router.selectMidi();
+        return;
+      }
+      router.selectSound(id);
+    };
+    const sound = select('Sound', router.source, getSoundOptions(router), chooseSound);
+    const ports = router.ports.map((port) => ({ value: port.id, label: port.name }));
+    const port = select('MIDI port', router.portId ?? '', ports, (id) => router.selectPort(id), 'No MIDI outputs found');
+    const portField = isMidi && router.status === 'ready'
+      ? html`<div class="field"><span class="hint">MIDI port</span>${port}</div>`
+      : isMidi ? html`<z-button size="sm" ?is-disabled=${!router.supported || router.status === 'pending'}
+          @click=${() => void router.selectMidi()}>Connect MIDI output</z-button>` : nothing;
+    const speaker = volume.muted ? icons.mute : icons.volume;
+    // TODO(design): Decide whether the master level sends MIDI CC7.
+    const master = renderVolumeRow({
+      name: 'Volume', icon: speaker, action: volume.muted ? 'Unmute output' : 'Mute output',
+      offLabel: 'Muted', isDim: volume.muted, isPressed: volume.muted, level: volume.level,
+      change: (level) => ed.setVolume({ level, muted: false }),
+      toggle: (muted) => ed.setVolume({ muted }),
+    });
+    const click = renderVolumeRow({
+      name: 'Metronome volume', icon: icons.metronome, action: 'Metronome',
+      offLabel: 'Off', isDim: !metronome.enabled, isPressed: metronome.enabled, level: metronome.volume,
+      change: (level) => ed.transport.setMetronome({ volume: level, enabled: true }),
+      toggle: (enabled) => ed.transport.setMetronome({ enabled }),
+    });
+
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Output">
+      <z-button class="chip" slot="trigger" kind="outline" size="md" aria-label="Output">${speaker}Output${icons.chevron}</z-button>
+      <div class="panel wide-panel">
+        <strong>Output</strong><div class="field"><span class="hint">Global sound</span>${sound}</div>
+        ${portField}<z-separator></z-separator>${master}${click}
       </div>
     </z-popover>`;
+  };
+}
+
+/**
+ * App settings: how the app looks and which features show. They belong to the person, not to a
+ * project, and are remembered in this browser.
+ */
+@customElement('maddie-settings')
+export class MaddieSettings extends ControlElement {
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    const settings = readAppSettings();
+    applyTheme(settings.theme);
+    editor.setView({
+      ghostNotes: settings.ghostNotes,
+      chordsPanelDark: settings.chordsPanelDark,
+      chordCraftDark: settings.chordCraftDark,
+      suggestionsDark: settings.suggestionsDark,
+    });
+    const watchSystem = matchMedia('(prefers-color-scheme: dark)');
+    const followSystem = () => {
+      const isSystem = readAppSettings().theme === 'system';
+      if (isSystem) applyTheme('system');
+    };
+    watchSystem.addEventListener('change', followSystem);
+    this.track(() => watchSystem.removeEventListener('change', followSystem));
   }
+
+  private chooseTheme = (value: string) => {
+    const theme = value as ThemePreferenceT;
+    writeAppSettings({ theme });
+    applyTheme(theme);
+    this.requestUpdate();
+  };
+
+  private toggleGhostNotes = (ed: Editor, isOn: boolean) => {
+    writeAppSettings({ ghostNotes: isOn });
+    ed.setView({ ghostNotes: isOn });
+  };
+
+  private toggleExperimental = (ed: Editor, key: ExperimentalThemeKeyT, isOn: boolean) => {
+    writeAppSettings({ [key]: isOn });
+    ed.setView({ [key]: isOn });
+  };
+
+  render = () => {
+    const ed = this.ed;
+    if (!ed) return nothing;
+    const settings = readAppSettings();
+    const themeOptions = [
+      { value: 'system', label: 'System' },
+      { value: 'light', label: 'Light' },
+      { value: 'dark', label: 'Dark' },
+    ];
+    const theme = select('Theme', settings.theme, themeOptions, this.chooseTheme);
+    const ghostNotes = switchRow('Show other tracks', "Faint notes from other tracks behind the active one", ed.view.ghostNotes,
+      (isOn) => this.toggleGhostNotes(ed, isOn));
+    const darkPanel = switchRow('Dark chords panel', 'The whole chords panel in the dark theme', ed.view.chordsPanelDark,
+      (isOn) => this.toggleExperimental(ed, 'chordsPanelDark', isOn));
+    const darkCraft = switchRow('Dark chord card', 'The crafting card stays dark, whatever the panel is', ed.view.chordCraftDark,
+      (isOn) => this.toggleExperimental(ed, 'chordCraftDark', isOn));
+    const darkSuggestions = switchRow('Dark suggestions', 'The Suggestions rail in the dark theme', ed.view.suggestionsDark,
+      (isOn) => this.toggleExperimental(ed, 'suggestionsDark', isOn));
+
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Settings">
+      <z-button slot="trigger" kind="ghost" size="md" is-icon aria-label="Settings">${icons.settings}</z-button>
+      <div class="panel wide-panel">
+        <strong>Settings</strong>
+        <div class="field"><span class="hint">Theme</span>${theme}</div>
+        <z-separator></z-separator>
+        ${ghostNotes}
+        <z-separator></z-separator>
+        <span class="hint">Experimental</span>
+        ${darkPanel}
+        ${darkCraft}
+        ${darkSuggestions}
+      </div>
+    </z-popover>`;
+  };
 }
 
 // ── Tempo ───────────────────────────────────────────────────────────
 
-/** A Zest number field with stepper buttons. Arrow keys nudge; Enter or leaving the field commits. */
+const cancelledTempoEdits = new WeakSet<EventTarget>();
+
+// TODO(design): Decide how tempo drag-to-scrub behaves.
+const renderTempo = (ed: Editor) => {
+  const bpm = ed.meta.tempo[0]?.bpm ?? 120;
+  const commit = (event: CustomEvent<{ value: number }>) => {
+    const source = event.currentTarget as HTMLElement & { value: number };
+    const wasCancelled = cancelledTempoEdits.delete(source);
+    if (wasCancelled) {
+      const previous = ed.meta.tempo[0]?.bpm ?? 120;
+      queueMicrotask(() => { source.value = previous; });
+      return;
+    }
+    const next = Math.round(Math.max(20, Math.min(300, event.detail.value)));
+    const didChange = next !== (ed.meta.tempo[0]?.bpm ?? 120);
+    if (didChange) ed.commands.setTempo(next);
+  };
+  const sanitize = (event: Event) => {
+    const field = event.composedPath()[0];
+    if (!(field instanceof HTMLInputElement)) return;
+    const digits = field.value.replace(/\D/g, '').slice(0, 3);
+    if (digits !== field.value) field.value = digits;
+  };
+  const handleKey = (event: KeyboardEvent) => {
+    const field = event.composedPath()[0];
+    if (!(field instanceof HTMLInputElement)) return;
+    const isCancel = event.key === 'Escape';
+    const isCommit = event.key === 'Enter';
+    if (isCancel) {
+      const source = event.currentTarget;
+      if (source) cancelledTempoEdits.add(source);
+      field.value = String(ed.meta.tempo[0]?.bpm ?? 120);
+      field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+    const shouldBlur = isCancel || isCommit;
+    if (!shouldBlur) return;
+    event.preventDefault();
+    field.blur();
+  };
+
+  return html`<z-number-input size="sm" aria-label="Tempo" min="20" max="300" step="1"
+    is-borderless is-inline value-suffix=" BPM" .value=${live(bpm)} @change=${commit}
+    @keydown=${handleKey} @input=${captureNumberInput(sanitize)}></z-number-input>`;
+};
+
+const captureNumberInput = (handler: (event: Event) => void) => Object.assign(handler, { capture: true });
+
 @customElement('maddie-tempo')
 export class MaddieTempo extends ControlElement {
-  static styles = [
-    tokens,
-    controlStyles,
-    css`
-      z-number-input {
-        width: 7.75rem;
-        font-variant-numeric: tabular-nums;
-      }
-    `,
-  ];
-
-  render() {
-    const ed = this.ed;
-    if (!ed) return nothing;
-    const bpm = ed.meta.tempo[0]?.bpm ?? 120;
-    return html`${tooltip(
-        'Tempo · type, or use the arrow keys',
-        html`<z-number-input
-          size="sm"
-          label="Tempo"
-          min="20"
-          max="400"
-          step="1"
-          has-stepper-buttons
-          .value=${live(bpm)}
-          @change=${(e: CustomEvent<{ value: number }>) => ed.commands.setTempo(e.detail.value)}
-          @keydown=${(e: KeyboardEvent) => {
-            if (e.key === 'Enter') (e.composedPath()[0] as HTMLElement).blur();
-          }}
-        ></z-number-input>`,
-      )}<span class="unit">BPM</span>`;
-  }
+  render = () => this.ed ? renderTempo(this.ed) : nothing;
 }
 
 // ── History + zoom ──────────────────────────────────────────────────
@@ -931,66 +969,90 @@ export class MaddieHistory extends ControlElement {
 
 @customElement('maddie-zoom')
 export class MaddieZoom extends ControlElement {
-  private zoom(factor: number) {
-    const ed = this.ed;
-    if (!ed || !this.engine) return;
-    const v = ed.view;
-    const width = this.engine.viewport.width || 800;
-    const center = v.scrollTick + width / 2 / v.pxPerTick;
-    const px = v.pxPerTick * factor;
-    ed.setView({ pxPerTick: px, scrollTick: Math.max(0, center - width / 2 / px) }, { animate: true });
+  static styles = [
+    tokens,
+    unsafeCSS(zoomCss),
+  ];
+
+  protected attach(editor: Editor, engine: Engine) {
+    super.attach(editor, engine);
+    this.track(editor.on('tracks', () => this.requestUpdate()));
   }
 
-  render() {
+  render = () => {
     const ed = this.ed;
-    if (!ed) return nothing;
-    const [minRh, maxRh] = ZOOM_LIMITS.rowHeight;
-    return html`
-      ${iconButton({
-        label: 'Shorter rows',
-        tip: tip('Shorter rows · ⌥ scroll', '⌥ −'),
-        icon: icons.rowsShorter,
-        disabled: ed.view.rowHeight <= minRh,
-        onClick: () => rowZoomBy(ed, 1 / 1.25),
-      })}
-      ${iconButton({
-        label: 'Taller rows',
-        tip: tip('Taller rows · ⌥ scroll', '⌥ +'),
-        icon: icons.rowsTaller,
-        disabled: ed.view.rowHeight >= maxRh,
-        onClick: () => rowZoomBy(ed, 1.25),
-      })}
-      <z-separator is-vertical></z-separator>
-      ${iconButton({ label: 'Zoom out', tip: tip('Zoom out · ⌘ scroll', '−'), icon: icons.zoomOut, onClick: () => this.zoom(1 / 1.5) })}
-      ${iconButton({ label: 'Zoom in', tip: tip('Zoom in · ⌘ scroll', '+'), icon: icons.zoomIn, onClick: () => this.zoom(1.5) })}
-    `;
-  }
+    const engine = this.engine;
+    if (!ed || !engine) return nothing;
+    const view = ed.view;
+    const minTime = ZOOM_LIMITS.pxPerTick[0];
+    const maxTime = ZOOM_LIMITS.pxPerTick[1];
+    const minRow = ZOOM_LIMITS.rowHeight[0];
+    const maxRow = ZOOM_LIMITS.rowHeight[1];
+    const setRows = (amount: number) => ed.setView({ rowHeight: view.rowHeight + amount }, { animate: true });
+    const setTime = (factor: number) => {
+      const half = engine.viewport.width / 2;
+      const anchor = view.scrollTick + half / view.pxPerTick;
+      const pxPerTick = clamp(view.pxPerTick * factor, minTime, maxTime);
+      ed.setView({ pxPerTick, scrollTick: Math.max(0, anchor - half / pxPerTick) }, { animate: true });
+    };
+    const fit = () => {
+      const notes = ed.notes();
+      const { width, height } = engine.viewport;
+      if (!notes.length || !width || !height) return;
+      const { virtual } = ed.rowMap;
+      let start = Infinity, end = -Infinity, top = Infinity, bottom = -Infinity;
+      for (const note of notes) {
+        start = Math.min(start, note.start);
+        end = Math.max(end, note.start + note.duration);
+        top = Math.min(top, virtual[note.pitch]);
+        bottom = Math.max(bottom, virtual[note.pitch] + 1);
+      }
+      const padding = Math.min(16, width * 0.05);
+      const pxPerTick = clamp((width - 2 * padding) / Math.max(1, end - start), minTime, maxTime);
+      const rowHeight = clamp(height / (bottom - top + 2), minRow, maxRow);
+      engine.pauseFollow();
+      ed.setView({
+        pxPerTick,
+        scrollTick: Math.max(0, (start + end - width / pxPerTick) / 2),
+        rowHeight,
+        scrollRow: clamp((top + bottom - height / rowHeight) / 2, 0, engine.maxScrollRow(rowHeight)),
+      }, { animate: true });
+    };
+    const button = (area: string, label: string, icon: unknown, click: () => void, isDisabled = false) => html`
+      <z-tooltip class=${area} content=${label} placement="top">
+        <z-button size="xs" is-icon kind="ghost" aria-label=${label} ?is-disabled=${isDisabled}
+          @click=${click}>${icon}</z-button>
+      </z-tooltip>`;
+    const out = button('out', 'Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.timeInward, () => setTime(0.8), view.pxPerTick <= minTime);
+    const taller = button('taller', 'Taller rows · Alt + scroll, or drag the keyboard up', icons.rowsTaller, () => setRows(2), view.rowHeight >= maxRow);
+    const all = button('fit', 'Zoom to fit', icons.fit, fit, !ed.notes().length);
+    const shorter = button('shorter', 'Shorter rows · Alt + scroll, or drag the keyboard down', icons.rowsShorter, () => setRows(-2), view.rowHeight <= minRow);
+    const inward = button('in', 'Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.timeOutward, () => setTime(1.25), view.pxPerTick >= maxTime);
+
+    // An L around the grid's corner: time controls run along the bottom edge, row
+    // controls up the right edge, Fit sits where they meet. Each sits on the edge it changes.
+    return html`<div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
+      <div class="rows" role="group" aria-label="Row height">${taller}${shorter}</div>
+      <div class="corner">${all}</div>`;
+  };
 }
 
-// ── Import / export ─────────────────────────────────────────────────
-
-/**
- * Downloads the doc as a Standard MIDI File.
- * @fires maddie-export - Cancelable. `detail: { bytes, filename }`. Call `preventDefault()` to handle the file yourself.
- */
 @customElement('maddie-export')
 export class MaddieExport extends ControlElement {
   /** Download name. `.mid` is added if missing. Default: `[key]-[scale]-[bpm]-DDMMYYYY-HHMM.mid`. */
   @property() filename = '';
+  @property({ type: Boolean }) labeled = false;
 
   private export() {
     const ed = this.ed;
     if (!ed) return;
-    const bytes = toMidiFile(ed.doc);
-    const filename = this.filename || exportFilename(ed.doc);
-    const go = this.dispatchEvent(
-      new CustomEvent('maddie-export', { detail: { bytes, filename }, bubbles: true, composed: true, cancelable: true }),
-    );
-    if (go) downloadMidi(ed.doc, filename);
+    requestMidiExport(ed.doc, this.filename || exportFilename(ed.doc), this);
   }
 
   render() {
     if (!this.ed) return nothing;
+    if (this.labeled) return html`<z-button size="sm" kind="ghost" is-full-width
+      ?is-disabled=${!this.ed.hasAnyNotes} @click=${() => this.export()}>${icons.download}Export MIDI</z-button>`;
     return iconButton({
       label: 'Export MIDI',
       tip: tip('Export .mid', `${modKeyLabel} ⇧ E`),
@@ -1002,13 +1064,17 @@ export class MaddieExport extends ControlElement {
 }
 
 /**
- * Opens a .mid file and replaces the notes (undoable). Drag & drop onto the roll works too.
+ * Opens a .mid file and adds its tracks (undoable). Drag & drop onto the roll works too.
  * @fires maddie-import - Cancelable. `detail: { file, bytes }`. Call `preventDefault()` to handle it yourself.
  */
 @customElement('maddie-import')
 export class MaddieImport extends ControlElement {
+  @property({ type: Boolean }) labeled = false;
+
   render() {
     if (!this.ed) return nothing;
+    if (this.labeled) return html`<z-button size="sm" kind="ghost" is-full-width
+      @click=${() => pickMidiFile(this.ed!, this)}>${icons.upload}Import MIDI</z-button>`;
     return iconButton({
       label: 'Import MIDI',
       tip: tip('Import .mid · or drop on the grid', `${modKeyLabel} O`),
@@ -1021,133 +1087,59 @@ export class MaddieImport extends ControlElement {
 // ── Toolbars ────────────────────────────────────────────────────────
 
 /** A row is a bordered card surface: tone from `--card`, edge from `--border`, and the theme's own material and elevation (inert in the flat themes). */
-const barStyles = css`
-  :host {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    height: var(--_toolbar-height);
-    padding: 0 var(--space-md);
-    background-color: var(--_surface);
-    background-image: var(--material-surface);
-    box-shadow: var(--elevation-flush);
-    border-bottom: 1px solid var(--_border);
-    box-sizing: border-box;
-    min-width: 0;
-    color: var(--_text);
-    position: relative;
-    z-index: 3;
-    container-type: inline-size;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .group {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: var(--space-xs);
-  }
-  .spacer {
-    flex: 1;
-    min-width: 8px;
-  }
-`;
+const barStyles = unsafeCSS(barCss);
 
-/** Top row: global things. Transport, tempo, sound, keyboard input, files. */
 @customElement('maddie-topbar')
 export class MaddieTopbar extends MaddieElement {
   static styles = [
     tokens,
     barStyles,
     dividerStyles,
-    css`
-      :host {
-        z-index: 4;
-      }
-    `,
+    unsafeCSS(topbarCss),
   ];
-  render() {
-    return html`
-      <div class="group" part="group transport">
-        <slot name="start"></slot>
-        <maddie-transport></maddie-transport>
-        <maddie-tempo></maddie-tempo>
-      </div>
-      <z-separator is-vertical></z-separator>
-      <div class="group" part="group playback">
-        <maddie-loop-toggle></maddie-loop-toggle>
-        <maddie-follow-toggle></maddie-follow-toggle>
-      </div>
-      <z-separator is-vertical></z-separator>
-      <div class="group" part="group sound">
-        <maddie-input></maddie-input>
-        <maddie-output></maddie-output>
-      </div>
-      <div class="spacer"></div>
-      <div class="group" part="group file">
-        <maddie-import></maddie-import>
-        <maddie-export></maddie-export>
-        <slot name="end"></slot>
-      </div>
-    `;
-  }
+
+  render = () => html`
+    <div class="group project" part="group project">
+      <slot name="start"></slot><z-separator is-vertical></z-separator><maddie-history></maddie-history>
+    </div>
+    <maddie-transport part="transport"></maddie-transport>
+    <div class="group sound" part="group sound">
+      <maddie-input></maddie-input><maddie-output></maddie-output><maddie-settings></maddie-settings><slot name="end"></slot>
+    </div>
+  `;
 }
 
-/** Second row: tools that change the grid below. Grid, key, fold, history, zoom. */
 @customElement('maddie-editbar')
 export class MaddieEditbar extends MaddieElement {
   static styles = [
     tokens,
     barStyles,
     dividerStyles,
-    css`
-      :host {
-        height: var(--maddie-editbar-height, 56px);
-        background-color: var(--maddie-editbar-bg, var(--color-neutral-1));
-        background-image: none;
-      }
-    `,
+    unsafeCSS(editbarCss),
   ];
-  render() {
-    return html`
-      <div class="group" part="group grid">
-        <maddie-grid-select></maddie-grid-select>
-        <maddie-snap-toggle></maddie-snap-toggle>
-      </div>
+
+  render = () => html`
+    <div class="tracks"><slot name="tracks"></slot></div>
+    <div class="group" part="group grid-tools">
+      <maddie-grid-select></maddie-grid-select>
+      <maddie-key-select></maddie-key-select>
       <z-separator is-vertical></z-separator>
-      <div class="group" part="group key">
-        <maddie-key-select></maddie-key-select>
-        <maddie-scale-lock></maddie-scale-lock>
-      </div>
-      <z-separator is-vertical></z-separator>
-      <div class="group" part="group fold"><maddie-fold-select></maddie-fold-select></div>
-      <div class="spacer"></div>
-      <div class="group" part="group history"><maddie-history></maddie-history></div>
-      <z-separator is-vertical></z-separator>
-      <div class="group" part="group zoom"><maddie-zoom></maddie-zoom></div>
-    `;
-  }
+      <maddie-fold-select></maddie-fold-select>
+    </div>
+  `;
 }
 
-/** Both rows, stacked: global on top, grid tools right above the grid. */
 @customElement('maddie-toolbar')
 export class MaddieToolbar extends MaddieElement {
   static styles = [
     tokens,
-    css`
-      :host {
-        display: block;
-        position: relative;
-        z-index: 3;
-      }
-    `,
+    unsafeCSS(toolbarCss),
   ];
 
-  render() {
-    return html`<maddie-topbar part="topbar"><slot name="start" slot="start"></slot><slot name="end" slot="end"></slot></maddie-topbar>
-      <maddie-editbar part="editbar"></maddie-editbar>`;
-  }
+  render = () => html`
+    <maddie-topbar part="topbar"><slot name="start" slot="start"></slot><slot name="end" slot="end"></slot></maddie-topbar>
+    <maddie-editbar part="editbar"><slot name="tracks" slot="tracks"></slot></maddie-editbar>
+  `;
 }
 
 declare global {
@@ -1163,6 +1155,7 @@ declare global {
     'maddie-follow-toggle': MaddieFollowToggle;
     'maddie-input': MaddieInput;
     'maddie-output': MaddieOutput;
+    'maddie-settings': MaddieSettings;
     'maddie-chords-toggle': MaddieChordsToggle;
     'maddie-tempo': MaddieTempo;
     'maddie-history': MaddieHistory;

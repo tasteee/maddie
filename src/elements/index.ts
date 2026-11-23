@@ -6,7 +6,8 @@ export { MaddiePianoRoll } from './piano-roll';
 export { MaddieKeyboard } from './keyboard';
 export { MaddieRuler } from './ruler';
 export { MaddieVelocityLane } from './velocity-lane';
-export { MaddieChords, MaddieChordsTab } from './chords';
+export { MaddieChords } from './chords';
+export { MaddiePatternPicker } from './pattern-picker';
 export { MaddieInspector } from './inspector';
 export { MaddieTracks } from './tracks';
 export {
@@ -27,11 +28,12 @@ export {
   MaddieFollowToggle,
   MaddieInput,
   MaddieOutput,
+  MaddieSettings,
   MaddieChordsToggle,
   MaddieTopbar,
   MaddieEditbar,
 } from './controls';
-export { importMidiFile, pickMidiFile } from './midi-io';
+export { importMidiFile, importMidiFiles, pickMidiFile } from './midi-io';
 export { OutputRouter, createMidiOutput, MIDI_SOURCE, type SoundChoice, type MidiPort } from '../engine/output-router';
 export { MidiInput, setMidiInput, setMidiDevice, type MidiDevice } from '../engine/midi-input';
 export { MaddieElement } from './base';

@@ -1,4 +1,4 @@
-import type { Note } from './types';
+import type { Note, TrackRouteT } from './types';
 
 export interface NoteEvent {
   note: Note;
@@ -28,3 +28,9 @@ export interface Output {
   /** Metronome click. Optional: a built-in click plays if omitted. */
   click?(e: { time: number; accent: boolean; volume: number }): void;
 }
+
+/**
+ * Turns a track's route into an Output. The host provides this (the OutputRouter does).
+ * Returns null when the route cannot sound right now: an unknown sound, or a MIDI port that is not connected.
+ */
+export type OutputResolverT = (route: TrackRouteT) => Output | null;

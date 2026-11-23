@@ -1,7 +1,8 @@
 export const MIN_PITCH = 0;
 export const MAX_PITCH = 127;
 
-const NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+// Spelled the way a key signature does: C♯ and F♯ as sharps, E♭, A♭ and B♭ as flats.
+const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
 
 export const pitchClass = (pitch: number) => ((pitch % 12) + 12) % 12;
@@ -9,6 +10,10 @@ export const isBlackKey = (pitch: number) => BLACK[pitchClass(pitch)];
 /** C4 = 60. */
 export const octaveOf = (pitch: number) => Math.floor(pitch / 12) - 1;
 export const pitchClassName = (pc: number) => NAMES[pitchClass(pc)];
+
+export const displayPitchClass = (pitch: number) => NAMES[pitchClass(pitch)];
+export const displayPitch = (pitch: number) => `${displayPitchClass(pitch)}${octaveOf(pitch)}`;
+
 export const pitchName = (pitch: number) => `${NAMES[pitchClass(pitch)]}${octaveOf(pitch)}`;
 export const clampPitch = (p: number) => Math.max(MIN_PITCH, Math.min(MAX_PITCH, Math.round(p)));
 

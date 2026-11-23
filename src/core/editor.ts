@@ -1,17 +1,21 @@
+import { ChordTrackCommands } from './chord-track';
 import { Commands } from './commands';
 import { Emitter } from './emitter';
 import { History } from './history';
 import { buildRowMap, type RowMap } from './music/rowmap';
+import { ticksToSeconds } from './music/timeline';
 import { NoteIndex } from './notes';
-import type { Output } from './output';
+import type { Output, OutputResolverT } from './output';
 import { invertPatches, type MetaKey, type MetaValues, type Patch } from './patches';
 import { createCapture, type CaptureT } from './capture';
 import { Recorder } from './recorder';
 import { Transport } from './transport';
 import { getAudibleTrackIds, getTrackColor } from './tracks';
-import type { MaddieDoc, Note, NoteId, Tick, Track, TrackChangesT, TrackMetaT, TrackNoteT } from './types';
+import type { ChordRegion, MaddieDoc, Note, NoteId, Tick, Track, TrackChangesT, TrackMetaT, TrackNoteT } from './types';
 import { DEFAULT_VIEW, ZOOM_LIMITS, type ViewState } from './view';
 import { clampVelocity } from './music/velocity';
+
+export const DEFAULT_VOLUME = { level: 0.8, muted: false };
 
 export type Origin = 'user' | 'api' | 'history' | 'remote' | 'load';
 
@@ -43,7 +47,7 @@ export interface EditorEvents extends Record<string, unknown> {
   transport: { state: Transport['state']; position: Tick };
   history: { canUndo: boolean; canRedo: boolean };
   noteon: { note: Note; time: number; track?: string };
-  /** The track list, a track's name, color, mute or solo, or the active track changed. */
+  /** The track list, track settings, or the active track changed. */
   tracks: { tracks: readonly TrackMetaT[]; activeId: string };
 }
 
@@ -57,6 +61,8 @@ export interface EditorOptions {
 
 export interface TransactOptions {
   origin?: Origin;
+  /** Select these notes or regions when the transaction commits. */
+  selectionAfter?: readonly string[];
   /** Edits with the same gestureId merge into one undo step. */
   gestureId?: string;
 }
@@ -84,6 +90,7 @@ interface Tx {
   origin: Origin;
   gestureId?: string;
   selectionBefore: NoteId[];
+  select?: readonly string[];
 }
 
 /**
@@ -98,10 +105,14 @@ export class Editor extends Emitter<EditorEvents> {
   /** Remembers live notes played outside a take, so they can be kept after the fact. */
   readonly capture: CaptureT;
   readonly commands: Commands;
+  /** The default output. Every track without its own route sounds here. */
   output: Output | null;
+  /** Turns a track's own route into an output. Set by the host (the OutputRouter does it). */
+  outputResolver: OutputResolverT | null = null;
   audioContext: AudioContext | null;
   activeTrackId: string;
 
+  readonly chordTrack = new ChordTrackCommands(this);
   private tracks = new Map<string, { track: TrackMetaT; notes: NoteIndex }>();
   // Track order before the latest change, so a removed active track hands over to its neighbor.
   private trackOrder: string[] = [];
@@ -113,8 +124,10 @@ export class Editor extends Emitter<EditorEvents> {
   private docCache: MaddieDoc | null = null;
   private rowMapCache: RowMap | null = null;
   /** Master volume (0–1) and mute. Applied via `output.setVolume`, or by scaling velocity. */
-  volume = { level: 0.8, muted: false };
-  private live = new Map<number, Note>();
+  volume = { ...DEFAULT_VOLUME };
+  private live = new Map<number, { note: Note; output: Output | null }>();
+  // Every output a note was sent to, so stop and seek can silence all of them.
+  private usedOutputs = new Set<Output>();
   /** Internal clipboard. Notes relative to tick 0. */
   clipboard: Note[] = [];
 
@@ -195,6 +208,43 @@ export class Editor extends Emitter<EditorEvents> {
   get trackList(): readonly TrackMetaT[] {
     if (!this.trackListCache) this.trackListCache = [...this.tracks.values()].map((entry) => entry.track);
     return this.trackListCache;
+  }
+
+  getTrackGain(trackId: string): number {
+    return this.tracks.get(trackId)?.track.gain ?? 1;
+  }
+
+  /**
+   * Where a track sounds: its own route, or the default output when it has none.
+   * A track with its own route that cannot sound right now (a sound that is gone,
+   * a MIDI port that is unplugged) gets null. It stays silent instead of falling back.
+   */
+  getTrackOutput(trackId: string): Output | null {
+    const route = this.tracks.get(trackId)?.track.route;
+    if (!route) return this.output;
+    const resolve = this.outputResolver;
+    if (!resolve) return this.output;
+    return resolve(route);
+  }
+
+  get chordRegions(): readonly ChordRegion[] | undefined {
+    return this.tracks.get(this.activeTrackId)?.track.chordRegions;
+  }
+
+  get selectedChordRegions(): ChordRegion[] {
+    return this.chordRegions?.filter((region) => this._selection.has(region.id)) ?? [];
+  }
+
+  isNoteSelected(id: NoteId): boolean {
+    const regionId = this.chordRegions && this.getNote(id)?.chordRegionId;
+    return this._selection.has(regionId ?? id);
+  }
+
+  private selectionId(id: string): string | undefined {
+    const regions = this.chordRegions;
+    if (!regions) return this.index().has(id) ? id : undefined;
+    const regionId = this.getNote(id)?.chordRegionId ?? id;
+    return regions.some((region) => region.id === regionId) ? regionId : undefined;
   }
 
   /** The color a track draws in. */
@@ -281,16 +331,20 @@ export class Editor extends Emitter<EditorEvents> {
 
   /** End of the last note: in one track, or (no argument) in any track. */
   contentEnd(track?: string): Tick {
-    if (track) return this.index(track).end();
     let end = 0;
-    for (const entry of this.tracks.values()) end = Math.max(end, entry.notes.end());
+    for (const [id, entry] of this.tracks) {
+      if (track && track !== id) continue;
+      end = Math.max(end, entry.notes.end());
+      for (const region of entry.track.chordRegions ?? []) end = Math.max(end, region.start + region.duration);
+    }
     return end;
   }
 
   /** Rows for the current fold mode and key. */
   get rowMap(): RowMap {
     if (!this.rowMapCache) {
-      const used = this._view.fold !== 'none' ? this.usedPitches() : [];
+      const isFoldedToNotes = this._view.fold === 'used';
+      const used = isFoldedToNotes ? this.usedPitches() : [];
       this.rowMapCache = buildRowMap({ fold: this._view.fold, key: this._meta.key, used });
     }
     return this.rowMapCache;
@@ -298,19 +352,21 @@ export class Editor extends Emitter<EditorEvents> {
 
   // ── Selection ─────────────────────────────────────────────────────
 
+  /** Selected note IDs on MIDI tracks and region IDs on Chord Tracks. */
   get selection(): ReadonlySet<NoteId> {
     return this._selection;
   }
 
   get selectedNotes(): Note[] {
+    if (this.chordRegions) return this.notes().filter((note) => note.chordRegionId && this._selection.has(note.chordRegionId));
     const idx = this.index();
     return [...this._selection].map((id) => idx.get(id)).filter((n): n is Note => !!n);
   }
 
   select(ids: Iterable<NoteId>, mode: 'replace' | 'add' | 'toggle' | 'remove' = 'replace') {
     const next = mode === 'replace' ? new Set<NoteId>() : new Set(this._selection);
-    for (const id of ids) {
-      if (!this.index().has(id)) continue;
+    for (const id of new Set(Array.from(ids, (value) => this.selectionId(value)))) {
+      if (id === undefined) continue;
       if (mode === 'remove' || (mode === 'toggle' && next.has(id))) next.delete(id);
       else next.add(id);
     }
@@ -358,10 +414,12 @@ export class Editor extends Emitter<EditorEvents> {
       origin: opts.origin ?? 'user',
       gestureId: opts.gestureId,
       selectionBefore: [...this._selection],
+      select: opts.selectionAfter,
     };
     let result: T;
     try {
       result = fn(this.txApi);
+      this.resolveOverlaps(this.tx.patches);
     } catch (err) {
       this.rollback(this.tx.patches);
       this.tx = null;
@@ -371,6 +429,82 @@ export class Editor extends Emitter<EditorEvents> {
     this.tx = null;
     this.finish(tx);
     return result;
+  }
+
+  /**
+   * Notes never overlap: two notes on the same pitch in a MIDI track never share time.
+   * The notes this transaction added or changed keep their full size. Notes they run into
+   * make room: fully covered ones are removed, others are trimmed at the edge they overlap,
+   * and one that surrounds an edited note ends where it starts (the tail is dropped).
+   * Runs inside the transaction, so the whole edit is one undo step. Chord tracks are
+   * left alone: their notes are rendered from chord regions, which never overlap.
+   */
+  private resolveOverlaps(patches: readonly Patch[]) {
+    const touchedByTrack = new Map<string, Set<NoteId>>();
+    for (const patch of patches) {
+      const isNoteEdit = patch.op === 'add' || patch.op === 'replace';
+      if (!isNoteEdit) continue;
+      const note = patch.op === 'add' ? patch.note : patch.to;
+      const ids = touchedByTrack.get(patch.track) ?? new Set<NoteId>();
+      ids.add(note.id);
+      touchedByTrack.set(patch.track, ids);
+    }
+    for (const [trackId, touchedIds] of touchedByTrack) {
+      const isChordTrack = !!this.tracks.get(trackId)?.track.chordRegions;
+      // The transaction API edits the active track, which is where note edits happen.
+      const isOtherTrack = trackId !== this.activeTrackId;
+      if (isChordTrack || isOtherTrack) continue;
+      const touched = [...touchedIds].flatMap((id) => this.getNote(id, trackId) ?? []);
+      this.resolveTouchedOverlaps(trackId, touched);
+      for (const winner of touched) this.makeRoomFor(trackId, winner, touchedIds);
+    }
+  }
+
+  /** Edited notes that overlap each other: the later one wins, the earlier one ends where it starts. */
+  private resolveTouchedOverlaps(trackId: string, touched: Note[]) {
+    const byPitch = new Map<number, Note[]>();
+    for (const note of touched) byPitch.set(note.pitch, [...(byPitch.get(note.pitch) ?? []), note]);
+    for (const group of byPitch.values()) {
+      const sorted = [...group].sort((a, b) => a.start - b.start);
+      for (let index = 0; index + 1 < sorted.length; index++) {
+        const earlier = this.getNote(sorted[index].id, trackId);
+        const later = sorted[index + 1];
+        if (!earlier) continue;
+        const isOverlapping = earlier.start + earlier.duration > later.start;
+        if (!isOverlapping) continue;
+        const room = later.start - earlier.start;
+        const hasRoom = room > 0;
+        if (hasRoom) this.txApi.update(earlier.id, { duration: room });
+        if (!hasRoom) this.txApi.remove(earlier.id);
+      }
+    }
+  }
+
+  private makeRoomFor(trackId: string, winner: Note, protectedIds: ReadonlySet<NoteId>) {
+    const current = this.getNote(winner.id, trackId);
+    if (!current) return;
+    const winnerEnd = current.start + current.duration;
+    const neighbors = this.notesInRange(current.start, winnerEnd, trackId);
+    for (const other of neighbors) {
+      const isSelf = other.id === current.id;
+      const isProtected = protectedIds.has(other.id);
+      const isOtherPitch = other.pitch !== current.pitch;
+      if (isSelf || isProtected || isOtherPitch) continue;
+      const otherEnd = other.start + other.duration;
+      const isOverlapping = other.start < winnerEnd && otherEnd > current.start;
+      if (!isOverlapping) continue;
+      const isCovered = other.start >= current.start && otherEnd <= winnerEnd;
+      if (isCovered) {
+        this.txApi.remove(other.id);
+        continue;
+      }
+      const startsBefore = other.start < current.start;
+      if (startsBefore) {
+        this.txApi.update(other.id, { duration: current.start - other.start });
+        continue;
+      }
+      this.txApi.update(other.id, { start: winnerEnd, duration: otherEnd - winnerEnd });
+    }
   }
 
   /** Apply patches from elsewhere (sync, collab). Not added to history. */
@@ -391,7 +525,7 @@ export class Editor extends Emitter<EditorEvents> {
     for (const p of patches) this.applyPatch(p);
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
-    this._selection = new Set(entry.selectionBefore.filter((id) => this.index().has(id)));
+    this._selection = new Set(entry.selectionBefore.filter((id) => this.selectionId(id) !== undefined));
     this.emit('change', { patches, origin: 'history', label: `Undo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
     this.emitTracksIfChanged(patches, hasNewActiveTrack);
@@ -404,7 +538,7 @@ export class Editor extends Emitter<EditorEvents> {
     for (const p of entry.patches) this.applyPatch(p);
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
-    this._selection = new Set(entry.selectionAfter.filter((id) => this.index().has(id)));
+    this._selection = new Set(entry.selectionAfter.filter((id) => this.selectionId(id) !== undefined));
     this.emit('change', { patches: entry.patches, origin: 'history', label: `Redo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
     this.emitTracksIfChanged(entry.patches, hasNewActiveTrack);
@@ -415,33 +549,54 @@ export class Editor extends Emitter<EditorEvents> {
 
   setVolume(volume: Partial<Editor['volume']>) {
     this.volume = { ...this.volume, ...volume, level: Math.max(0, Math.min(1, volume.level ?? this.volume.level)) };
-    this.output?.setVolume?.(this.volume.muted ? 0 : this.volume.level);
+    const masterLevel = this.volume.muted ? 0 : this.volume.level;
+    this.output?.setVolume?.(masterLevel);
+    for (const output of this.usedOutputs) output.setVolume?.(masterLevel);
     this.emit('transport', { state: this.transport.state, position: this.transport.position });
   }
 
-  /** Velocity after master volume, for outputs without `setVolume`. */
-  private outVelocity(v: number) {
-    return this.output?.setVolume ? v : v * this.volume.level;
+  /** Silence every output a note was sent to: the default and each track's own. Stop, seek, loop wrap. */
+  allOutputsOff() {
+    this.output?.allNotesOff();
+    for (const output of this.usedOutputs) output.allNotesOff();
+  }
+
+  // The first time an output is used, give it the master level, since it missed earlier changes.
+  private claimOutput(output: Output) {
+    if (this.usedOutputs.has(output)) return;
+    this.usedOutputs.add(output);
+    output.setVolume?.(this.volume.muted ? 0 : this.volume.level);
+  }
+
+  /** Output velocity after track gain and any master volume handled by the editor. */
+  private outVelocity(velocity: number, trackId: string, output: Output) {
+    const gain = this.getTrackGain(trackId);
+    return velocity * gain * (output.setVolume ? 1 : this.volume.level);
   }
 
   /** Start a held note (computer keyboard, MIDI input). Recorded while `recorder.recording`. */
   liveNoteOn(pitch: number, velocity = this._view.noteVelocity) {
     this.liveNoteOff(pitch);
     const note: Note = { id: `live-${pitch}`, pitch, start: 0, duration: 0, velocity };
-    this.live.set(pitch, note);
+    const trackId = this.activeTrackId;
+    const live = { note, output: null as Output | null };
+    this.live.set(pitch, live);
     this.recorder.noteOn(pitch, velocity);
     this.capture.noteOn(pitch, velocity);
-    if (!this.output || this.volume.muted) return;
-    this.output.noteOn({ note, pitch, velocity: this.outVelocity(velocity), time: 0 });
+    const out = this.getTrackOutput(trackId);
+    if (!out || this.volume.muted || this.getTrackGain(trackId) === 0) return;
+    this.claimOutput(out);
+    live.output = out;
+    out.noteOn({ note, pitch, velocity: this.outVelocity(velocity, trackId, out), time: 0 });
   }
 
   liveNoteOff(pitch: number) {
-    const note = this.live.get(pitch);
-    if (!note) return;
+    const live = this.live.get(pitch);
+    if (!live) return;
     this.live.delete(pitch);
     this.recorder.noteOff(pitch);
     this.capture.noteOff(pitch);
-    this.output?.noteOff({ note, pitch, velocity: 0, time: 0 });
+    live.output?.noteOff({ note: live.note, pitch, velocity: 0, time: 0 });
   }
 
   /** Release every held note. */
@@ -451,58 +606,97 @@ export class Editor extends Emitter<EditorEvents> {
 
   /** Preview a pitch while editing. */
   audition(pitch: number, velocity = this._view.noteVelocity) {
-    const out = this.output;
-    if (!out || this.volume.muted) return;
-    velocity = this.outVelocity(velocity);
+    const trackId = this.activeTrackId;
+    const out = this.getTrackOutput(trackId);
+    if (!out || this.volume.muted || this.getTrackGain(trackId) === 0) return;
+    this.claimOutput(out);
     const note: Note = { id: 'audition', pitch, start: 0, duration: 0, velocity };
-    const e = { note, pitch, velocity, time: 0, duration: 0.35 };
+    const e = { note, pitch, velocity: this.outVelocity(velocity, trackId, out), time: 0, duration: 0.35 };
     if (out.audition) out.audition(e);
     else out.noteOn(e);
   }
 
-  private chord: { notes: Note[]; started: Set<Note>; timers: Array<ReturnType<typeof setTimeout>> } | null = null;
+  private chord: { output: Output; started: Set<Note>; timers: Array<ReturnType<typeof setTimeout>> } | null = null;
 
   /**
-   * Play several pitches together for `seconds`. A new call cuts the previous one off.
+   * Play pitches together for `seconds`, or until stopped when `seconds` is null.
    * `humanize` strums the notes a few ms apart and gives each a random velocity (60–80 of 127).
    */
-  auditionChord(pitches: Iterable<number>, seconds = 0.5, velocity = this._view.noteVelocity, { humanize = false } = {}) {
+  auditionChord(pitches: Iterable<number>, seconds: number | null = 0.5, velocity = this._view.noteVelocity, { humanize = false } = {}) {
     this.stopChord();
-    const out = this.output;
+    const trackId = this.activeTrackId;
+    const out = this.getTrackOutput(trackId);
     if (!out || this.volume.muted) return;
+    this.claimOutput(out);
     const notes = [...new Set(pitches)].map(
       (pitch): Note => ({ id: `chord-${pitch}`, pitch, start: 0, duration: 0, velocity: humanize ? (60 + Math.random() * 20) / 127 : velocity }),
     );
     if (!notes.length) return;
-    const chord = { notes, started: new Set<Note>(), timers: [] as Array<ReturnType<typeof setTimeout>> };
+    const chord = { output: out, started: new Set<Note>(), timers: [] as Array<ReturnType<typeof setTimeout>> };
     this.chord = chord;
     const start = (note: Note) => {
+      if (this.volume.muted || this.getTrackGain(trackId) === 0) return;
       chord.started.add(note);
-      out.noteOn({ note, pitch: note.pitch, velocity: this.outVelocity(note.velocity), time: 0 });
+      out.noteOn({ note, pitch: note.pitch, velocity: this.outVelocity(note.velocity, trackId, out), time: 0 });
     };
     for (const note of notes) {
       const delay = humanize ? Math.random() * 40 : 0;
       if (delay) chord.timers.push(setTimeout(() => start(note), delay));
       else start(note);
     }
-    chord.timers.push(setTimeout(() => this.stopChord(), seconds * 1000));
+    const stop = () => { if (this.chord === chord) this.stopChord(); };
+    if (seconds !== null) chord.timers.push(setTimeout(stop, seconds * 1000));
+    return stop;
   }
 
-  private stopChord() {
+  /** Audition a rendered passage without changing the transport position. */
+  auditionNotes(notes: readonly Note[], origin: Tick) {
+    this.stopChord();
+    const trackId = this.activeTrackId;
+    const out = this.getTrackOutput(trackId);
+    if (!out || this.volume.muted || !notes.length) return;
+    this.claimOutput(out);
+    const { tempo, ppq } = this.meta;
+    const seconds = (tick: Tick) => ticksToSeconds(tick, tempo, ppq);
+    const offset = seconds(origin);
+    const chord = { output: out, started: new Set<Note>(), timers: [] as Array<ReturnType<typeof setTimeout>> };
+    this.chord = chord;
+    for (const note of [...notes].sort((a, b) => a.start - b.start)) {
+      const start = () => {
+        if (this.volume.muted || this.getTrackGain(trackId) === 0) return;
+        chord.started.add(note);
+        out.noteOn({ note, pitch: note.pitch, velocity: this.outVelocity(note.velocity, trackId, out), time: 0 });
+      };
+      const stop = () => {
+        if (!chord.started.delete(note)) return;
+        out.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
+      };
+      const delay = seconds(note.start) - offset;
+      if (delay <= 0) start();
+      else chord.timers.push(setTimeout(start, delay * 1000));
+      chord.timers.push(setTimeout(stop, (seconds(note.start + note.duration) - offset) * 1000));
+    }
+    return () => { if (this.chord === chord) this.stopChord(); };
+  }
+
+  stopChord() {
     const chord = this.chord;
     if (!chord) return;
     this.chord = null;
     chord.timers.forEach(clearTimeout);
-    for (const note of chord.started) this.output?.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
+    for (const note of chord.started) chord.output.noteOff({ note, pitch: note.pitch, velocity: 0, time: 0 });
   }
 
   /** @internal Called by the transport scheduler. */
   dispatchNote(note: Note, time: number, duration: number, track?: string) {
     this.emit('noteon', { note, time, track });
-    if (this.volume.muted) return;
-    const e = { note, pitch: note.pitch, velocity: this.outVelocity(note.velocity), time, duration };
-    this.output?.noteOn(e);
-    this.output?.noteOff({ ...e, time: time + duration });
+    const trackId = track ?? this.activeTrackId;
+    const out = this.getTrackOutput(trackId);
+    if (!out || this.volume.muted || this.getTrackGain(trackId) === 0) return;
+    this.claimOutput(out);
+    const e = { note, pitch: note.pitch, velocity: this.outVelocity(note.velocity, trackId, out), time, duration };
+    out.noteOn(e);
+    out.noteOff({ ...e, time: time + duration });
   }
 
   /** @internal */
@@ -513,17 +707,35 @@ export class Editor extends Emitter<EditorEvents> {
   // ── Internals ─────────────────────────────────────────────────────
 
   private readonly txApi: TxApi = {
-    add: (note) => this.record({ op: 'add', track: this.activeTrackId, note }),
+    add: (note) => {
+      if (!this.chordRegions) this.record({ op: 'add', track: this.activeTrackId, note });
+    },
     remove: (id) => {
+      if (this.chordRegions) return;
       const note = this.index().get(id);
       if (note) this.record({ op: 'remove', track: this.activeTrackId, note });
     },
     update: (id, changes) => {
+      if (this.chordRegions) return;
       const from = this.index().get(id);
       if (!from) return;
       const to = { ...from, ...changes, id };
       if (!noteChanged(from, to)) return;
       this.record({ op: 'replace', track: this.activeTrackId, from, to });
+    },
+    setChordRegions: (regions, notes) => {
+      const track = this.activeTrackId;
+      const index = this.index();
+      const existing = new Map(notes.map((note) => [note.id, note]));
+      this.txApi.updateTrack(track, { chordRegions: regions });
+      for (const note of index.all()) {
+        if (!existing.has(note.id)) this.record({ op: 'remove', track, note });
+      }
+      for (const to of notes) {
+        const from = index.get(to.id);
+        if (!from) this.record({ op: 'add', track, note: to });
+        else if (noteChanged(from, to)) this.record({ op: 'replace', track, from, to });
+      }
     },
     setMeta: (key, value) => {
       const from = this._meta[key];
@@ -674,7 +886,8 @@ export class Editor extends Emitter<EditorEvents> {
     }
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
-    this.pruneSelection();
+    if (tx.select) this.select(tx.select);
+    else this.pruneSelection();
     if (tx.origin !== 'remote' && tx.origin !== 'load') {
       this.history.push({
         label: tx.label,
@@ -690,8 +903,7 @@ export class Editor extends Emitter<EditorEvents> {
   }
 
   private pruneSelection() {
-    const idx = this.index();
-    const kept = [...this._selection].filter((id) => idx.has(id));
+    const kept = [...this._selection].filter((id) => this.selectionId(id) !== undefined);
     if (kept.length !== this._selection.size) {
       this._selection = new Set(kept);
       this.emit('selection', { ids: this._selection });
@@ -713,6 +925,7 @@ export interface TxApi {
   add(note: Note): void;
   remove(id: NoteId): void;
   update(id: NoteId, changes: Partial<Omit<Note, 'id'>>): void;
+  setChordRegions(regions: readonly ChordRegion[] | undefined, notes: readonly Note[]): void;
   setMeta<K extends MetaKey>(key: K, value: MetaValues[K]): void;
   /** Insert a track (at the end by default). Its notes come with it. */
   addTrack(track: Track, index?: number): void;
@@ -729,6 +942,7 @@ function noteChanged(a: Note, b: Note) {
     a.velocity !== b.velocity ||
     a.channel !== b.channel ||
     a.muted !== b.muted ||
+    a.chordRegionId !== b.chordRegionId ||
     a.data !== b.data
   );
 }

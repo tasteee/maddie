@@ -1,337 +1,383 @@
-import { css, html, nothing } from 'lit';
+import { html, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { getTrackName, type Editor, type TrackMetaT } from '../core';
-import type { Engine } from '../engine/engine';
-import { normalizeColor } from '../engine/theme';
+import { live } from 'lit/directives/live.js';
+import { ref } from 'lit/directives/ref.js';
+import { repeat } from 'lit/directives/repeat.js';
+import { classMap } from 'lit/directives/class-map.js';
+import { keyed } from 'lit/directives/keyed.js';
+import { createId, getTrackName } from '../core';
+import type { Editor, TrackMetaT } from '../core';
+import { modKeyLabel } from '../engine/keymap';
+import { OutputRouter } from '../engine/output-router';
 import { MaddieElement } from './base';
 import { icons } from './icons';
+import { requestMidiExport } from './midi-io';
 import { tokens } from './tokens';
-import './zest';
+import { renderTrackOutput } from './track-outputs';
+import trackStyles from './tracks.css?raw';
+import { sizeEditorMenu } from './zest';
 
-type RenameKeyEventT = KeyboardEvent & { currentTarget: HTMLInputElement };
-
-/** `<input type="color">` only takes #rrggbb. Track colors can be any CSS color. */
-const toHexColor = (color: string): string => {
-  const resolved = normalizeColor(color);
-  const channels = /rgba?\((\d+),(\d+),(\d+)/.exec(resolved);
-  if (!channels) return '#888888';
-  const hexParts = [channels[1], channels[2], channels[3]].map((channel) => Number(channel).toString(16).padStart(2, '0'));
-  return `#${hexParts.join('')}`;
-};
-
-type TrackColorGroupT = {
-  name: string;
-  shades: string[];
-};
-
-const LIGHTNESS_STEPS = [-0.12, 0, 0.12, 0.24];
-
-/** Same hue and chroma, lighter or darker. For tokens that are a single color, not a scale. */
-const buildShades = (token: string): string[] =>
-  LIGHTNESS_STEPS.map((step) => {
-    const isBase = step === 0;
-    if (isBase) return `var(${token})`;
-    const sign = step < 0 ? '-' : '+';
-    return `oklch(from var(${token}) calc(l ${sign} ${Math.abs(step)}) c h)`;
-  });
-
-/** Zest's own 0–9 scales: four steps from the middle. */
-const buildScaleShades = (scale: string): string[] => [3, 4, 5, 6].map((step) => `var(--color-${scale}-${step})`);
-
-/** Preset track colors, taken from the design system so they follow the theme. */
-const TRACK_COLOR_GROUPS: TrackColorGroupT[] = [
-  { name: 'Primary', shades: buildScaleShades('primary') },
-  { name: 'Secondary', shades: buildScaleShades('secondary') },
-  { name: 'Success', shades: buildShades('--success') },
-  { name: 'Warning', shades: buildShades('--warning') },
-  { name: 'Error', shades: buildShades('--destructive') },
+const TRACK_SWATCHES = [
+  { name: 'Violet', color: 'var(--accent-spark-1)' },
+  { name: 'Pink', color: 'var(--accent-spark-2)' },
+  { name: 'Amber', color: 'var(--accent-spark-3)' },
+  { name: 'Green', color: 'var(--accent-spark-4)' },
+  { name: 'Blue', color: 'var(--accent-spark-5)' },
 ];
 
-type PopoverElementT = HTMLElement & { isOpen: boolean };
+type TrackActionT = 'rename' | 'duplicate' | 'export' | 'chords' | 'delete';
 
-/**
- * The track list: one chip per track, with its color, name, mute, solo and remove.
- * Click a chip to edit that track. Double-click its name to rename it.
- */
+const navigateSwatches = (event: KeyboardEvent) => {
+  const isPrevious = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+  const isNext = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+  const shouldMove = isPrevious || isNext;
+  if (!shouldMove) return;
+  const field = event.currentTarget as HTMLDivElement;
+  const radios = Array.from(field.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+  const index = radios.findIndex((button) => button === event.target);
+  const offset = isPrevious ? -1 : 1;
+  const next = radios[(index + offset + radios.length) % radios.length];
+  if (!next) return;
+  event.preventDefault();
+  event.stopPropagation();
+  next.focus();
+  next.click();
+};
+
+const bindTrackMenu = (element?: Element) => {
+  if (!element) return;
+  const root = element.shadowRoot;
+  const trigger = element.querySelector('.track-menu');
+  if (!root || !trigger) {
+    requestAnimationFrame(() => {
+      if (element.isConnected) bindTrackMenu(element);
+    });
+    return;
+  }
+
+  root.addEventListener('toggle', (event) => {
+    const panel = event.target;
+    if (!(panel instanceof HTMLElement) || !panel.hasAttribute('popover')) return;
+    const isOpen = panel.matches(':popover-open');
+    trigger.setAttribute('aria-expanded', String(isOpen));
+    element.toggleAttribute('data-expanded', isOpen);
+  }, true);
+};
+
+const renderSwatches = (ed: Editor, track: TrackMetaT) => {
+  const currentColor = ed.getTrackColor(track.id);
+  const hasSelected = TRACK_SWATCHES.some((swatch) => swatch.color === currentColor);
+  const swatches = TRACK_SWATCHES.map((swatch, index) => {
+    const isSelected = currentColor === swatch.color;
+    const isTabStop = isSelected || (!hasSelected && index === 0);
+    const tabIndex = isTabStop ? 0 : -1;
+    const choose = () => ed.commands.setTrackColor(track.id, swatch.color);
+    const fill = `--swatch: ${swatch.color}`;
+
+    return html`<button type="button" class="swatch" role="radio"
+      aria-label=${swatch.name} aria-checked=${isSelected} tabindex=${tabIndex} style=${fill} @click=${choose}></button>`;
+  });
+
+  return html`<div>
+    <span class="track-control-label">Color</span>
+    <div class="swatches" role="radiogroup" aria-label="Track color" @keydown=${navigateSwatches}>${swatches}</div>
+  </div>`;
+};
+
+const renderTrackActions = (isLast: boolean, isChord: boolean) => {
+  const chords = isChord ? html`<z-menu-item value="chords">Show chords</z-menu-item>` : nothing;
+
+  return html`<z-menu-separator></z-menu-separator>
+    <z-menu-item value="rename" shortcut="Double-click">${icons.draw} Rename</z-menu-item>
+    <z-menu-item value="duplicate">${icons.duplicate} Duplicate</z-menu-item>
+    <z-menu-item value="export">${icons.download} Export MIDI…</z-menu-item>
+    ${chords}
+    <z-menu-separator></z-menu-separator>
+    <z-menu-item value="delete" is-danger ?is-disabled=${isLast}>${icons.trash} Delete track</z-menu-item>`;
+};
+
 @customElement('maddie-tracks')
 export class MaddieTracks extends MaddieElement {
-  static styles = [
-    tokens,
-    css`
-      :host {
-        display: flex;
-        align-items: center;
-        gap: var(--space-md);
-        padding: var(--space-sm) var(--space-md);
-        background: var(--_surface);
-        border-bottom: 1px solid var(--_border);
-        color: var(--_text);
-        font-size: var(--font-size-small);
-        overflow-x: auto;
-        scrollbar-width: thin;
-      }
-      .tabs {
-        display: contents;
-      }
-      .track {
-        display: flex;
-        flex: none;
-        align-items: center;
-        gap: var(--space-xs);
-        padding: 2px var(--space-xs) 2px var(--space-sm);
-        border: 1px solid var(--_border);
-        border-radius: var(--_radius-sm);
-        background: var(--_surface-2);
-        color: var(--_text-muted);
-        cursor: pointer;
-        user-select: none;
-        -webkit-user-select: none;
-        transition:
-          background-color var(--_motion-fast) var(--_ease),
-          border-color var(--_motion-fast) var(--_ease),
-          color var(--_motion-fast) var(--_ease);
-      }
-      .track:hover {
-        border-color: var(--_text-faint);
-      }
-      .track.isActive {
-        background: var(--_raised);
-        border-color: var(--_text-faint);
-        color: var(--_text);
-      }
-      .track.isMuted .track-name,
-      .track.isMuted .track-color {
-        opacity: 0.45;
-      }
-      .track-name {
-        max-width: 10rem;
-        padding: 0;
-        border: 0;
-        background: none;
-        color: inherit;
-        font: inherit;
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        cursor: pointer;
-      }
-      .track-name:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-        border-radius: var(--_radius-sm);
-      }
-      .rename-input {
-        width: 8rem;
-        padding: 0 var(--space-xs);
-        border: 1px solid var(--_accent);
-        border-radius: var(--_radius-sm);
-        background: var(--_bg);
-        color: var(--_text);
-        font: inherit;
-        font-weight: 500;
-        outline: none;
-      }
-      .track-color {
-        flex: none;
-        width: 0.75rem;
-        height: 0.75rem;
-        padding: 0;
-        border: 0;
-        border-radius: 50%;
-        background: var(--_track-color);
-        cursor: pointer;
-      }
-      .track-color:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-      }
-      .color-panel {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-sm);
-        color: var(--_text);
-      }
-      .color-swatches {
-        display: grid;
-        grid-template-columns: repeat(4, 1.5rem);
-        gap: var(--space-xs);
-      }
-      .swatch {
-        width: 1.5rem;
-        height: 1.5rem;
-        padding: 0;
-        border: 1px solid var(--_border);
-        border-radius: var(--_radius-sm);
-        background: var(--_swatch);
-        cursor: pointer;
-        transition: border-color var(--_motion-fast) var(--_ease);
-      }
-      .swatch:hover {
-        border-color: var(--_text);
-      }
-      .swatch:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-      }
-    `,
-  ];
+  static styles = [tokens, unsafeCSS(trackStyles)];
 
-  /** The track whose name is being edited. */
   @state() private renamingId: string | null = null;
+  @state() private hasOverflow = false;
+  // Bumped after a drag so the list is rebuilt from data, not from the nodes the sortable moved.
+  @state() private sortEpoch = 0;
+  private lastActiveId?: string;
+  private gainGestures = new WeakMap<HTMLInputElement, string>();
 
-  protected attach(editor: Editor, _engine: Engine) {
-    const update = () => this.requestUpdate();
-    this.track(editor.on('tracks', update));
+  protected attach(editor: Editor) {
+    this.track(editor.on('tracks', () => this.requestUpdate()));
+    this.track(OutputRouter.for(editor).onChange(() => this.requestUpdate()));
+    const resize = new ResizeObserver(this.updateOverflow);
+    resize.observe(this);
+    this.track(() => resize.disconnect());
   }
 
-  private activate(trackId: string) {
-    this.ed?.setActiveTrack(trackId);
+  private updateOverflow = () => {
+    const tabs = this.renderRoot.querySelector('.tabs');
+    if (!tabs) return;
+    this.hasOverflow = tabs.scrollLeft + tabs.clientWidth + 1 < tabs.scrollWidth;
+  };
+
+  protected updated() {
+    this.updateOverflow();
+    const activeId = this.ed?.activeTrackId;
+    const didChange = activeId !== this.lastActiveId;
+    if (!didChange) return;
+    this.lastActiveId = activeId;
+    this.renderRoot.querySelector('.isActive')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
-  private startRename(trackId: string) {
-    this.renamingId = trackId;
-    this.updateComplete.then(() => this.renderRoot.querySelector<HTMLInputElement>('.rename-input')?.select());
-  }
+  private startRename = (id: string) => {
+    this.renamingId = id;
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLInputElement>('.rename-input')?.select());
+  };
 
-  private finishRename(trackId: string, name: string) {
-    const isStillRenaming = this.renamingId === trackId;
-    if (!isStillRenaming) return;
+  private finishRename = (id: string, value?: string) => {
+    const isEditing = this.renamingId === id;
+    if (!isEditing) return;
     this.renamingId = null;
-    this.ed?.commands.renameTrack(trackId, name);
-  }
+    const shouldCommit = Boolean(value?.trim());
+    if (shouldCommit && value) this.ed?.commands.renameTrack(id, value);
+  };
 
-  private cancelRename() {
-    this.renamingId = null;
-  }
+  private renderName = (ed: Editor, track: TrackMetaT, name: string, isActive: boolean) => {
+    const isEditing = this.renamingId === track.id;
+    const activate = () => ed.setActiveTrack(track.id);
+    const rename = () => this.startRename(track.id);
+    const onKey = (event: KeyboardEvent) => {
+      const isRename = event.key === 'F2';
+      if (isRename) rename();
+    };
+    const tabIndex = isActive ? 0 : -1;
+    // Select on pointerdown: the sortable captures the pointer, which can swallow the click.
+    if (!isEditing) return html`<button type="button" class="track-name" role="tab" title=${name} data-track-id=${track.id}
+      tabindex=${tabIndex} aria-selected=${isActive} @pointerdown=${activate} @click=${activate} @keydown=${onKey}>${name}</button>`;
 
-  private handleRenameKey(event: RenameKeyEventT, trackId: string) {
+    const commit = (event: Event) => this.finishRename(track.id, (event.currentTarget as HTMLInputElement).value);
+    const onEditKey = (event: KeyboardEvent) => {
+      const shouldCancel = event.key === 'Escape';
+      const shouldCommit = event.key === 'Enter';
+      const shouldFinish = shouldCancel || shouldCommit;
+      if (!shouldFinish) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const element = (event.currentTarget as HTMLElement).closest('.track');
+      if (shouldCancel) this.finishRename(track.id);
+      if (shouldCommit) commit(event);
+      void this.updateComplete.then(() => element?.querySelector<HTMLElement>('.track-name')?.focus());
+    };
+
+    return html`<input class="rename-input" aria-label="Track name"
+      .value=${name} @blur=${commit} @keydown=${onEditKey}>`;
+  };
+
+  // A menu closes on any pointerdown outside it. The tab strip stops those for its own buttons,
+  // so replay one from this element, which sits outside every menu.
+  private closeOpenMenus = () => {
+    this.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, button: 0 }));
+  };
+
+  private openMenu = (event: MouseEvent) => {
     event.stopPropagation();
-    if (event.key === 'Enter') this.finishRename(trackId, event.currentTarget.value);
-    if (event.key === 'Escape') this.cancelRename();
+    const trigger = event.currentTarget as HTMLButtonElement;
+    const tab = trigger.closest('.track');
+    if (!tab) return;
+    const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+    this.closeOpenMenus();
+    if (wasOpen) return;
+    const bounds = tab.getBoundingClientRect();
+
+    // Anchor the context menu to the tab for the explicit trigger.
+    tab.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      clientX: bounds.left,
+      clientY: bounds.bottom + 6,
+      detail: -1,
+    }));
+  };
+
+  private renderGain(ed: Editor, trackId: string, name: string) {
+    const percent = Math.round(ed.getTrackGain(trackId) * 100);
+    const start = (event: PointerEvent) => {
+      const slider = event.currentTarget as HTMLInputElement;
+      this.gainGestures.set(slider, createId());
+    };
+    const end = (event: Event) => this.gainGestures.delete(event.currentTarget as HTMLInputElement);
+    const change = (event: Event) => {
+      const slider = event.currentTarget as HTMLInputElement;
+      ed.commands.setTrackGain(trackId, slider.valueAsNumber / 100, { gestureId: this.gainGestures.get(slider) });
+      this.requestUpdate();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      end(event);
+      if (event.key !== 'Escape' && event.key !== 'Tab' && !event.ctrlKey && !event.metaKey) event.stopPropagation();
+    };
+    return html`<label class="track-gain">
+      <span class="track-control-label">Gain</span>
+      <span class="gain-value" aria-hidden="true">${percent}%</span>
+      <input type="range" min="0" max="100" step="1" .value=${live(String(percent))}
+        aria-label=${name + ' gain'} aria-valuetext=${percent + '%'}
+        @pointerdown=${start} @pointercancel=${end} @change=${end} @input=${change} @keydown=${onKey}>
+    </label>`;
   }
 
-  private renderName(track: TrackMetaT, index: number) {
+  private renderTrack = (ed: Editor, track: TrackMetaT, index: number) => {
+    const isActive = ed.activeTrackId === track.id;
+    const isSilent = !ed.isTrackAudible(track.id);
+    const isChord = Boolean(track.chordRegions);
+    const isLast = ed.trackIds.length === 1;
     const name = getTrackName(track, index);
-    const isRenaming = this.renamingId === track.id;
-    if (!isRenaming) {
-      return html`<button
-        type="button"
-        class="track-name"
-        role="tab"
-        aria-selected=${track.id === this.ed?.activeTrackId}
-        title="Double-click to rename"
-        @click=${() => this.activate(track.id)}
-        @dblclick=${() => this.startRename(track.id)}
-        @keydown=${(event: KeyboardEvent) => event.key === 'F2' && this.startRename(track.id)}
-      >
-        ${name}
-      </button>`;
-    }
-    return html`<input
-      class="rename-input"
-      aria-label="Track name"
-      .value=${name}
-      @click=${(event: Event) => event.stopPropagation()}
-      @keydown=${(event: RenameKeyEventT) => this.handleRenameKey(event, track.id)}
-      @blur=${(event: FocusEvent) => this.finishRename(track.id, (event.currentTarget as HTMLInputElement).value)}
-    />`;
-  }
+    const colors = renderSwatches(ed, track);
+    const actions = renderTrackActions(isLast, isChord);
+    const nameControl = this.renderName(ed, track, name, isActive);
+    const fill = `--track-color: ${ed.getTrackColor(track.id)}`;
+    const classes = classMap({ track: true, isActive, isSilent, isChord });
+    const menuLabel = name + ' options';
+    const muteLabel = 'Mute ' + name;
+    const soloLabel = 'Solo ' + name;
+    const mute = () => ed.commands.setTrackMuted(track.id, !track.muted);
+    const isImplied = isSilent && !track.muted;
+    const muteTip = isImplied ? 'Silenced by solo' : muteLabel;
+    const soloTip = soloLabel + '  ·  ' + modKeyLabel + '-click to add';
+    const muteClasses = classMap({ 'track-toggle': true, mute: true, isImplied });
+    const solo = (event: MouseEvent) => {
+      const isAdditive = event.ctrlKey || event.metaKey;
+      ed.commands.soloTrack(track.id, isAdditive);
+    };
+    const activateOnContext = (event: MouseEvent) => {
+      const isContextClick = event.detail !== -1;
+      if (!isContextClick) return;
+      ed.setActiveTrack(track.id);
+      // Close other menus from outside the sortable strip. A synthetic pointerdown on the
+      // tab itself starts a sort drag that never ends, so the tab follows the mouse.
+      this.closeOpenMenus();
+    };
+    const selectAction = (event: CustomEvent<{ value: TrackActionT }>) => {
+      const action = event.detail.value;
+      if (action === 'rename') this.startRename(track.id);
+      if (action === 'duplicate') ed.commands.duplicateTrack(track.id);
+      if (action === 'delete') {
+        const wasActive = ed.activeTrackId === track.id;
+        const didRemove = ed.commands.removeTrack(track.id);
+        if (wasActive && didRemove) ed.setActiveTrack(ed.trackIds[0]);
+      }
+      if (action === 'chords') {
+        ed.setActiveTrack(track.id);
+        ed.setView({ chordsPanel: true });
+      }
+      if (action === 'export') {
+        const stem = name.replace(/\.midi?$/i, '').replace(/[<>:"/\\|?*]/g, '_').replace(/[. ]+$/, '') || 'Track';
+        requestMidiExport(ed.doc, stem + '.mid', this, { tracks: [track.id] });
+      }
+    };
 
-  private pickColor(trackId: string, event: Event) {
-    const swatch = event.currentTarget as HTMLElement;
-    const resolvedColor = getComputedStyle(swatch).backgroundColor;
-    const hexColor = toHexColor(resolvedColor);
-    this.ed?.commands.setTrackColor(trackId, hexColor);
-    const popover = swatch.closest('z-popover') as PopoverElementT | null;
-    if (popover) popover.isOpen = false;
-  }
-
-  private renderSwatch(trackId: string, groupName: string, shade: string, shadeIndex: number) {
-    const label = `${groupName} ${shadeIndex + 1}`;
-    return html`<button
-      type="button"
-      class="swatch"
-      style="--_swatch: ${shade}"
-      title=${label}
-      aria-label=${label}
-      @click=${(event: Event) => this.pickColor(trackId, event)}
-    ></button>`;
-  }
-
-  private renderColorGroup(trackId: string, group: TrackColorGroupT) {
-    return group.shades.map((shade, shadeIndex) => this.renderSwatch(trackId, group.name, shade, shadeIndex));
-  }
-
-  private renderColor(track: TrackMetaT) {
-    const color = this.ed!.getTrackColor(track.id);
-    const swatches = TRACK_COLOR_GROUPS.map((group) => this.renderColorGroup(track.id, group));
-    return html`<z-popover placement="bottom-start" label="Track color" @click=${(event: Event) => event.stopPropagation()}>
-      <button slot="trigger" type="button" class="track-color" style="--_track-color: ${color}" title="Track color" aria-label="Track color"></button>
-      <div class="color-panel">
-        <div class="color-swatches">${swatches}</div>
+    // The sortable measures its direct children; z-context-menu has no box, so each tab gets a real one.
+    return html`<div class="tab-slot" style=${fill}><z-context-menu ${ref(bindTrackMenu)} style=${fill} @select=${selectAction}>
+      <div class=${classes} @contextmenu=${activateOnContext}>
+        <div class="lead">
+          <span class="track-dot" aria-hidden="true"></span>
+          <button class="track-menu" type="button" aria-label=${menuLabel} aria-haspopup="menu" aria-expanded="false"
+            @click=${this.openMenu}>${icons.more}</button>
+        </div>
+        ${nameControl}
+        <div class="track-toggles">
+          <z-tooltip content=${muteTip} placement="bottom">
+            <button type="button" class=${muteClasses} aria-label=${muteLabel} aria-pressed=${Boolean(track.muted)} @click=${mute}>M</button>
+          </z-tooltip>
+          <z-tooltip content=${soloTip} placement="bottom">
+            <button type="button" class="track-toggle solo" aria-label=${soloLabel} aria-pressed=${Boolean(track.solo)} @click=${solo}>S</button>
+          </z-tooltip>
+        </div>
       </div>
-    </z-popover>`;
-  }
+      <div slot="controls" class="track-options">
+        ${colors}
+        ${this.renderGain(ed, track.id, name)}
+        ${renderTrackOutput(ed, OutputRouter.for(ed), track, index)}
+      </div>
+      ${actions}
+    </z-context-menu></div>`;
+  };
 
-  private renderToggle(label: string, text: string, isOn: boolean, tone: string, onToggle: (isOn: boolean) => void) {
-    // Off looks neutral; the accent colour means "on".
-    const shownTone = isOn ? tone : 'neutral';
-    return html`<z-tooltip content=${label} placement="bottom">
-      <z-toggle-button
-        kind="ghost"
-        size="sm"
-        tone=${shownTone}
-        aria-label=${label}
-        .isPressed=${isOn}
-        @click=${(event: Event) => event.stopPropagation()}
-        @press=${(event: CustomEvent<{ pressed: boolean }>) => onToggle(event.detail.pressed)}
-        >${text}</z-toggle-button
-      >
-    </z-tooltip>`;
-  }
+  // Buttons and fields keep their own clicks; only the tab body starts a drag.
+  private guardSortPointer = (event: PointerEvent) => {
+    const isPrimary = event.button === 0;
+    const path = event.composedPath();
+    const isControl = path.some((item) => item instanceof HTMLElement && item.matches('.track-toggle, .track-menu, .rename-input'));
+    const shouldIgnore = !isPrimary || isControl;
+    const isMenuTrigger = path.some((item) => item instanceof HTMLElement && item.matches('.track-menu'));
+    const isOtherControl = isControl && !isMenuTrigger;
+    if (isOtherControl) this.closeOpenMenus();
+    if (shouldIgnore) event.stopPropagation();
+  };
 
-  private renderRemove(track: TrackMetaT) {
-    const canRemove = this.ed!.trackIds.length > 1;
-    if (!canRemove) return nothing;
-    return html`<z-tooltip content="Remove track" placement="bottom">
-      <z-button
-        class="icon"
-        kind="ghost"
-        size="sm"
-        aria-label="Remove track"
-        @click=${(event: Event) => {
-          event.stopPropagation();
-          this.ed?.commands.removeTrack(track.id);
-        }}
-        >${icons.close}</z-button
-      >
-    </z-tooltip>`;
-  }
+  // The sortable captures the pointer, so a double-click lands on it; find the tab under the cursor.
+  private renameTabAtPointer = (event: MouseEvent) => {
+    const hits = this.shadowRoot?.elementsFromPoint(event.clientX, event.clientY) ?? [];
+    const nameButton = hits.find((item) => item.matches('.track-name[data-track-id]'));
+    const trackId = nameButton?.getAttribute('data-track-id');
+    if (trackId) this.startRename(trackId);
+  };
 
-  private renderTrack(track: TrackMetaT, index: number) {
-    const ed = this.ed!;
-    const isActive = track.id === ed.activeTrackId;
-    const classes = ['track', isActive ? 'isActive' : '', track.muted ? 'isMuted' : ''].filter(Boolean).join(' ');
-    return html`<div class=${classes} @click=${() => this.activate(track.id)}>
-      ${this.renderColor(track)} ${this.renderName(track, index)}
-      ${this.renderToggle('Mute', 'M', !!track.muted, 'secondary', (isOn) => ed.commands.setTrackMuted(track.id, isOn))}
-      ${this.renderToggle('Solo', 'S', !!track.solo, 'primary', (isOn) => ed.commands.setTrackSolo(track.id, isOn))}
-      ${this.renderRemove(track)}
-    </div>`;
-  }
+  private sortTracks = (event: CustomEvent<{ oldIndex: number; newIndex: number }>) => {
+    event.stopPropagation();
+    const ed = this.ed;
+    if (!ed) return;
+    const movedId = ed.trackIds[event.detail.oldIndex];
+    if (movedId) ed.commands.moveTrack(movedId, event.detail.newIndex);
+    this.sortEpoch += 1;
+  };
 
-  protected render() {
+  private moveTab = (event: KeyboardEvent) => {
+    const target = event.composedPath()[0];
+    const isTab = target instanceof HTMLElement && target.getAttribute('role') === 'tab';
+    if (!isTab) return;
+    const isNext = event.key === 'ArrowRight';
+    const isPrevious = event.key === 'ArrowLeft';
+    const shouldMove = isNext || isPrevious;
+    if (!shouldMove) return;
+    const tabs = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const index = tabs.findIndex((tab) => tab === target);
+    const offset = isNext ? 1 : -1;
+    const next = tabs[(index + offset + tabs.length) % tabs.length];
+    if (!next) return;
+    event.preventDefault();
+    next.click();
+    next.focus();
+  };
+
+  render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
-    const tracks = ed.trackList;
-    return html`<div class="tabs" role="tablist">
-        ${tracks.map((track, index) => this.renderTrack(track, index))}
-      </div>
-      <z-tooltip content="Add track" placement="bottom">
-        <z-button class="icon add" kind="ghost" size="sm" aria-label="Add track" @click=${() => ed.commands.addTrack()}>${icons.plus}</z-button>
-      </z-tooltip>`;
-  }
+    const addTrack = (event: CustomEvent<{ value: string }>) => {
+      const isChord = event.detail.value === 'chords';
+      ed.commands.addTrack({ chords: isChord });
+      if (isChord) ed.setView({ chordsPanel: true, chordsTab: 'all' });
+    };
+    const tracks = repeat(ed.trackList, (track) => track.id, (track, index) => this.renderTrack(ed, track, index));
+
+    // TODO(design): Consider a side list for larger sessions.
+    const guardOptions = { handleEvent: this.guardSortPointer, capture: true };
+    const sortable = html`<z-sortable is-horizontal handle=".track"
+      @pointerdown=${guardOptions} @sort=${this.sortTracks}>${tracks}</z-sortable>`;
+    return html`<div class="tabs" role="tablist" aria-label="Tracks"
+      @keydown=${this.moveTab} @scroll=${this.updateOverflow} @dblclick=${this.renameTabAtPointer}>
+      ${keyed(this.sortEpoch, sortable)}
+    </div>
+    <div class="add-track" ?data-overflow=${this.hasOverflow}>
+      <z-menu ${ref(sizeEditorMenu)} align="start" @select=${addTrack}>
+        <z-tooltip slot="trigger" content="Add track" placement="bottom">
+          <z-button kind="ghost" size="sm" is-icon aria-label="Add track">${icons.plus}</z-button>
+        </z-tooltip>
+        <z-menu-item value="midi">${icons.piano} MIDI track</z-menu-item>
+        <z-menu-item value="chords">${icons.chordTrack} Chord track</z-menu-item>
+      </z-menu>
+    </div>`;
+  };
 }
 
 declare global {

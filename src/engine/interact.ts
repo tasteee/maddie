@@ -52,6 +52,8 @@ export function handleWheel(editor: Editor, e: WheelEvent, x: number, y: number,
   const next: { scrollTick?: number; scrollRow?: number } = {};
   if (horizontal && dx) next.scrollTick = clamp(v.scrollTick + dx / v.pxPerTick, 0, maxScrollTick(editor));
   if (vertical && dy) next.scrollRow = clampScrollRow(editor, (v.scrollRow ?? 0) + dy / v.rowHeight);
+  const didScroll = (horizontal && dx !== 0) || (vertical && dy !== 0);
+  if (didScroll) Engine.for(editor).pauseFollow();
   editor.setView(next);
 }
 

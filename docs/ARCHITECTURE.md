@@ -575,7 +575,7 @@ Token groups:
 - **Space:** `row-height` (default), `keyboard-width`, `ruler-height`, `lane-height`
 - **Motion:** `motion-fast`, `motion-medium`, `motion-slow`, `ease-out`, `ease-spring`
 
-Every token resolves to a Zest semantic token from `@tasteee/zest/ink.css`, so Maddie follows Zest's four themes (`dark`, `light`, `console`, `studio`). Set `data-theme` on `<html>` (Zest's `<z-theme-switcher>` does this) or `theme="studio"` on one editor. Uses `oklch` for perceptually even velocity shading.
+Maddie's palette uses semantic tokens from `@tasteee/zest/ink.css`. Set `data-theme` to `dark` or `light` on `<html>` (the Zest theme switcher does this) or use `theme="light"` on one editor. Velocity shading uses `oklch`.
 
 | Maddie role | Zest token |
 | --- | --- |
@@ -802,3 +802,8 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 | Built-in sound | **None.** We dispatch note events via `Output`. Demo uses smplr Splendid Grand Piano. |
 | Platform priority | **Desktop first.** Touch later. |
 | Package / tags | **`@tasteee/maddie`**, tags `maddie-*` (prefix configurable). |
+| Overlapping notes | **Never.** Two notes on the same pitch in a MIDI track never share time. The notes an edit adds or changes keep their full size; the notes they run into are trimmed or removed (`Editor.resolveOverlaps`, inside the same transaction, so one undo). Chord regions never overlap either. |
+| Chords panel vs. selection bar | **The panel makes new chords; the selection bar changes placed ones.** The crafting card's settings only shape the next chord you drag in. A selected chord is edited in the selection bar (Octave, Inversion, Voicing, Pattern). "Use in panel" copies a chord's settings into the card, on purpose. |
+| Chord suggestions | Follow **only the editor selection** (a chord-track chord, or MIDI notes that name a chord), never a click in the panel. In key first, then Borrowed (rose: tertiary means "outside the key" and nothing else). |
+| Dropping a chord | Empty space: 1 bar, or fitted to end where the next chord starts. A chord's body: replace it. A seam between touching chords: insert and slide later chords right. Alt only skips snapping. |
+| Themes inside shadow roots | Zest's `[data-theme]` rules live in a document stylesheet, so a region inside a shadow root loads Zest's tokens itself (`themeRegion` in `tokens.ts`). The crafting card is inverted; toasts are inverted. |

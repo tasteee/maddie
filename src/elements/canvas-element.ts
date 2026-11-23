@@ -103,6 +103,7 @@ export abstract class CanvasElement extends MaddieElement {
         hueHigh: num('pitch-hue-high', 15),
       };
       p.pitchCache = new Map();
+      p.trackTokens = getComputedStyle(this);
       this.palette = p;
     }
     return this.palette!;

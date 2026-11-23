@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,17 +12,28 @@
         try {
           stored = localStorage.getItem('zest-theme-preference');
         } catch {}
-        const system = !stored || stored === 'system';
-        const theme = system ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : stored;
+        const isSystemDark = matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored === 'dark' || stored === 'light'
+          ? stored
+          : stored === 'system' && isSystemDark
+            ? 'dark'
+            : 'light';
         document.documentElement.setAttribute('data-theme', theme);
       })();
     </script>
     <link rel="stylesheet" href="./src/app/style.css" />
   </head>
   <body>
-    <maddie-editor global-shortcuts grid="1/16" scale="C minor" tempo="124" fold="scale">
-      <z-theme-switcher slot="toolbar-end" kind="icon" size="sm"></z-theme-switcher>
+    <maddie-editor class="editor-shell" data-zest-scope global-shortcuts>
+      <maddie-project-menu slot="toolbar-start"></maddie-project-menu>
     </maddie-editor>
+    <aside id="instrument-loading" class="instrument-loading" hidden>
+      <div class="instrument-loading-heading">
+        <strong id="instrument-loading-label" role="status"></strong>
+        <span id="instrument-loading-percent" aria-hidden="true"></span>
+      </div>
+      <progress aria-labelledby="instrument-loading-label"></progress>
+    </aside>
     <script type="module" src="./src/app/main.ts"></script>
   </body>
 </html>

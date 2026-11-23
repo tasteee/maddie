@@ -6,7 +6,9 @@ export interface ScaleDef {
   intervals: readonly number[];
 }
 
-export const SCALES: Record<ScaleId, ScaleDef> = {
+type EditorScaleAliasT = 'harmonic' | 'melodic' | 'major-pentatonic' | 'pentatonic';
+
+const definitions: Record<Exclude<ScaleId, EditorScaleAliasT>, ScaleDef> = {
   major: { name: 'Major', intervals: [0, 2, 4, 5, 7, 9, 11] },
   minor: { name: 'Minor', intervals: [0, 2, 3, 5, 7, 8, 10] },
   dorian: { name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
@@ -17,10 +19,95 @@ export const SCALES: Record<ScaleId, ScaleDef> = {
   harmonicMinor: { name: 'Harmonic Minor', intervals: [0, 2, 3, 5, 7, 8, 11] },
   melodicMinor: { name: 'Melodic Minor', intervals: [0, 2, 3, 5, 7, 9, 11] },
   majorPentatonic: { name: 'Major Pentatonic', intervals: [0, 2, 4, 7, 9] },
-  minorPentatonic: { name: 'Minor Pentatonic', intervals: [0, 3, 5, 7, 10] },
+  minorPentatonic: { name: 'Minor pentatonic', intervals: [0, 3, 5, 7, 10] },
   blues: { name: 'Blues', intervals: [0, 3, 5, 6, 7, 10] },
+  "major-blues": { name: "Major blues", intervals: [0, 2, 3, 4, 7, 9] },
+  "whole-tone": { name: "Whole tone", intervals: [0, 2, 4, 6, 8, 10] },
+  "diminished": { name: "Diminished", intervals: [0, 2, 3, 5, 6, 8, 9, 11] },
+  "augmented": { name: "Augmented", intervals: [0, 3, 4, 7, 8, 11] },
+  "hungarian-minor": { name: "Hungarian minor", intervals: [0, 2, 3, 6, 7, 8, 11] },
+  "gypsy": { name: "Gypsy", intervals: [0, 2, 3, 6, 7, 8, 10] },
+  "phrygian-dominant": { name: "Phrygian dominant", intervals: [0, 1, 4, 5, 7, 8, 10] },
+  "double-harmonic": { name: "Double harmonic", intervals: [0, 1, 4, 5, 7, 8, 11] },
+  "persian": { name: "Persian", intervals: [0, 1, 4, 5, 6, 8, 11] },
+  "arabic": { name: "Arabic", intervals: [0, 2, 4, 5, 6, 8, 10] },
+  "egyptian": { name: "Egyptian", intervals: [0, 2, 5, 7, 10] },
+  "hirajoshi": { name: "Hirajoshi", intervals: [0, 2, 3, 7, 8] },
+  "in-sen": { name: "In sen", intervals: [0, 1, 5, 7, 10] },
+  "iwato": { name: "Iwato", intervals: [0, 1, 5, 6, 10] },
+  "pelog": { name: "Pelog", intervals: [0, 1, 3, 7, 8] },
+  "balinese": { name: "Balinese", intervals: [0, 1, 3, 7, 8] },
+  "chinese": { name: "Chinese", intervals: [0, 4, 6, 7, 11] },
+  "lydian-dominant": { name: "Lydian dominant", intervals: [0, 2, 4, 6, 7, 9, 10] },
+  "super-locrian": { name: "Super locrian", intervals: [0, 1, 3, 4, 6, 8, 10] },
+  "dorian-sharp-four": { name: "Dorian ♯4", intervals: [0, 2, 3, 6, 7, 9, 10] },
+  "neapolitan-minor": { name: "Neapolitan minor", intervals: [0, 1, 3, 5, 7, 8, 11] },
+  "neapolitan-major": { name: "Neapolitan major", intervals: [0, 1, 3, 5, 7, 9, 11] },
+  "enigmatic": { name: "Enigmatic", intervals: [0, 1, 4, 6, 8, 10, 11] },
+  "prometheus": { name: "Prometheus", intervals: [0, 2, 4, 6, 9, 10] },
+  "bebop-major": { name: "Bebop major", intervals: [0, 2, 4, 5, 7, 8, 9, 11] },
+  "bebop-dominant": { name: "Bebop dominant", intervals: [0, 2, 4, 5, 7, 9, 10, 11] },
   chromatic: { name: 'Chromatic', intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
 };
+
+const EDITOR_SCALE_ALIASES: Record<EditorScaleAliasT, ScaleId> = {
+  harmonic: 'harmonicMinor',
+  melodic: 'melodicMinor',
+  'major-pentatonic': 'majorPentatonic',
+  pentatonic: 'minorPentatonic',
+};
+
+export const SCALES: Record<ScaleId, ScaleDef> = {
+  ...definitions,
+  harmonic: { ...definitions.harmonicMinor, name: 'Harmonic minor' },
+  melodic: { ...definitions.melodicMinor, name: 'Melodic minor' },
+  'major-pentatonic': { ...definitions.majorPentatonic, name: 'Major pentatonic' },
+  pentatonic: definitions.minorPentatonic,
+};
+
+export const getEditorScaleId = (id: ScaleId): ScaleId =>
+  (Object.keys(EDITOR_SCALE_ALIASES) as EditorScaleAliasT[]).find((alias) => EDITOR_SCALE_ALIASES[alias] === id) ?? id;
+
+export const EDITOR_SCALE_IDS = [
+  "major",
+  "minor",
+  "dorian",
+  "phrygian",
+  "lydian",
+  "mixolydian",
+  'harmonic',
+  'pentatonic',
+  "locrian",
+  'melodic',
+  'major-pentatonic',
+  "blues",
+  "major-blues",
+  "whole-tone",
+  "diminished",
+  "augmented",
+  "hungarian-minor",
+  "gypsy",
+  "phrygian-dominant",
+  "double-harmonic",
+  "persian",
+  "arabic",
+  "egyptian",
+  "hirajoshi",
+  "in-sen",
+  "iwato",
+  "pelog",
+  "balinese",
+  "chinese",
+  "lydian-dominant",
+  "super-locrian",
+  "dorian-sharp-four",
+  "neapolitan-minor",
+  "neapolitan-major",
+  "enigmatic",
+  "prometheus",
+  "bebop-major",
+  "bebop-dominant",
+] as const satisfies readonly ScaleId[];
 
 export const SCALE_IDS = Object.keys(SCALES) as ScaleId[];
 
@@ -33,6 +120,8 @@ const ALIASES: Record<string, ScaleId> = {
   harmonicminor: 'harmonicMinor',
   melodicminor: 'melodicMinor',
   majorpentatonic: 'majorPentatonic',
+  harmonic: 'harmonicMinor',
+  melodic: 'melodicMinor',
   minorpentatonic: 'minorPentatonic',
   pentatonic: 'majorPentatonic',
 };
@@ -45,7 +134,7 @@ export function parseKey(input: string | null | undefined): Key | null {
   const root = parsePitchClass(m[1]);
   if (root === null) return null;
   const raw = (m[2] || 'major').replace(/[\s_-]/g, '').toLowerCase();
-  const scale = (SCALE_IDS.find((id) => id.toLowerCase() === raw) ?? ALIASES[raw]) as ScaleId | undefined;
+  const scale = (ALIASES[raw] ?? SCALE_IDS.find((id) => id.replaceAll('-', '').toLowerCase() === raw)) as ScaleId | undefined;
   return scale ? { root, scale } : null;
 }
 

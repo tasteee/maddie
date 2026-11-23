@@ -45,6 +45,34 @@ describe('track api', () => {
     expect(editor.notes(secondId).map((n) => n.pitch)).toEqual([36]);
   });
 
+  it('duplicates a chord track in place with new identities and one undo step', () => {
+    const region = {
+      id: 'chord', symbol: 'C', root: 0, intervals: [0, 4, 7], pitches: [60, 64, 67],
+      start: 0, duration: PPQ / 2, velocity: 0.8,
+    };
+    const editor = createEditor({
+      doc: {
+        tracks: [
+          { id: 'source', name: 'Chords', muted: true, solo: true, chordRegions: [region],
+            notes: [{ ...note(60), id: 'source-note', chordRegionId: region.id }] },
+          { id: 'bass', name: 'Bass', notes: [] },
+        ],
+      },
+    });
+    const copy = editor.commands.duplicateTrack('source')!;
+    expect(editor.trackIds).toEqual(['source', copy.id, 'bass']);
+    expect(editor.activeTrackId).toBe(copy.id);
+    expect(copy).toMatchObject({ name: 'Chords copy', muted: true, solo: false });
+    expect(copy.color).toBe(editor.getTrackColor('source'));
+    expect(copy.chordRegions?.[0].id).not.toBe(region.id);
+    expect(copy.notes[0].id).not.toBe('source-note');
+    expect(copy.notes[0].chordRegionId).toBe(copy.chordRegions?.[0].id);
+    editor.undo();
+    expect(editor.trackIds).toEqual(['source', 'bass']);
+    editor.redo();
+    expect(editor.notes(copy.id)).toEqual(copy.notes);
+  });
+
   it('keeps the last track', () => {
     const editor = createEditor();
     expect(editor.commands.removeTrack(editor.trackIds[0])).toBe(false);
@@ -179,6 +207,38 @@ describe('reading across tracks', () => {
     expect(played.sort()).toEqual([48, 60]);
     vi.useRealTimers();
   });
+
+  it('applies independent gain during playback without editing note velocity', async () => {
+    vi.useFakeTimers();
+    try {
+      const audioContext = { currentTime: 1, state: 'running', outputLatency: 0 } as AudioContext;
+      const noteOn = vi.fn();
+      const noteOff = vi.fn();
+      const editor = createEditor({ audioContext, output: { noteOn, noteOff, allNotesOff: () => {} } });
+      editor.transport.setMetronome({ enabled: false });
+      const lead = editor.activeTrackId;
+      editor.commands.add([note(60)]);
+      const bass = editor.commands.addTrack({ notes: [note(48)] });
+      const silent = editor.commands.addTrack({ notes: [note(72)] });
+      editor.setVolume({ level: 0.5 });
+      editor.commands.setTrackGain(bass.id, 0.5, { gestureId: 'bass gain' });
+      editor.commands.setTrackGain(bass.id, 0.25, { gestureId: 'bass gain' });
+      editor.undo();
+      expect(editor.getTrackGain(bass.id)).toBe(1);
+      editor.redo();
+      editor.commands.setTrackGain(silent.id, 0);
+
+      await editor.transport.play();
+      editor.transport.stop();
+
+      expect(noteOn.mock.calls.map(([event]) => [event.pitch, event.velocity])).toEqual([[60, 0.4], [48, 0.1]]);
+      expect(noteOff.mock.calls.map(([event]) => event.pitch)).toEqual([60, 48]);
+      expect(editor.notes(lead)[0].velocity).toBe(0.8);
+      expect(editor.notes(bass.id)[0].velocity).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('document sync', () => {
@@ -244,6 +304,30 @@ describe('midi import into tracks', () => {
     editor.commands.importMidi(buildSource(), { replace: false });
     expect(editor.trackIds).toHaveLength(3);
     expect(editor.notes(editor.trackIds[0]).map((n) => n.pitch)).toEqual([90]);
+  });
+
+  it('appends named MIDI files in one undo step, with one color per source file', () => {
+    const editor = createEditor({ doc: { tempo: [{ tick: 0, bpm: 108 }] } });
+    editor.commands.add([note(90)]);
+    const original = editor.doc;
+    const single = createEditor();
+    single.commands.add([note(72)]);
+
+    const added = editor.commands.appendMidiFiles([
+      { name: 'Arrangement.MIDI', midi: fromMidiFile(buildSource()) },
+      { name: 'Fill.mid', midi: fromMidiFile(toMidiFile(single.doc)) },
+    ]);
+
+    expect(editor.trackList.slice(1).map((track) => track.name)).toEqual(['Arrangement — Melody', 'Arrangement — Bass', 'Fill']);
+    expect(added.map((track) => track.notes.map((n) => n.pitch))).toEqual([[60, 64], [36], [72]]);
+    expect(added[0].color).toBe(added[1].color);
+    expect(new Set([editor.getTrackColor(original.tracks[0].id), added[0].color, added[2].color]).size).toBe(3);
+    expect(editor.activeTrackId).toBe(added[0].id);
+    expect(editor.meta.tempo[0].bpm).toBe(108);
+    editor.undo();
+    expect(editor.doc).toEqual(original);
+    editor.redo();
+    expect(editor.trackIds.slice(1)).toEqual(added.map((track) => track.id));
   });
 
   it('merges into the active track on request', () => {

@@ -1,0 +1,87 @@
+:host {
+  display: block;
+  height: 520px;
+  min-height: 320px;
+  container-type: inline-size;
+}
+.frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  box-sizing: border-box;
+}
+.grid {
+  --_chords-size: var(--maddie-chords-width, min(420px, 46cqw));
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--_keyboard-width) minmax(0, 1fr) auto;
+  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-height);
+  grid-template-areas:
+    'corner ruler chords'
+    'keys roll chords'
+    'label lane chords';
+}
+.corner {
+  grid-area: corner;
+  background: var(--_surface);
+  border-right: 1px solid var(--_border);
+  border-bottom: 1px solid var(--_border);
+}
+maddie-ruler {
+  grid-area: ruler;
+}
+maddie-keyboard {
+  grid-area: keys;
+  width: auto;
+}
+maddie-piano-roll {
+  grid-area: roll;
+  min-height: 0;
+}
+maddie-zoom {
+  grid-area: roll;
+  align-self: end;
+  justify-self: end;
+  z-index: 2;
+  margin: var(--space-2);
+}
+/* Toasts: one fixed spot, top-center of the grid, in the inverted theme
+   (see styleEditorToast), so they stand out in a busy grid. */
+z-toaster {
+  position: relative;
+  grid-area: roll;
+  justify-self: center;
+  align-self: start;
+  top: auto;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  margin-top: 16px;
+  height: 0;
+  justify-content: start;
+  align-items: center;
+}
+.label {
+  grid-area: label;
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-2) 0;
+  background: var(--_surface);
+  border-top: 1px solid var(--_border);
+  border-right: 1px solid var(--_border);
+  color: var(--_text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+maddie-velocity-lane {
+  grid-area: lane;
+}
+maddie-chords {
+  grid-area: chords;
+}

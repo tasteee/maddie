@@ -24,7 +24,7 @@ export type CaptureT = {
 	/** Throw away everything heard so far. */
 	clear: () => void
 	/** Turn what was played into notes at the marker. One undo step. Returns the new note ids. */
-	commit: () => NoteId[]
+	commit: (at?: number) => NoteId[]
 }
 
 /**
@@ -74,14 +74,14 @@ export const createCapture = (editor: Editor, now: () => number = () => performa
 		if (hadNotes) notify()
 	}
 
-	const commit = (): NoteId[] => {
+	const commit = (at = editor.transport.marker): NoteId[] => {
 		const hasNothing = heard.length === 0
-		if (hasNothing) return []
+		if (hasNothing || editor.chordRegions) return []
 
 		const capturedAtMs = now()
 		const firstPressedAtMs = heard[0].pressedAtMs
 		const { tempo, ppq } = editor.meta
-		const markerTick = editor.transport.marker
+		const markerTick = at
 		const markerSeconds = ticksToSeconds(markerTick, tempo, ppq)
 
 		const toTick = (timeMs: number) => {
@@ -97,7 +97,9 @@ export const createCapture = (editor: Editor, now: () => number = () => performa
 		})
 
 		editor.transact('Capture MIDI', (tx) => newNotes.forEach((note) => tx.add(note)))
-		const newIds = newNotes.map((note) => note.id)
+		const newIds = newNotes.filter((note) => editor.getNote(note.id)).map((note) => note.id)
+		const didCapture = newIds.length > 0
+		if (!didCapture) return []
 		editor.select(newIds)
 		clear()
 		return newIds

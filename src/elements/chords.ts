@@ -1,641 +1,897 @@
-import { css, html, nothing } from 'lit';
+import { css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
+import type { ScaledT } from '@tasteee/scaled/types';
 import {
-  analyzeChords,
-  CHORD_FAMILIES,
-  chordsInKey,
-  formatBBT,
-  formatKey,
-  invert,
-  pitchClassName,
-  voiceChord,
-  type Chord,
-  type ChordFamily,
-  type ChordSpanT,
-  type Editor,
+  analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_TYPES, CHORD_VOICINGS, chordsInKey,
+  formatBBT, loadScaled, pitchClassName, scaledKey, snapTick,
+  type Chord, type ChordDraft, type DetectedChordT, type Editor, type Key, type NoteId,
 } from '../core';
 import type { ChordDrag, Engine } from '../engine/engine';
 import { MaddieElement } from './base';
-import { icons } from './icons';
 import { partStyles } from './controls';
-import { tokens } from './tokens';
-import './zest';
-import '@tasteee/zest/z-collapsible';
+import { icons } from './icons';
+import { formatPatternCategory, patternRhythm } from './pattern-picker';
+import { themeRegion, tokens } from './tokens';
+import { confirmPlainChordPlacement } from './zest';
+import './pattern-picker';
 
-const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
-const DRAG_THRESHOLD = 4;
-/** Where a clicked chord is auditioned: bass near G3. */
-const AUDITION_NEAR = 55;
-// Wait for edits to settle before analysing the song.
-const ANALYSIS_DEBOUNCE_MS = 300;
-// Chords shorter than an eighth note are treated as passing notes.
-const ANALYSIS_MIN_DURATION_DIVISOR = 2;
-
-type TrackChordsT = {
+type ProjectChordT = {
+  key: string;
   trackId: string;
   trackName: string;
-  spans: ChordSpanT[];
+  trackColor: string;
+  start: number;
+  position: string;
+  chord: Chord;
+  regionId?: string;
+  noteIds: readonly NoteId[];
+};
+
+type AnchorT = {
+  eyebrow: string;
+  name: string;
+  hint: string;
+  symbol: string;
+  root: number;
+};
+
+type SuggestionsT = { inKey: Chord[]; borrowed: Chord[] };
+
+const OCTAVES = [1, 2, 3, 4, 5, 6];
+const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
+const RAIL_OPEN = 148;
+const STRIP = 40;
+
+const toSymbol = (symbol: string) => symbol.replace(/♯/g, '#').replace(/♭/g, 'b').replace(/°/g, 'dim').replace(/ø7/g, 'm7b5');
+
+const noteNames = (chord: Chord) => chord.type.intervals.map((interval) => pitchClassName(chord.root + interval)).join(' ');
+
+const oppositeTheme = (theme: string) => (theme === 'dark' ? 'light' : 'dark');
+
+const pageTheme = () => {
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  return isDark ? 'dark' : 'light';
 };
 
 /**
- * Chords that fit the key. Drag one onto the piano roll to place it.
- * Shown while `view.chordsPanel` is on (toggle with H or the toolbar).
+ * The chords panel: a Suggestions rail docked on the grid side, then the library and the
+ * crafting card. Both parts fold to 40px strips, so the panel never needs a button elsewhere.
+ * The panel only makes new chords. A placed chord is changed in the selection bar.
  */
 @customElement('maddie-chords')
 export class MaddieChords extends MaddieElement {
   static styles = [
-    tokens,
-    partStyles,
+    tokens, partStyles, ...themeRegion,
     css`
       :host {
+        position: relative;
         display: flex;
-        flex-direction: column;
-        width: var(--maddie-chords-width, 280px);
+        flex-direction: row;
+        box-sizing: border-box;
         min-height: 0;
-        background-color: var(--_surface);
-        background-image: var(--material-surface);
         border-left: 1px solid var(--_border);
         color: var(--_text);
-        font-size: var(--font-size-small);
-        user-select: none;
-        -webkit-user-select: none;
-        opacity: 1;
-        transform: none;
-        transition:
-          opacity var(--_motion-medium) var(--_ease),
-          transform var(--_motion-medium) var(--_ease);
+        font-size: var(--font-size-sm);
       }
-      @starting-style {
-        :host([open]) {
-          opacity: 0;
-          transform: translateX(8px);
-        }
-      }
-      :host(:not([open])) {
-        display: none;
-      }
-      header {
-        display: flex;
+      button { font: inherit; }
+      button:focus-visible { outline: 2px solid var(--_focus); outline-offset: 1px; }
+
+      /* Strips and headers */
+      .fold {
+        display: inline-flex;
         align-items: center;
-        gap: var(--space-sm);
-        padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+        justify-content: center;
+        flex: none;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--radius-md);
+        background: transparent;
+        color: var(--_text-muted);
+        cursor: pointer;
       }
-      .spacer {
-        flex: 1;
-      }
-      .controls {
+      .fold:hover { background: var(--_surface-2); color: var(--_text); }
+      .fold svg { width: 14px; height: 14px; }
+      .vertical { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+      .strip {
         display: flex;
         flex-direction: column;
-        gap: var(--space-sm);
-        padding: 0 var(--space-md) var(--space-md);
-        border-bottom: 1px solid var(--_border);
-      }
-      .families {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-xs);
-      }
-      .list {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-        padding: var(--space-xs) 0 var(--space-md);
-        overscroll-behavior: contain;
-      }
-      .hint {
-        margin: var(--space-md) var(--space-md) var(--space-xs);
-      }
-      z-collapsible {
-        display: block;
-        padding-inline: var(--space-md);
-      }
-      .root {
-        display: flex;
         align-items: center;
-        gap: var(--space-sm);
-        width: 100%;
+        gap: var(--space-2);
+        flex: none;
+        width: ${STRIP}px;
+        padding: var(--space-2) 0;
+        box-sizing: border-box;
+        background: var(--_surface);
       }
-      .degree {
-        min-width: 2.4em;
-        color: var(--_text);
-        font: 600 var(--font-size-caption) var(--_font-mono);
-      }
-      .root-name {
-        color: var(--_text-muted);
+      .strip-title { font-weight: 600; }
+      .strip-sub { color: var(--_text-faint); font-size: var(--font-size-xs); }
+      .count-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 18px;
+        padding: 0 5px;
+        box-sizing: border-box;
+        border-radius: 999px;
+        background: color-mix(in oklch, var(--accent-secondary) 14%, transparent);
+        color: var(--accent-secondary);
+        font-size: var(--font-size-2xs);
         font-weight: 600;
-      }
-      .count {
-        margin-left: auto;
-        color: var(--_text-faint);
-        font-size: var(--font-size-caption);
         font-variant-numeric: tabular-nums;
       }
-      .chips {
+
+      /* Suggestions rail */
+      .rail {
         display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-xs);
-        padding-block: var(--space-xs) var(--space-sm);
+        flex-direction: column;
+        flex: none;
+        width: ${RAIL_OPEN}px;
+        min-height: 0;
+        border-right: 1px solid var(--_border);
+        background: var(--_surface);
+        color: var(--_text);
       }
-      .chip {
-        cursor: grab;
-        touch-action: none;
-        border-radius: 999px;
-        transition: transform var(--_motion-fast) var(--_ease);
-      }
-      .chip:focus-visible {
-        outline: 3px solid var(--_focus);
-        outline-offset: 2px;
-      }
-      .chip:active {
-        transform: scale(0.96);
-      }
-      .chip.dragging {
-        cursor: grabbing;
-      }
-      .empty {
-        margin: var(--space-lg) var(--space-md);
-      }
-      .found {
-        max-height: 14rem;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        padding: var(--space-xs) var(--space-md) var(--space-sm);
-        border-bottom: 1px solid var(--_border);
-      }
-      .found-title {
+      .rail.isFolded { width: ${STRIP}px; }
+      .rail-head { display: flex; align-items: center; gap: var(--space-1); height: 48px; flex: none; padding: 0 var(--space-2) 0 6px; box-sizing: border-box; border-bottom: 1px solid var(--_border); }
+      .rail-title { flex: 1; font-weight: 600; white-space: nowrap; }
+      .rail.isFolded .rail-head { flex-direction: column; height: auto; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 0; }
+      .anchor-wrap { padding: var(--space-2) var(--space-2) var(--space-1); }
+      .anchor { display: flex; flex-direction: column; gap: 1px; padding: 6px var(--space-2); border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); }
+      .anchor-eyebrow { color: var(--_text-faint); font-size: var(--font-size-2xs); font-weight: 500; }
+      .anchor-name { font-weight: 600; }
+      .anchor-hint { color: var(--_text-faint); font-size: var(--font-size-xs); }
+      .rail-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-2) var(--space-3); }
+      .rail-list .tile { margin-bottom: var(--space-1); }
+      .rail-group { padding: var(--space-3) 2px 6px; color: var(--_text-muted); font-size: var(--font-size-xs); font-weight: 600; }
+      .rail-group.isBorrowed { color: var(--accent-tertiary); }
+      .rail-group span { color: var(--_text-faint); font-weight: 400; }
+      .empty { padding: var(--space-4) var(--space-3); color: var(--_text-faint); line-height: 1.5; }
+
+      /* Main column */
+      .main { display: flex; flex-direction: column; flex: none; width: var(--maddie-chords-width, 352px); min-width: 0; background: var(--_bg); color: var(--_text); }
+      .main-head { display: flex; align-items: center; gap: var(--space-1); height: 48px; flex: none; padding: 0 var(--space-3) 0 6px; box-sizing: border-box; border-bottom: 1px solid var(--_border); }
+      .main-title { font-weight: 600; }
+      .key-pill { display: inline-flex; align-items: center; height: 22px; margin-left: var(--space-1); padding: 0 var(--space-2); border-radius: 999px; background: var(--_surface-2); color: var(--_text-muted); font-size: var(--font-size-xs); font-weight: 600; }
+      .tabs { display: flex; gap: 2px; margin: var(--space-3) var(--space-3) 0; padding: 2px; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_surface); }
+      .tab { flex: 1; height: 26px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--_text-muted); font-weight: 500; cursor: pointer; }
+      .tab:hover { color: var(--_text); }
+      .tab[aria-selected='true'] { background: var(--_bg); border-color: var(--border-strong); color: var(--_text); }
+      .tab-count { margin-left: var(--space-1); color: var(--_text-faint); font-variant-numeric: tabular-nums; }
+      .search { display: block; margin: var(--space-3) var(--space-3) 0; }
+      .chips { display: flex; gap: var(--space-1); margin-top: var(--space-3); padding: 0 var(--space-3) var(--space-3); overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--_border); }
+      .chip { flex: none; height: 24px; padding: 0 9px; border: 1px solid var(--_border); border-radius: 999px; background: var(--_bg); color: var(--_text-muted); font-size: var(--font-size-xs); font-weight: 500; cursor: pointer; }
+      .chip:hover { border-color: var(--border-strong); color: var(--_text); }
+      .chip[aria-checked='true'] { border-color: transparent; background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); color: var(--accent-secondary); font-weight: 600; }
+      .list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-3) var(--space-3); }
+      .group-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; justify-content: space-between; padding: var(--space-4) 2px var(--space-2); background: var(--_bg); }
+      .group-name { font-weight: 600; }
+      .group-count { color: var(--_text-faint); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+      .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+
+      /* Tiles */
+      .tile {
+        position: relative;
         display: flex;
-        align-items: center;
-        gap: var(--space-sm);
-        padding-block: var(--space-xs);
-        color: var(--_text-muted);
-        font-size: var(--font-size-caption);
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-      .track-name {
-        margin-top: var(--space-xs);
-        color: var(--_text-faint);
-        font-size: var(--font-size-caption);
-        font-weight: 600;
-      }
-      .found-row {
-        display: flex;
-        align-items: baseline;
-        gap: var(--space-sm);
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1px;
         width: 100%;
-        margin: 0;
-        padding: var(--space-xs) var(--space-sm);
-        border: none;
-        border-radius: var(--_radius);
+        min-height: 46px;
+        padding: 6px var(--space-3);
+        box-sizing: border-box;
+        border: 1px solid var(--_border);
+        border-radius: var(--radius-md);
+        background: var(--_bg);
+        color: var(--_text);
+        text-align: left;
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
+      }
+      .tile:hover { border-color: var(--border-strong); background: var(--_surface); }
+      .tile:active { cursor: grabbing; }
+      .tile[aria-pressed='true'] { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+      .tile.isPlaying { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 20%, transparent); }
+      .tile:disabled { opacity: var(--control-disabled-opacity); cursor: wait; }
+      .tile-name { font-weight: 600; }
+      .tile-kind { max-width: 100%; overflow: hidden; color: var(--_text-faint); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+      /* Borrowed: rose (tertiary) means "outside the key" and nothing else. */
+      .tile.isBorrowed { border: 1px dashed color-mix(in oklch, var(--accent-tertiary) 55%, transparent); background: color-mix(in oklch, var(--accent-tertiary) 6%, transparent); }
+      .tile.isBorrowed:hover { background: color-mix(in oklch, var(--accent-tertiary) 11%, transparent); }
+      .tile.isBorrowed .tile-kind { color: var(--accent-tertiary); }
+      .tile.isBorrowed[aria-pressed='true'], .tile.isBorrowed.isPlaying { border-style: solid; border-color: var(--accent-tertiary); background: color-mix(in oklch, var(--accent-tertiary) 16%, transparent); }
+      .borrowed-mark { position: absolute; top: 7px; right: 8px; display: flex; color: var(--accent-tertiary); }
+      .wave { position: absolute; top: 8px; right: 8px; display: flex; align-items: flex-end; gap: 2px; height: 10px; }
+      .wave span { width: 2px; border-radius: 1px; background: var(--accent-secondary); animation: wave 0.6s ease-in-out infinite alternate; }
+      .wave span:nth-child(2) { animation-delay: 0.15s; }
+      .wave span:nth-child(3) { animation-delay: 0.3s; }
+      @keyframes wave { from { height: 3px; } to { height: 10px; } }
+      .project-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); width: 100%; height: 36px; margin-bottom: var(--space-1); padding: 0 var(--space-3); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); text-align: left; cursor: pointer; }
+      .project-row:hover { border-color: var(--border-strong); background: var(--_surface); }
+      .project-row[aria-current='true'] { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+      .project-pos { color: var(--_text-faint); font: var(--font-size-xs) var(--_font-mono); }
+      .project-name { font-weight: 600; }
+      .project-track { display: flex; align-items: center; gap: 6px; color: var(--_text-muted); font-size: var(--font-size-xs); }
+      .project-dot { width: 6px; height: 6px; border-radius: 50%; }
+      .hint { margin: var(--space-3) 2px var(--space-2); color: var(--_text-muted); line-height: 1.45; }
+
+      /* Crafting area: inverted region, one card */
+      .craft { flex: none; padding: var(--space-3); border-top: 1px solid var(--_border); background: var(--_surface); color: var(--_text); }
+      .card { display: flex; flex-direction: column; border: 1px solid var(--accent-secondary); border-radius: var(--radius-lg); background: var(--_bg); overflow: hidden; }
+      .card.isEmpty { border-style: dashed; border-color: var(--border-strong); background: transparent; }
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: var(--space-3);
+        width: 100%;
+        height: 64px;
+        padding: 0 var(--space-3);
+        box-sizing: border-box;
+        border: 0;
         background: transparent;
         color: var(--_text);
-        font: inherit;
-        text-align: start;
-        cursor: pointer;
-        transition: background-color var(--_motion-fast) var(--_ease);
+        text-align: left;
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
       }
-      .found-row:hover {
-        background: var(--_hover);
-      }
-      .found-row:focus-visible {
-        outline: 3px solid var(--_focus);
-        outline-offset: 2px;
-      }
-      .found-position {
-        min-width: 4.5em;
-        color: var(--_text-faint);
-        font: 500 var(--font-size-caption) var(--_font-mono);
-        font-variant-numeric: tabular-nums;
-      }
-      .found-name {
-        font-weight: 600;
-      }
-      .found-degree {
-        margin-left: auto;
-        color: var(--_text-muted);
-        font: 600 var(--font-size-caption) var(--_font-mono);
-      }
+      .hero:hover { background: color-mix(in oklab, var(--accent-secondary) 6%, var(--_bg)); }
+      .hero.isPlaying { background: color-mix(in oklab, var(--accent-secondary) 16%, var(--_bg)); }
+      .hero-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+      .hero-name { font-size: var(--font-size-xl); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+      .hero-kind { color: var(--_text-muted); font-size: var(--font-size-xs); font-weight: 500; }
+      .hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+      .hero-notes { color: var(--_text-faint); font: var(--font-size-xs) var(--_font-mono); white-space: nowrap; }
+      .hero-hint { display: flex; align-items: center; gap: 5px; color: var(--_text-faint); font-size: var(--font-size-2xs); }
+      .hero-hint .wave { position: static; }
+      .hero-empty { padding: var(--space-4) var(--space-3); color: var(--_text-faint); }
+      .props { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--_border); }
+      .prop { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-2) 6px var(--space-2) var(--space-3); border-left: 1px solid var(--_border); }
+      .prop:first-child { border-left: 0; }
+      .prop-label { color: var(--_text-faint); font-size: var(--font-size-2xs); font-weight: 500; }
+      .stepper { display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; align-items: center; height: 24px; margin-left: -6px; }
+      .stepper button { display: inline-flex; align-items: center; justify-content: center; height: 100%; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--_text-muted); cursor: pointer; }
+      .stepper button:hover { background: var(--_surface-2); color: var(--_text); }
+      .stepper button:disabled { color: var(--_text-faint); opacity: 0.5; background: transparent; cursor: default; }
+      .stepper svg { width: 12px; height: 12px; }
+      .stepper-value { font-weight: 500; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+      .voicing { width: 100%; height: 24px; padding: 0 18px 0 0; border: 0; background: transparent; color: var(--_text); font: inherit; font-weight: 500; cursor: pointer; }
+      .voicing:focus-visible { outline: 2px solid var(--_focus); outline-offset: 1px; }
+      .pattern-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-top: 1px solid var(--_border); background: var(--_surface); }
+      .pattern-button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); min-width: 0; height: 44px; padding: 0 var(--space-2) 0 var(--space-3); border: 0; background: transparent; color: var(--_text); text-align: left; cursor: pointer; }
+      .pattern-button:hover, .pattern-button[aria-expanded='true'] { background: var(--_surface-2); }
+      .pattern-copy { display: flex; flex-direction: column; min-width: 0; }
+      .pattern-label { color: var(--_text-faint); font-size: var(--font-size-2xs); font-weight: 500; }
+      .pattern-name { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+      .pattern-name.isEmpty { color: var(--_text-faint); font-weight: 400; }
+      .pattern-category { color: var(--_text-faint); font-weight: 400; }
+      .rhythm { display: grid; grid-template-columns: repeat(16, 4px); gap: 2px; }
+      .step { height: 12px; border-radius: 1px; background: color-mix(in oklch, var(--_text) 10%, transparent); }
+      .step.isHit { background: var(--accent-secondary); }
+      .chevron { display: flex; color: var(--_text-faint); }
+      .clear { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: var(--space-1); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--_text-faint); cursor: pointer; }
+      .clear:hover { background: var(--_surface-2); color: var(--_text); }
+      .clear svg { width: 12px; height: 12px; }
+
       .ghost {
         position: fixed;
         z-index: 1000;
         top: 0;
         left: 0;
-        display: none;
-        padding: var(--space-xs) var(--space-sm);
+        padding: var(--space-1) var(--space-2);
         border: 1px solid var(--_border);
-        border-radius: 999px;
+        border-radius: var(--radius-md);
         background: var(--_raised);
         color: var(--_text);
-        box-shadow: var(--elevation-overlay);
-        font-size: var(--font-size-small);
-        font-weight: 600;
+        box-shadow: var(--shadow-overlay);
+        font-size: var(--font-size-sm);
+        font-weight: 650;
         white-space: nowrap;
         pointer-events: none;
       }
-      .ghost.show {
-        display: block;
-      }
-      .ghost small {
-        margin-left: var(--space-sm);
-        color: var(--_text-muted);
-        font-weight: 500;
-      }
+      .ghost[hidden] { display: none; }
     `,
   ];
 
-  @state() private family: ChordFamily | 'all' = 'all';
-  @state() private inversion = 0;
-  @state() private query = '';
-  /** Roots whose section differs from the default (open with a key, closed without). */
-  @state() private toggled = new Set<number>();
-  /** Chords found in each track's notes, refreshed shortly after the last edit. */
-  @state() private foundChords: TrackChordsT[] = [];
-  private keyId = '';
-  private wasPanelOpen = false;
-  private analysisTimer: ReturnType<typeof setTimeout> | undefined;
+  @state() private projectChords: ProjectChordT[] = [];
+  @state() private scaled?: ScaledT;
+  @state() private loadError = '';
+  /** The chord in the crafting card. Clicking any tile puts it here. */
+  @state() private crafting?: { id: string; chord: Chord };
+  @state() private playingId = '';
+  @state() private pickerPosition = { left: 0, top: 0 };
+  private catalog?: { key: Key | null; scaled?: ScaledT; groups: ReturnType<typeof chordsInKey> };
+  private analysisTimer?: ReturnType<typeof setTimeout>;
+  private loading = false;
+  private cancelDrag?: () => void;
 
-  protected attach(editor: Editor, _engine: Engine) {
-    const scheduleAnalysis = () => {
-      clearTimeout(this.analysisTimer);
-      this.analysisTimer = setTimeout(() => this.runAnalysis(), ANALYSIS_DEBOUNCE_MS);
-    };
-    const update = () => {
-      this.toggleAttribute('open', editor.view.chordsPanel);
-      const key = editor.key;
-      const id = key ? `${key.root}:${key.scale}` : '';
-      const hasKeyChanged = id !== this.keyId;
-      if (hasKeyChanged) {
-        this.keyId = id;
-        this.toggled = new Set();
+  protected attach(ed: Editor, _engine: Engine) {
+    this.ensureScaled();
+    this.analyzeProject();
+    const themeObserver = new MutationObserver(() => this.requestUpdate());
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    this.track(
+      ed.on('view', ({ view, prev }) => {
+        const isClosing = !view.chordsPanel && prev.chordsPanel;
+        if (isClosing) this.cancelDrag?.();
+        this.requestUpdate();
+      }),
+      ed.on('change', ({ origin }) => {
+        const isLoad = origin === 'load';
+        if (isLoad) {
+          this.cancelDrag?.();
+          this.crafting = undefined;
+        }
+        clearTimeout(this.analysisTimer);
+        this.analysisTimer = setTimeout(() => this.analyzeProject(), 250);
+        this.requestUpdate();
+      }),
+      ed.on('tracks', () => this.requestUpdate()),
+      ed.on('selection', () => this.requestUpdate()),
+      () => {
+        clearTimeout(this.analysisTimer);
+        this.cancelDrag?.();
+        themeObserver.disconnect();
+      },
+    );
+  }
+
+  private ensureScaled() {
+    const isBusy = this.scaled || this.loading || this.loadError;
+    if (isBusy) return;
+    this.loading = true;
+    const loaded = (scaled: ScaledT) => { this.scaled = scaled; };
+    const failed = () => { this.loadError = 'Chord tools could not load.'; };
+    void loadScaled().then(loaded, failed).finally(() => { this.loading = false; });
+  }
+
+  // ── Data ───────────────────────────────────────────────────────
+
+  private analyzeProject() {
+    const ed = this.ed;
+    if (!ed) return;
+    const rows: ProjectChordT[] = [];
+    ed.trackList.forEach((meta, index) => {
+      const track = ed.doc.tracks.find((item) => item.id === meta.id);
+      if (!track) return;
+      const trackName = track.name ?? 'Track ' + (index + 1);
+      const trackColor = ed.getTrackColor(track.id);
+      const regions = track.chordRegions;
+      if (regions) {
+        for (const region of regions) {
+          const chord = this.catalogChord({ symbol: region.symbol, rootPitch: region.root, chordType: region.symbol,
+            intervals: region.intervals, midiNotes: region.pitches });
+          rows.push({ key: region.id, trackId: track.id, trackName, trackColor, start: region.start, position: '',
+            chord, regionId: region.id, noteIds: [] });
+        }
+        return;
       }
-      this.requestUpdate();
-    };
-    const handleChange = () => {
-      update();
-      scheduleAnalysis();
-    };
-    // Zoom and scroll also fire view events. Only opening the panel needs fresh results.
-    const handleView = () => {
-      update();
-      const isPanelOpen = editor.view.chordsPanel;
-      const wasJustOpened = isPanelOpen && !this.wasPanelOpen;
-      this.wasPanelOpen = isPanelOpen;
-      if (wasJustOpened) this.runAnalysis();
-    };
-    update();
-    this.wasPanelOpen = editor.view.chordsPanel;
-    this.runAnalysis();
-    this.track(editor.on('view', handleView), editor.on('change', handleChange), () => clearTimeout(this.analysisTimer));
+      const spans = analyzeChords(track.notes, { key: ed.key, minDuration: ed.ppq / 2 });
+      for (const span of spans) {
+        const chord = this.detectedChord(span.chord);
+        rows.push({ key: track.id + ':' + span.start, trackId: track.id, trackName, trackColor, start: span.start, position: '',
+          chord, noteIds: span.noteIds });
+      }
+    });
+    rows.sort((a, b) => a.start - b.start);
+    for (const row of rows) row.position = formatBBT(row.start, ed.meta.timeSignature, ed.ppq);
+    this.projectChords = rows;
   }
 
-  private runAnalysis() {
-    const ed = this.ed;
-    if (!ed) return;
-    const isPanelOpen = ed.view.chordsPanel;
-    if (!isPanelOpen) return;
-    const options = { key: ed.key, minDuration: ed.ppq / ANALYSIS_MIN_DURATION_DIVISOR };
-    const found: TrackChordsT[] = [];
-    for (const [index, track] of ed.doc.tracks.entries()) {
-      const spans = analyzeChords(track.notes, options);
-      const hasSpans = spans.length > 0;
-      if (!hasSpans) continue;
-      const trackName = track.name ?? `Track ${index + 1}`;
-      found.push({ trackId: track.id, trackName, spans });
+  private detectedChord(detected: DetectedChordT): Chord {
+    return { root: detected.root, degree: '', name: detected.name, type: detected.type };
+  }
+
+  private catalogChord(chord: ScaledT.ChordT): Chord {
+    const intervals = chord.intervals;
+    const suffix = chord.symbol.replace(/^[A-G][#b]?/, '');
+    const existing = CHORD_TYPES.find((type) => type.intervals.join() === intervals.join());
+    const highest = Math.max(...intervals);
+    const byRange = highest >= 21 ? 'thirteenth' : highest >= 17 ? 'eleventh' : highest >= 13 ? 'ninth' : 'triad';
+    const isOmit = /\bno\s*[35]\b/i.test(suffix);
+    const isSus = /sus/i.test(suffix);
+    const isAdd = /add/i.test(suffix);
+    const isSeventh = /7/.test(suffix) && highest < 13;
+    const fallbackFamily = isSeventh ? 'seventh' : byRange;
+    const family = isOmit ? 'omit' : isSus ? 'sus' : isAdd ? 'add' : existing?.family ?? fallbackFamily;
+    const name = pitchClassName(chord.rootPitch) + chord.symbol.replace(/^[A-G][#b]?/, '').replace(/^min/, 'm');
+    const typeName = existing?.name ?? chord.chordType;
+    return { root: chord.rootPitch, name, degree: '', type: { id: chord.chordType, symbol: suffix, name: typeName, intervals, family } };
+  }
+
+  private browseGroups(key: Key | null) {
+    const isCached = this.catalog?.key === key && this.catalog.scaled === this.scaled;
+    if (isCached) return this.catalog!.groups;
+    const groups = chordsInKey(key);
+    const hasScaleChords = key && key.scale !== 'chromatic' && this.scaled;
+    if (hasScaleChords) {
+      const byRoot = new Map(groups.map((group) => {
+        group.chords = group.chords.filter((chord) => chord.type.family === 'omit');
+        return [group.root, group];
+      }));
+      for (const chord of this.scaled!.getScaleChords(scaledKey(key))) byRoot.get(chord.rootPitch)?.chords.push(this.catalogChord(chord));
+      for (const group of groups) {
+        const rank = (chord: Chord) => (chord.type.family === 'triad' ? 0 : chord.type.family === 'omit' ? 2 : 1);
+        group.chords.sort((a, b) => rank(a) - rank(b) || a.type.intervals.length - b.type.intervals.length);
+        const seen = new Set<string>();
+        group.chords = group.chords.filter((chord) => {
+          const symbol = toSymbol(chord.name);
+          const isDuplicate = seen.has(symbol);
+          seen.add(symbol);
+          return !isDuplicate;
+        });
+      }
     }
-    this.foundChords = found;
+    this.catalog = { key, scaled: this.scaled, groups };
+    return groups;
   }
 
-  // ── Found chords ──────────────────────────────────────────────────
+  /** What the Suggestions rail follows: the chord selected in the editor, never a panel click. */
+  private anchor(ed: Editor): AnchorT | undefined {
+    const selected = ed.selectedChordRegions;
+    const region = selected.at(-1);
+    if (region) {
+      const bar = formatBBT(region.start, ed.meta.timeSignature, ed.ppq).split('.')[0];
+      const trackName = ed.trackList.find((track) => track.id === ed.activeTrackId)?.name ?? 'Chords';
+      return { eyebrow: 'After', name: region.symbol, hint: `${trackName} · bar ${bar}`, symbol: region.symbol, root: region.root };
+    }
+    const isMidiTrack = !ed.chordRegions;
+    const hasNotes = ed.selectedNotes.length > 0;
+    if (!isMidiTrack || !hasNotes) return;
+    const spans = analyzeSelection(ed.selectedNotes, { key: ed.key, minDuration: ed.ppq / 2 });
+    const span = spans.at(-1);
+    if (!span) return { eyebrow: '', name: '', hint: '', symbol: '', root: -1 };
+    const chord = this.detectedChord(span.chord);
+    const trackName = ed.trackList.find((track) => track.id === ed.activeTrackId)?.name ?? 'Track';
+    return { eyebrow: 'Looks like', name: chord.name, hint: trackName, symbol: chord.name.split('/')[0], root: chord.root };
+  }
 
-  /** Jump to the chord, hear it, and select its notes. Its track becomes the active one first. */
-  private onFoundClick(trackId: string, span: ChordSpanT) {
+  private suggestions(ed: Editor, anchor: AnchorT): SuggestionsT {
+    const scaled = this.scaled;
+    const empty = { inKey: [], borrowed: [] };
+    if (!scaled) return empty;
+    const context = scaledKey(ed.key, anchor.root);
+    const hasKey = !!ed.key && ed.key.scale !== 'chromatic';
+    try {
+      const raw = scaled.getSuggestions({ chord: toSymbol(anchor.symbol), key: context.key, ...(hasKey ? { scale: context.scale } : {}) });
+      const sorted = [...raw].sort((a, b) => b.weight - a.weight);
+      const seen = new Set<string>();
+      const result: SuggestionsT = { inKey: [], borrowed: [] };
+      for (const item of sorted) {
+        const symbol = item.symbol;
+        const isUsable = !!symbol && !seen.has(symbol);
+        if (!isUsable) continue;
+        seen.add(symbol!);
+        try {
+          const chord = this.catalogChord(scaled.getChord({ chord: symbol! }));
+          const isBorrowed = hasKey && item.isInScale === false;
+          if (isBorrowed) result.borrowed.push(chord);
+          if (!isBorrowed) result.inKey.push(chord);
+        } catch {
+          // A suggestion with no chord entry is skipped.
+        }
+      }
+      return result;
+    } catch {
+      return empty;
+    }
+  }
+
+  // ── Crafting ───────────────────────────────────────────────────
+
+  private makeDraft(chord: Chord): ChordDraft {
+    const ed = this.ed!;
+    const view = ed.view;
+    return ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
+      { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: view.chordTemplateId });
+  }
+
+  private tryDraft(chord: Chord): ChordDraft | undefined {
+    try {
+      return this.makeDraft(chord);
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+    }
+  }
+
+  private pickChord(id: string, chord: Chord) {
+    this.crafting = { id, chord };
+  }
+
+  /** Enter on a tile: place it at the playhead marker on the active track. */
+  private async placeAtPlayhead(chord: Chord) {
     const ed = this.ed;
     if (!ed) return;
-    ed.transport.seek(span.start);
-    ed.auditionChord(span.pitches, 0.5, undefined, { humanize: true });
-    const isActiveTrack = trackId === ed.activeTrackId;
-    if (!isActiveTrack) ed.setActiveTrack(trackId);
-    ed.select(span.noteIds);
+    const draft = this.tryDraft(chord);
+    if (!draft) return;
+    const isMidiTrack = !ed.chordRegions;
+    const isConfirmed = isMidiTrack ? await confirmPlainChordPlacement(this) : true;
+    if (!isConfirmed) return;
+    const at = ed.transport.marker ?? ed.view.cursor;
+    const snapped = ed.view.snap ? snapTick(at, ed.commands.gridTicks(at), ed.meta.timeSignature, 'floor') : Math.round(at);
+    try {
+      const isPlaced = ed.chordTrack.placeDraft(draft, Math.max(0, snapped));
+      if (isPlaced) ed.chordTrack.auditionPitches([draft.region]);
+      if (!isPlaced) this.engine?.toast('There’s already a chord at the playhead.');
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+    }
   }
 
-  private renderFoundRow(trackId: string, span: ChordSpanT) {
-    const ed = this.ed!;
-    const position = formatBBT(span.start, ed.meta.timeSignature, ed.ppq);
-    const hasDegree = span.chord.degree !== '';
-    const degree = hasDegree ? html`<span class="found-degree">${span.chord.degree}</span>` : nothing;
-    return html`<button type="button" class="found-row" @click=${() => this.onFoundClick(trackId, span)}>
-      <span class="found-position">${position}</span>
-      <span class="found-name">${span.chord.name}</span>
-      ${degree}
+  /** Mouse down: pick the chord and hear it until mouse up. Move 4px: it becomes a drag. */
+  private startDrag(event: PointerEvent, id: string, chord: Chord) {
+    const engine = this.engine;
+    const isPrimary = event.button === 0 && event.isPrimary;
+    if (!engine || !isPrimary || this.cancelDrag) return;
+    this.pickChord(id, chord);
+    const draft = this.tryDraft(chord);
+    if (!draft) return;
+    const source = event.currentTarget as HTMLElement;
+    const ghost = this.renderRoot.querySelector<HTMLElement>('.ghost')!;
+    const drag: ChordDrag = { draft, clientX: event.clientX, clientY: event.clientY, overGrid: false };
+    let isDragging = false;
+    source.setPointerCapture(event.pointerId);
+    let stopAudition = this.ed?.chordTrack.auditionDraft(draft, true);
+    this.playingId = id;
+    const stopPlaying = () => {
+      stopAudition?.();
+      stopAudition = undefined;
+      this.playingId = '';
+    };
+    const move = (pointer: PointerEvent) => {
+      const isOther = pointer.pointerId !== event.pointerId;
+      if (isOther) return;
+      const distance = Math.hypot(pointer.clientX - event.clientX, pointer.clientY - event.clientY);
+      const isStillClick = !isDragging && distance < 4;
+      if (isStillClick) return;
+      if (!isDragging) stopPlaying();
+      isDragging = true;
+      drag.clientX = pointer.clientX;
+      drag.clientY = pointer.clientY;
+      engine.chordDragEvent(drag, 'move');
+      ghost.hidden = false;
+      ghost.textContent = drag.label ? `${chord.name} · ${drag.label}` : chord.name;
+      ghost.style.transform = `translate(${pointer.clientX + 14}px, ${pointer.clientY + 14}px)`;
+      ghost.style.opacity = drag.overGrid ? '0.85' : '1';
+    };
+    const finish = (pointer?: PointerEvent) => {
+      const isOther = pointer && pointer.pointerId !== event.pointerId;
+      if (isOther) return;
+      stopPlaying();
+      source.removeEventListener('pointermove', move);
+      source.removeEventListener('pointerup', finish);
+      source.removeEventListener('pointercancel', cancel);
+      source.removeEventListener('lostpointercapture', cancel);
+      window.removeEventListener('keydown', escape, true);
+      window.removeEventListener('blur', cancel);
+      const hasCapture = source.hasPointerCapture(event.pointerId);
+      if (hasCapture) source.releasePointerCapture(event.pointerId);
+      this.cancelDrag = undefined;
+      ghost.hidden = true;
+      if (pointer) {
+        drag.clientX = pointer.clientX;
+        drag.clientY = pointer.clientY;
+      }
+      if (isDragging) engine.chordDragEvent(drag, pointer ? 'drop' : 'cancel');
+    };
+    const cancel = () => finish();
+    const escape = (key: KeyboardEvent) => {
+      const isEscape = key.key === 'Escape';
+      if (!isEscape) return;
+      key.preventDefault();
+      key.stopPropagation();
+      finish();
+    };
+    this.cancelDrag = cancel;
+    source.addEventListener('pointermove', move);
+    source.addEventListener('pointerup', finish);
+    source.addEventListener('pointercancel', cancel);
+    source.addEventListener('lostpointercapture', cancel);
+    window.addEventListener('keydown', escape, true);
+    window.addEventListener('blur', cancel);
+  }
+
+  private onTileKey(event: KeyboardEvent, id: string, chord: Chord) {
+    const isEnter = event.key === 'Enter';
+    if (!isEnter) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.pickChord(id, chord);
+    void this.placeAtPlayhead(chord);
+  }
+
+  // ── Project tab ────────────────────────────────────────────────
+
+  private selectProjectChord(row: ProjectChordT) {
+    const ed = this.ed;
+    if (!ed) return;
+    const isOtherTrack = ed.activeTrackId !== row.trackId;
+    if (isOtherTrack) ed.setActiveTrack(row.trackId);
+    const ids = row.regionId ? [row.regionId] : row.noteIds;
+    ed.select(ids);
+    const view = ed.view;
+    const leftEdge = view.scrollTick;
+    const isOffscreen = row.start < leftEdge || row.start > leftEdge + (this.engine?.viewport.width ?? 0) / view.pxPerTick;
+    if (isOffscreen) ed.setView({ scrollTick: Math.max(0, row.start - 40 / view.pxPerTick) }, { animate: true });
+  }
+
+  // ── Pattern picker ─────────────────────────────────────────────
+
+  private openPicker(trigger: HTMLElement) {
+    const ed = this.ed;
+    if (!ed) return;
+    const isOpen = ed.view.patternPicker === 'craft';
+    if (isOpen) return ed.setView({ patternPicker: null });
+    const panel = this.getBoundingClientRect();
+    const triggerBox = trigger.getBoundingClientRect();
+    const width = Math.min(540, window.innerWidth - 16);
+    const height = Math.min(470, window.innerHeight - 16);
+    const left = Math.max(8, panel.left - width - 8);
+    const top = Math.max(8, Math.min(window.innerHeight - height - 8, triggerBox.bottom - height));
+    this.pickerPosition = { left, top };
+    ed.setView({ patternPicker: 'craft' });
+  }
+
+  private projectTemplateIds(ed: Editor): string[] {
+    const ids: string[] = [];
+    for (const track of ed.doc.tracks) {
+      for (const region of track.chordRegions ?? []) {
+        const id = region.performance?.templateId;
+        const isNew = !!id && !ids.includes(id);
+        if (isNew) ids.push(id!);
+      }
+    }
+    return ids;
+  }
+
+  private renderPicker(ed: Editor) {
+    const isOpen = ed.view.patternPicker === 'craft';
+    if (!isOpen) return nothing;
+    const crafting = this.crafting;
+    const preview = (templateId: string) => {
+      if (!crafting) return;
+      try {
+        const chord = crafting.chord;
+        const draft = ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
+          { octave: ed.view.chordOctave, inversion: ed.view.chordInversion, voicing: ed.view.chordVoicing, templateId });
+        return ed.chordTrack.auditionDraft(draft, true) ?? (() => {});
+      } catch (error) {
+        this.engine?.toast((error as Error).message, 'error');
+        return;
+      }
+    };
+    const apply = (templateId: string) => ed.setView({ chordTemplateId: templateId });
+    const close = () => ed.setView({ patternPicker: null });
+    const style = `left: ${this.pickerPosition.left}px; top: ${this.pickerPosition.top}px`;
+    return html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${ed.view.chordTemplateId}
+      .targetPrefix=${'Playing on'} .targetName=${crafting?.chord.name ?? ''} .projectIds=${this.projectTemplateIds(ed)}
+      .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────
+
+  private renderTile(id: string, chord: Chord, isBorrowed = false): TemplateResult {
+    const isPicked = this.crafting?.id === id;
+    const isPlaying = this.playingId === id;
+    const classes = ['tile', isPlaying ? 'isPlaying' : '', isBorrowed ? 'isBorrowed' : ''].join(' ');
+    const label = isBorrowed ? `${chord.name}, ${chord.type.name}, borrowed from outside the key` : `${chord.name}, ${chord.type.name}`;
+    return html`<button type="button" class=${classes} ?disabled=${!this.scaled} aria-pressed=${isPicked}
+      aria-label=${label} title=${noteNames(chord)}
+      @pointerdown=${(event: PointerEvent) => this.startDrag(event, id, chord)}
+      @keydown=${(event: KeyboardEvent) => this.onTileKey(event, id, chord)}>
+      ${isBorrowed ? html`<span class="borrowed-mark" aria-hidden="true">${borrowedIcon}</span>` : nothing}
+      ${isPlaying ? waveMark : nothing}
+      <span class="tile-name">${chord.name}</span>
+      <span class="tile-kind">${chord.type.name}</span>
     </button>`;
   }
 
-  private renderFoundTrack(group: TrackChordsT, shouldShowName: boolean) {
-    const name = shouldShowName ? html`<div class="track-name">${group.trackName}</div>` : nothing;
-    return html`${name}${group.spans.map((span) => this.renderFoundRow(group.trackId, span))}`;
+  private renderRail(ed: Editor, theme: string | undefined) {
+    const isOpen = ed.view.suggestionsOpen;
+    const anchor = this.anchor(ed);
+    const suggestions = anchor && anchor.symbol ? this.suggestions(ed, anchor) : undefined;
+    const total = suggestions ? suggestions.inKey.length + suggestions.borrowed.length : 0;
+    const toggle = () => ed.setView({ suggestionsOpen: !isOpen });
+    const toggleLabel = isOpen ? 'Fold suggestions' : 'Show suggestions';
+    const caret = isOpen ? icons.back : forwardIcon;
+    const railClass = isOpen ? 'rail' : 'rail isFolded';
+    const hasCount = !isOpen && total > 0;
+
+    const head = html`<div class="rail-head">
+      <button type="button" class="fold" aria-expanded=${isOpen} aria-label=${toggleLabel} title=${toggleLabel} @click=${toggle}>${caret}</button>
+      <span class=${isOpen ? 'rail-title' : 'rail-title vertical'}>Suggestions</span>
+      ${hasCount ? html`<span class="count-badge">${total}</span>` : nothing}
+    </div>`;
+    if (!isOpen) return html`<aside class=${railClass} data-theme=${theme ?? nothing} aria-label="Suggestions">${head}</aside>`;
+
+    const hasAnchor = !!anchor && anchor.symbol !== '';
+    const isUnnamed = !!anchor && anchor.symbol === '';
+    const emptyText = isUnnamed ? 'These notes don’t make a chord we know.' : 'Select a chord in the editor to see what fits next.';
+    const hasKey = !!ed.key && ed.key.scale !== 'chromatic';
+    const inKeyLabel = hasKey ? 'In key' : 'Fits next';
+
+    return html`<aside class=${railClass} data-theme=${theme ?? nothing} aria-label="Suggestions">
+      ${head}
+      ${hasAnchor ? html`<div class="anchor-wrap"><div class="anchor">
+        <span class="anchor-eyebrow">${anchor!.eyebrow}</span><span class="anchor-name">${anchor!.name}</span><span class="anchor-hint">${anchor!.hint}</span>
+      </div></div>
+      <div class="rail-list">
+        ${!this.scaled ? html`<p class="empty" role="status">${this.loadError || 'Loading…'}</p>` : nothing}
+        ${suggestions && suggestions.inKey.length ? html`<div class="rail-group">${inKeyLabel} <span>· ${suggestions.inKey.length}</span></div>
+          ${suggestions.inKey.map((chord) => this.renderTile('next-' + chord.name, chord))}` : nothing}
+        ${suggestions && suggestions.borrowed.length ? html`<div class="rail-group isBorrowed">Borrowed <span>· outside the key</span></div>
+          ${suggestions.borrowed.map((chord) => this.renderTile('borrowed-' + chord.name, chord, true))}` : nothing}
+        ${this.scaled && total === 0 ? html`<p class="empty">No suggestions for this chord in this key.</p>` : nothing}
+      </div>` : html`<p class="empty">${emptyText}</p>`}
+    </aside>`;
   }
 
-  private renderFound() {
-    const hasFound = this.foundChords.length > 0;
-    if (!hasFound) return nothing;
-    const shouldShowTrackNames = this.ed!.trackIds.length > 1;
-    return html`<section class="found" part="found" aria-label="Chords in this song">
-      <div class="found-title">In this song</div>
-      ${this.foundChords.map((group) => this.renderFoundTrack(group, shouldShowTrackNames))}
-    </section>`;
-  }
+  private renderLibrary(ed: Editor) {
+    const view = ed.view;
+    const query = toSymbol(view.chordQuery.trim()).toLowerCase();
+    const groups = this.browseGroups(ed.key).map((group) => ({
+      ...group,
+      chords: group.chords.filter((chord) => {
+        const matchesFamily = view.chordFamily === 'all' || chord.type.family === view.chordFamily;
+        const matchesQuery = !query || toSymbol(chord.name).toLowerCase().includes(query) || chord.type.name.toLowerCase().includes(query);
+        return matchesFamily && matchesQuery;
+      }),
+    })).filter((group) => group.chords.length > 0);
+    const families = [{ id: 'all' as const, label: 'All' }, ...CHORD_FAMILIES];
 
-  // ── Drag ──────────────────────────────────────────────────────────
-
-  private onChipDown(e: PointerEvent, chord: Chord) {
-    const ed = this.ed;
-    const engine = this.engine;
-    if (!ed || !engine || e.button !== 0) return;
-    e.preventDefault();
-    const chip = e.currentTarget as HTMLElement;
-    chip.setPointerCapture(e.pointerId);
-    const intervals = invert(chord.type.intervals, this.inversion);
-    const label = this.inversion ? `${chord.name}/${pitchClassName(chord.root + intervals[0])}` : chord.name;
-    const drag: ChordDrag = { root: chord.root, intervals, name: label, clientX: e.clientX, clientY: e.clientY, overGrid: false };
-    const ghost = this.renderRoot.querySelector<HTMLElement>('.ghost')!;
-    let dragging = false;
-    ed.auditionChord(voiceChord(chord.root, intervals, AUDITION_NEAR), 0.5, undefined, { humanize: true });
-
-    const move = (ev: PointerEvent) => {
-      if (!dragging && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < DRAG_THRESHOLD) return;
-      if (!dragging) {
-        dragging = true;
-        chip.classList.add('dragging');
-        chip.setAttribute('kind', 'solid');
-        chip.setAttribute('tone', 'primary');
-        ghost.innerHTML = '';
-        ghost.append(label);
-        const notes = document.createElement('small');
-        notes.textContent = intervals.map((i) => pitchClassName(chord.root + i)).join(' ');
-        ghost.append(notes);
-        ghost.classList.add('show');
-      }
-      drag.clientX = ev.clientX;
-      drag.clientY = ev.clientY;
-      engine.chordDragEvent(drag, 'move');
-      ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 14}px)`;
-      ghost.style.opacity = drag.overGrid ? '0.75' : '1';
-    };
-    const end = (ev: PointerEvent | null, phase: 'drop' | 'cancel') => {
-      chip.removeEventListener('pointermove', move);
-      chip.removeEventListener('pointerup', up);
-      chip.removeEventListener('pointercancel', cancelled);
-      window.removeEventListener('keydown', esc, true);
-      if (ev && chip.hasPointerCapture(ev.pointerId)) chip.releasePointerCapture(ev.pointerId);
-      chip.classList.remove('dragging');
-      chip.setAttribute('kind', 'soft');
-      chip.removeAttribute('tone');
-      ghost.classList.remove('show');
-      if (!dragging) return;
-      if (ev) {
-        drag.clientX = ev.clientX;
-        drag.clientY = ev.clientY;
-      }
-      engine.chordDragEvent(drag, phase);
-    };
-    const up = (ev: PointerEvent) => end(ev, 'drop');
-    const cancelled = (ev: PointerEvent) => end(ev, 'cancel');
-    const esc = (ev: KeyboardEvent) => {
-      if (ev.key !== 'Escape') return;
-      ev.stopPropagation();
-      ev.preventDefault();
-      end(null, 'cancel');
-    };
-    chip.addEventListener('pointermove', move);
-    chip.addEventListener('pointerup', up);
-    chip.addEventListener('pointercancel', cancelled);
-    window.addEventListener('keydown', esc, true);
-  }
-
-  /** Enter or Space on a focused chord plays it (dragging is for the pointer). */
-  private onChipKey(e: KeyboardEvent, chord: Chord) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    e.preventDefault();
-    const intervals = invert(chord.type.intervals, this.inversion);
-    this.ed?.auditionChord(voiceChord(chord.root, intervals, AUDITION_NEAR), 0.5, undefined, { humanize: true });
-  }
-
-  // ── Render ────────────────────────────────────────────────────────
-
-  private isOpen(root: number) {
-    const byDefault = !!this.ed?.key;
-    return this.toggled.has(root) ? !byDefault : byDefault;
-  }
-
-  private toggleRoot(root: number) {
-    const next = new Set(this.toggled);
-    if (next.has(root)) next.delete(root);
-    else next.add(root);
-    this.toggled = next;
-  }
-
-  render() {
-    const ed = this.ed;
-    if (!ed || !ed.view.chordsPanel) return nothing;
-    const key = ed.key;
-    const q = this.query.trim().toLowerCase().replace(/#/g, '♯').replace(/(?<=[a-g])b|b(?=\d)/g, '♭');
-    const groups = chordsInKey(key)
-      .map((g) => ({
-        ...g,
-        chords: g.chords.filter(
-          (c) =>
-            (this.family === 'all' || c.type.family === this.family) &&
-            (!q || c.name.toLowerCase().includes(q) || c.type.name.toLowerCase().includes(q)),
-        ),
-      }))
-      .filter((g) => g.chords.length);
-
-    return html`
-      <header>
-        <z-text tag="h2" size="sm" weight="600">Chords</z-text>
-        <z-badge size="sm">${key ? formatKey(key) : 'No key'}</z-badge>
-        <span class="spacer"></span>
-        <z-tooltip content="Close   H" placement="bottom"
-          ><z-button class="icon" kind="ghost" size="sm" aria-label="Close chords" @click=${() => ed.setView({ chordsPanel: false })}>${icons.close}</z-button></z-tooltip
-        >
-      </header>
-      <div class="controls">
-        <z-input
-          size="sm"
-          type="search"
-          label="Search chords"
-          placeholder="Search: m7, sus4, add9, 13…"
-          .value=${live(this.query)}
-          @input=${(e: CustomEvent<{ value: string }>) => (this.query = e.detail.value)}
-        ></z-input>
-        <z-toggle-button-group
-          size="sm"
-          kind="outline"
-          tone="primary"
-          aria-label="Inversion"
-          @change=${(e: CustomEvent<{ value?: string }>) => {
-            if (e.detail.value !== undefined) this.inversion = Number(e.detail.value);
-            else this.requestUpdate(); // The inversion is always one of the four.
-          }}
-        >
-          ${INVERSIONS.map((label, i) => html`<z-toggle-button-group-item value=${i} .isPressed=${live(this.inversion === i)}>${label}</z-toggle-button-group-item>`)}
-        </z-toggle-button-group>
-        <div class="families" role="group" aria-label="Chord type">
-          ${[{ id: 'all' as const, label: 'All' }, ...CHORD_FAMILIES].map(
-            (f) =>
-              html`<z-badge
-                selectable
-                size="sm"
-                kind=${this.family === f.id ? 'solid' : 'soft'}
-                tone=${this.family === f.id ? 'primary' : 'neutral'}
-                ?is-selected=${this.family === f.id}
-                @select=${() => (this.family = f.id)}
-                >${f.label}</z-badge
-              >`,
-          )}
-        </div>
+    return html`<z-input class="search" size="sm" type="search" aria-label="Search chords" placeholder="Search chords"
+        .value=${live(view.chordQuery)} @input=${(event: CustomEvent<{ value: string }>) => ed.setView({ chordQuery: event.detail.value })}></z-input>
+      <div class="chips" role="radiogroup" aria-label="Chord type">
+        ${families.map((family) => html`<button type="button" class="chip" role="radio" aria-checked=${view.chordFamily === family.id}
+          @click=${() => ed.setView({ chordFamily: family.id })}>${family.label}</button>`)}
       </div>
       <div class="list" part="list">
-        ${this.renderFound()}
-        ${key ? nothing : html`<z-text class="hint" size="xs" color="muted">No key set, so every chord shows. Pick a key to see only chords that fit it.</z-text>`}
-        ${groups.length
-          ? groups.map((g) => {
-              const open = this.isOpen(g.root);
-              return html`<z-collapsible
-                .isOpen=${live(open)}
-                @toggle=${(e: CustomEvent<{ open: boolean }>) => e.detail.open !== this.isOpen(g.root) && this.toggleRoot(g.root)}
-              >
-                <span slot="trigger" class="root">
-                  ${g.degree ? html`<span class="degree">${g.degree}</span>` : nothing}
-                  <span class="root-name">${pitchClassName(g.root)}</span>
-                  <span class="count">${g.chords.length}</span>
-                </span>
-                <div class="chips">
-                  ${g.chords.map(
-                    (c) =>
-                      html`<z-badge
-                        class="chip"
-                        kind="soft"
-                        tabindex="0"
-                        role="button"
-                        title=${`${pitchClassName(c.root)} ${c.type.name}${c.degree ? ` (${c.degree})` : ''}\n${c.type.intervals.map((i) => pitchClassName(c.root + i)).join(' · ')}\nDrag onto the grid · click to hear`}
-                        @pointerdown=${(e: PointerEvent) => this.onChipDown(e, c)}
-                        @keydown=${(e: KeyboardEvent) => this.onChipKey(e, c)}
-                        >${c.name}</z-badge
-                      >`,
-                  )}
-                </div>
-              </z-collapsible>`;
-            })
-          : html`<z-text class="empty" size="sm" color="muted">No chords match.</z-text>`}
-      </div>
-      <div class="ghost" aria-hidden="true"></div>
-    `;
+        ${!this.scaled ? html`<p class="hint" role="status">${this.loadError || 'Loading chord tools…'}</p>` : nothing}
+        ${groups.map((group) => html`<div class="group-head"><span class="group-name">${pitchClassName(group.root)}</span>
+            <span class="group-count">${group.chords.length} ${group.chords.length === 1 ? 'chord' : 'chords'}</span></div>
+          <div class="tiles">${group.chords.map((chord) => this.renderTile('lib-' + group.root + '-' + chord.name, chord))}</div>`)}
+        ${this.scaled && !groups.length ? html`<p class="hint">No chords match.</p>` : nothing}
+      </div>`;
   }
-}
 
-/**
- * A manila-folder tab on the right edge of the editor. Click it to slide the chords panel out.
- * Sits inside a positioned parent (the editor grid). It rides the panel's left edge while open.
- */
-@customElement('maddie-chords-tab')
-export class MaddieChordsTab extends MaddieElement {
-  static styles = [
-    tokens,
-    css`
-      :host {
-        position: absolute;
-        top: 50%;
-        right: 0;
-        z-index: 3;
-        transform: translateY(-50%);
-        transition: right var(--_motion-medium) var(--_ease);
-      }
-      :host([open]) {
-        right: var(--maddie-chords-width, 280px);
-      }
-      button {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: var(--space-xs);
-        margin: 0;
-        padding: var(--space-md) var(--space-xs);
-        font: inherit;
-        font-size: var(--font-size-caption);
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        /* Inverted: the theme's text color as the fill, so the tab stands out on any theme. */
-        color: var(--_bg);
-        background-color: var(--_text);
-        border: 1px solid var(--_text);
-        border-right: none;
-        border-radius: var(--_radius) 0 0 var(--_radius);
-        box-shadow: -2px 0 8px rgb(0 0 0 / 0.25);
-        cursor: pointer;
-        user-select: none;
-        -webkit-user-select: none;
-        /* Tucked in so only part of the tab peeks over the edge. */
-        translate: 4px 0;
-        transition:
-          translate var(--_motion-fast) var(--_ease),
-          color var(--_motion-fast) var(--_ease);
-      }
-      button:hover,
-      button:focus-visible {
-        translate: 0 0;
-      }
-      button:focus-visible {
-        outline: 2px solid var(--_focus);
-        outline-offset: 2px;
-      }
-      :host([open]) button {
-        translate: 1px 0;
-        /* Covers the panel's left border so the tab and panel read as one piece. */
-        border-right: none;
-      }
-      .label {
-        writing-mode: vertical-rl;
-        transform: rotate(180deg);
-      }
-      svg {
-        width: 16px;
-        height: 16px;
-        transform: rotate(90deg);
-      }
-    `,
-  ];
+  private renderProject(ed: Editor) {
+    const rows = this.projectChords;
+    const selection = ed.selection;
+    return html`<div class="list" part="list">
+      <p class="hint">Chords found in this project. Click one to select it in the editor.</p>
+      ${rows.length ? rows.map((row) => {
+        const isSelected = row.regionId ? selection.has(row.regionId) : row.noteIds.length > 0 && row.noteIds.every((id) => selection.has(id));
+        return html`<button type="button" class="project-row" aria-current=${isSelected} @click=${() => this.selectProjectChord(row)}>
+          <span class="project-pos">${row.position}</span>
+          <span class="project-name">${row.chord.name}</span>
+          <span class="project-track"><span class="project-dot" style=${'background:' + row.trackColor}></span>${row.trackName}</span>
+        </button>`;
+      }) : html`<p class="hint">No chords in this project yet.</p>`}
+    </div>`;
+  }
 
-  protected attach(editor: Editor, _engine: Engine) {
-    const update = () => {
-      this.toggleAttribute('open', editor.view.chordsPanel);
-      this.requestUpdate();
-    };
-    update();
-    this.track(editor.on('view', update));
+  private renderStepper(label: string, value: string, canDown: boolean, canUp: boolean, down: () => void, up: () => void) {
+    return html`<div class="prop"><span class="prop-label">${label}</span>
+      <div class="stepper" role="group" aria-label=${label}>
+        <button type="button" aria-label=${label + ' down'} ?disabled=${!canDown} @click=${down}>${icons.back}</button>
+        <span class="stepper-value">${value}</span>
+        <button type="button" aria-label=${label + ' up'} ?disabled=${!canUp} @click=${up}>${forwardIcon}</button>
+      </div>
+    </div>`;
+  }
+
+  private renderCraft(ed: Editor, theme: string) {
+    const view = ed.view;
+    const crafting = this.crafting;
+    const scaled = this.scaled;
+    const octaveIndex = OCTAVES.indexOf(view.chordOctave);
+    const maxInversion = crafting ? Math.min(3, crafting.chord.type.intervals.length - 1) : 3;
+    const inversion = Math.min(view.chordInversion, maxInversion);
+    const template = view.chordTemplateId ? scaled?.performanceTemplates.find((item) => item.id === view.chordTemplateId) : undefined;
+    const hasPattern = !!template;
+    const steps = template ? patternRhythm(template) : Array.from({ length: 16 }, () => false);
+    const isPickerOpen = view.patternPicker === 'craft';
+    const isPlaying = this.playingId === 'craft';
+    const voicings = scaled?.voicingNames ?? [view.chordVoicing];
+    const setOctave = (octave: number) => ed.setView({ chordOctave: octave });
+    const setInversion = (value: number) => ed.setView({ chordInversion: value });
+
+    const hero = crafting ? html`<button type="button" class=${isPlaying ? 'hero isPlaying' : 'hero'}
+        aria-label=${`${crafting.chord.name}, ${crafting.chord.type.name}. Hold to hear, drag to place, Enter to place at the playhead.`}
+        @pointerdown=${(event: PointerEvent) => this.startDrag(event, 'craft', crafting.chord)}
+        @keydown=${(event: KeyboardEvent) => this.onTileKey(event, crafting.id, crafting.chord)}>
+        <span class="hero-title"><span class="hero-name">${crafting.chord.name}</span><span class="hero-kind">${crafting.chord.type.name}</span></span>
+        <span class="hero-side"><span class="hero-notes">${noteNames(crafting.chord)}</span>
+          <span class="hero-hint">${isPlaying ? waveMark : nothing}Hold to hear · drag to place</span></span>
+      </button>` : html`<div class="hero-empty">Click any chord to start shaping it here.</div>`;
+
+    return html`<div class="craft" data-theme=${theme} aria-label="Chord you're shaping">
+      <div class=${crafting ? 'card' : 'card isEmpty'}>
+        ${hero}
+        <div class="props">
+          ${this.renderStepper('Octave', 'Oct ' + view.chordOctave, octaveIndex > 0, octaveIndex < OCTAVES.length - 1,
+            () => setOctave(OCTAVES[octaveIndex - 1]), () => setOctave(OCTAVES[octaveIndex + 1]))}
+          ${this.renderStepper('Inversion', INVERSIONS[inversion], inversion > 0, inversion < maxInversion,
+            () => setInversion(inversion - 1), () => setInversion(inversion + 1))}
+          <div class="prop"><span class="prop-label">Voicing</span>
+            <select class="voicing" aria-label="Voicing" .value=${live(view.chordVoicing)}
+              @change=${(event: Event) => ed.setView({ chordVoicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
+              ${voicings.map((name) => html`<option value=${name} ?selected=${name === view.chordVoicing}>${CHORD_VOICINGS[name] ?? name}</option>`)}
+            </select>
+          </div>
+        </div>
+        <div class="pattern-row">
+          <button type="button" class="pattern-button" data-pattern-trigger aria-haspopup="dialog" aria-expanded=${isPickerOpen}
+            @click=${(event: MouseEvent) => this.openPicker(event.currentTarget as HTMLElement)}>
+            <span class="pattern-copy"><span class="pattern-label">Pattern</span>
+              <span class=${hasPattern ? 'pattern-name' : 'pattern-name isEmpty'}>${template ? template.name : 'None. Pick a pattern'}
+                ${template ? html`<span class="pattern-category">· ${formatPatternCategory(template.category)}</span>` : nothing}</span></span>
+            <span class="rhythm" aria-hidden="true">${steps.map((isHit) => html`<span class=${isHit ? 'step isHit' : 'step'}></span>`)}</span>
+            <span class="chevron">${icons.chevron}</span>
+          </button>
+          ${hasPattern ? html`<button type="button" class="clear" aria-label="Remove pattern" title="Remove pattern"
+            @click=${() => ed.setView({ chordTemplateId: '' })}>${icons.close}</button>` : nothing}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  private renderMain(ed: Editor, theme: string | undefined, craftTheme: string) {
+    const isOpen = ed.view.chordsPanel;
+    const toggle = () => ed.setView({ chordsPanel: !isOpen, patternPicker: null });
+    const keyName = ed.key && ed.key.scale !== 'chromatic' ? `${pitchClassName(ed.key.root)} ${ed.key.scale}` : 'No key';
+    if (!isOpen) {
+      return html`<section class="strip" data-theme=${theme ?? nothing} aria-label="Chords">
+        <button type="button" class="fold" aria-expanded="false" aria-label="Open chords" title="Open chords   H" @click=${toggle}>${icons.back}</button>
+        <span class="strip-title vertical">Chords</span>
+        <span class="strip-sub vertical">${keyName}</span>
+      </section>`;
+    }
+    const tab = ed.view.chordsTab;
+    const libraryCount = this.browseGroups(ed.key).reduce((sum, group) => sum + group.chords.length, 0);
+    return html`<section class="main" data-theme=${theme ?? nothing} aria-label="Chords">
+      <div class="main-head">
+        <button type="button" class="fold" aria-expanded="true" aria-label="Fold chords" title="Fold chords   H" @click=${toggle}>${forwardIcon}</button>
+        <span class="main-title">Chords</span><span class="key-pill">${keyName}</span>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Chord lists">
+        <button type="button" class="tab" role="tab" aria-selected=${tab === 'all'} @click=${() => ed.setView({ chordsTab: 'all' })}>All<span class="tab-count">${libraryCount}</span></button>
+        <button type="button" class="tab" role="tab" aria-selected=${tab === 'project'} @click=${() => ed.setView({ chordsTab: 'project' })}>Project<span class="tab-count">${this.projectChords.length}</span></button>
+      </div>
+      ${tab === 'project' ? this.renderProject(ed) : this.renderLibrary(ed)}
+      ${this.renderCraft(ed, craftTheme)}
+    </section>`;
   }
 
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    const open = ed.view.chordsPanel;
-    return html`<button
-      type="button"
-      aria-label="Chords"
-      aria-expanded=${open ? 'true' : 'false'}
-      title="Chords that fit the key   H"
-      @click=${() => ed.setView({ chordsPanel: !open })}
-    >
-      ${icons.chords}<span class="label">Chords</span>
-    </button>`;
+    const page = pageTheme();
+    const view = ed.view;
+    const mainTheme = view.chordsPanelDark ? 'dark' : undefined;
+    const mainEffective = mainTheme ?? page;
+    const craftTheme = view.chordCraftDark ? 'dark' : oppositeTheme(mainEffective);
+    const railTheme = view.suggestionsDark ? 'dark' : undefined;
+    return html`
+      ${this.renderRail(ed, railTheme)}
+      ${this.renderMain(ed, mainTheme, craftTheme)}
+      ${this.renderPicker(ed)}
+      <div class="ghost" hidden aria-hidden="true"></div>
+    `;
   }
 }
+
+const waveMark = html`<span class="wave" aria-hidden="true"><span></span><span></span><span></span></span>`;
+const forwardIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"/></svg>`;
+const borrowedIcon = html`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3L6.5 9.5M6.5 4.5v5h5"/><path d="M3 7v6h6" opacity=".55"/></svg>`;
 
 declare global {
   interface HTMLElementTagNameMap {
     'maddie-chords': MaddieChords;
-    'maddie-chords-tab': MaddieChordsTab;
   }
 }

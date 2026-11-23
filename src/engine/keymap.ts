@@ -1,4 +1,5 @@
-import { downloadMidi, stepGrid, type Editor } from '../core';
+import { getTrackName } from '../core/tracks';
+import { downloadMidi, loadScaled, stepGrid, type ChordRegion, type Editor } from '../core';
 import { Engine } from './engine';
 
 export type Action = (editor: Editor) => void;
@@ -37,23 +38,53 @@ const stepMarker = (editor: Editor, dir: -1 | 1) => {
   else if (tick > v.scrollTick + span - margin) editor.setView({ scrollTick: tick - span + margin }, { animate: true });
 };
 
+/** Use a stable source when the performance library still needs to load. */
+const editChords = async (editor: Editor, label: string, plan: () => readonly ChordRegion[] | undefined, audition = false) => {
+  const source = editor.chordRegions;
+  if (!source) return;
+  try {
+    if (source.some((region) => region.performance)) await loadScaled();
+    if (editor.chordRegions !== source) return;
+    const regions = plan();
+    const edit = regions && editor.chordTrack.prepare(regions);
+    if (edit && editor.chordTrack.commit(edit, label) && audition) editor.chordTrack.auditionPitches();
+  } catch (error) {
+    Engine.for(editor).toast((error as Error).message, 'error');
+  }
+};
+
 /** Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step. */
 const nudge = (editor: Editor, dir: -1 | 1) => {
   if (!editor.selection.size) return stepMarker(editor, dir);
-  const from = Math.min(...editor.selectedNotes.map((n) => n.start));
+  const chords = editor.selectedChordRegions;
+  const from = chords[0]?.start ?? Math.min(...editor.selectedNotes.map((n) => n.start));
   const grid = editor.commands.gridTicks(from);
   const to = editor.view.snap ? stepGrid(from, grid, editor.meta.timeSignature, dir) : from + dir * grid;
+  if (chords.length) return void editChords(editor, 'Move chords', () => editor.chordTrack.planNudge(dir, to));
   editor.commands.move(undefined, { ticks: to - from });
 };
 
 const pitchNudge = (editor: Editor, steps: number) => {
   if (!editor.selection.size) return;
+  const chords = editor.selectedChordRegions;
+  if (chords.length) {
+    if (Math.abs(steps) === 12) void editChords(editor, 'Transpose chords', () => editor.chordTrack.planMove(chords[0].id, chords[0].start, steps / 12, chords), true);
+    return;
+  }
   editor.commands.nudgePitch(undefined, steps);
 };
 
 /** Move each selected note's end to the previous / next grid line (never past its start). Snap off: one grid step. */
 const resizeBy = (editor: Editor, dir: -1 | 1) => {
   if (!editor.selection.size) return;
+  if (editor.chordRegions) {
+    const [region, other] = editor.selectedChordRegions;
+    if (!region || other) return;
+    const end = region.start + region.duration;
+    const grid = editor.commands.gridTicks(end);
+    const tick = editor.view.snap ? stepGrid(end, grid, editor.meta.timeSignature, dir) : end + dir * grid;
+    return void editChords(editor, 'Resize chord', () => editor.chordTrack.planResize(region.id, 'end', tick));
+  }
   if (!editor.view.snap) return editor.commands.resize(undefined, { edge: 'end', ticks: dir * editor.commands.gridTicks() });
   const sigs = editor.meta.timeSignature;
   const changes = editor.selectedNotes.flatMap((n) => {
@@ -66,25 +97,41 @@ const resizeBy = (editor: Editor, dir: -1 | 1) => {
 
 /** Keep what was just played (outside a take) as notes at the marker. */
 export const captureMidi = (editor: Editor) => {
-  const ids = editor.capture.commit();
   const engine = Engine.for(editor);
+  if (editor.chordRegions) return engine.toast('Select a MIDI track to capture notes.');
+  const ids = editor.capture.commit(editor.transport.position);
   const hasNotes = ids.length > 0;
   if (!hasNotes) return engine.toast('Nothing to capture yet · play something first');
   const label = ids.length === 1 ? '1 note' : `${ids.length} notes`;
-  engine.toast(`Captured ${label}`);
+  const index = editor.trackIds.indexOf(editor.activeTrackId);
+  const track = editor.trackList[index];
+  const name = getTrackName(track, index);
+  engine.toast(`Captured ${label} to ${name}`, 'capture');
+};
+
+const chordShortcut = (editor: Editor, operation: Promise<unknown> | undefined) => {
+  void operation?.catch((error: Error) => Engine.for(editor).toast(error.message, 'error'));
 };
 
 /** Built-in actions, by name. Keymaps point at these (or at functions). */
 export const actions: Record<string, Action> = {
   undo: (e) => e.undo(),
   redo: (e) => e.redo(),
-  delete: (e) => e.selection.size && e.commands.delete(),
+  delete: (e) => {
+    if (!e.selection.size) return;
+    if (!e.chordRegions) return e.commands.delete();
+    void e.chordTrack.delete(e.selection).catch((error: Error) => Engine.for(e).toast(error.message, 'error'));
+  },
   selectAll: (e) => e.commands.selectAll(),
   deselect: (e) => e.clearSelection(),
-  duplicate: (e) => e.selection.size && e.commands.duplicate(),
+  duplicate: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.duplicate()) : e.selection.size && e.commands.duplicate(),
   copy: (e) => e.commands.copy(),
-  cut: (e) => e.selection.size && e.commands.cut(),
-  paste: (e) => e.commands.paste(),
+  cut: (e) => {
+    if (!e.chordRegions) return e.selection.size && e.commands.cut();
+    e.chordTrack.copy();
+    chordShortcut(e, e.chordTrack.delete(e.selection));
+  },
+  paste: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.paste()) : e.commands.paste(),
   quantize: (e) => e.selection.size && e.commands.quantize(),
   mute: (e) => e.selection.size && e.commands.toggleMute(),
   legato: (e) => e.selection.size && e.commands.legato(),
@@ -104,11 +151,13 @@ export const actions: Record<string, Action> = {
   zoomOut: (e) => zoomBy(e, 1 / 1.5),
   rowsTaller: (e) => rowZoomBy(e, 1.25),
   rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
+  // Like Ableton: stopping returns to the marker, so the next play starts from it.
   playPause: (e) => e.transport.toggle(),
   playSelection: (e) => {
     const notes = e.selectedNotes;
-    if (!notes.length) return e.transport.toggle();
-    e.transport.seek(Math.min(...notes.map((n) => n.start)));
+    const first = e.selectedChordRegions[0]?.start ?? (notes.length ? Math.min(...notes.map((n) => n.start)) : undefined);
+    if (first === undefined) return e.transport.toggle();
+    e.transport.seek(first);
     if (!e.transport.playing) e.transport.play();
   },
   stop: (e) => {
@@ -122,7 +171,18 @@ export const actions: Record<string, Action> = {
   toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel }),
   record: (e) => e.recorder.toggle(),
   captureMidi: (e) => captureMidi(e),
-  toggleLoop: (e) => e.transport.setLoop({ enabled: !e.transport.loop.enabled }),
+  toggleLoop: (e) => {
+    const selectedNotes = e.selectedNotes;
+    const selectedChords = e.selectedChordRegions;
+    const selectedSpans = [...selectedNotes, ...selectedChords];
+    const hasSelection = selectedSpans.length > 0;
+    if (!hasSelection) return e.transport.setLoop({ enabled: !e.transport.loop.enabled });
+    const starts = selectedSpans.map((span) => span.start);
+    const ends = selectedSpans.map((span) => span.start + span.duration);
+    const start = Math.min(...starts);
+    const end = Math.max(...ends);
+    e.transport.setLoop({ start, end, enabled: true });
+  },
   exportMidi: (e) => e.hasAnyNotes && downloadMidi(e.doc),
 };
 

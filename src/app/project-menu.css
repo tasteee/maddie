@@ -1,0 +1,31 @@
+ :host { display: inline-flex; min-width: 0; }
+z-popover { min-width: 0; --z-overlay-max-width: 288px; --z-overlay-padding: var(--space-1); }
+.name { display: block; max-width: min(240px, 15vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark { flex: none; width: 18px; height: 18px; border-radius: var(--radius-md); background: var(--text-primary); }
+.panel { width: min(278px, 75vw); min-height: 302px; display: flex; flex-direction: column; color: var(--text-primary); }
+.name-field, .projects-header { padding: var(--space-2); }
+z-input { display: block; }
+.panel::selection, .panel ::selection {
+  background-color: var(--color-neutral-7);
+  color: var(--color-neutral-1);
+}
+.save-status, .muted, p, .project-action > span { color: var(--text-tertiary); font-size: var(--font-size-xs); }
+.save-status { display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-1); }
+p { margin: 0; }
+.success { color: var(--status-success); }
+.error { color: var(--status-danger); }
+svg { width: 14px; height: 14px; vertical-align: middle; }
+button { color: inherit; background: transparent; border: 0; text-align: start; font: inherit; cursor: pointer; border-radius: var(--radius-md); }
+button:hover { background: var(--surface-page); }
+button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.project-action, .project-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-2); width: 100%; min-height: var(--control-height-md); box-sizing: border-box; }
+z-separator { margin-block: var(--space-1); }
+.projects-header { display: flex; align-items: center; gap: var(--space-2); }
+.project-search { margin: 0 var(--space-2) var(--space-1); }
+.project-row { padding-block: var(--space-2); }
+.project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-name .muted { display: block; }
+.current { padding: var(--space-0-5) var(--space-1-5); border-radius: var(--radius-sm); background: var(--surface-subtle); }
+.project-list { height: 232px; }
+.project-list p { padding: var(--space-3); }
+.project-footer { border-top: 1px solid var(--border-default); padding: var(--space-2); margin-top: auto; }

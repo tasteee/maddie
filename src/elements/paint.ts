@@ -1,4 +1,4 @@
-import { barsInRange, beatLength, pitchClass, resolveGrid, type Editor, type Note, type NoteColorMode } from '../core';
+import { barsInRange, pitchClass, resolveGrid, type Editor, type Note, type NoteColorMode } from '../core';
 import type { NoteDisplay } from '../engine/animation';
 import { clamp, easeOut } from '../engine/ease';
 import type { DisplayView, Engine } from '../engine/engine';
@@ -59,17 +59,17 @@ export function noteFill(p: Palette, base: string, note: { velocity: number; mut
 }
 
 // How strongly a ghost note shows. Muted tracks sit further back than playing ones.
-const GHOST_FILL_ALPHA = 0.2;
-const GHOST_EDGE_ALPHA = 0.5;
-const GHOST_MUTED_FILL_ALPHA = 0.08;
-const GHOST_MUTED_EDGE_ALPHA = 0.22;
+const GHOST_EDGE_ALPHA = 0.45;
+const GHOST_MUTED_EDGE_ALPHA = 0.3;
 
 /** Track colors are CSS colors. Canvas needs rgba, and the conversion is slow, so each is converted once. */
 export function resolveTrackColor(p: Palette, color: string): string {
   const cacheKey = `track:${color}`;
   const cached = p.pitchCache.get(cacheKey);
   if (cached) return cached;
-  const resolved = normalizeColor(color);
+  const token = /^var\((--accent-spark-[1-5])\)$/.exec(color)?.[1];
+  const value = token ? p.trackTokens.getPropertyValue(token).trim() : color;
+  const resolved = normalizeColor(value);
   p.pitchCache.set(cacheKey, resolved);
   return resolved;
 }
@@ -89,7 +89,7 @@ export function drawGhostNotes(
 ) {
   const from = v.scrollTick;
   const to = from + width / v.pxPerTick;
-  const ghosts = engine.ghostNotes(from, to);
+  const ghosts = engine.editor.view.ghostNotes ? engine.ghostNotes(from, to) : [];
   const rowHeight = v.rowHeight;
   const radius = p.noteRadius;
   const inner = Math.max(2, rowHeight - 2);
@@ -105,14 +105,10 @@ export function drawGhostNotes(
     const isOffscreen = x > width || x + noteWidth < 0 || y > height || y + inner < 0;
     if (isOffscreen) continue;
     const color = resolveTrackColor(p, ghost.color);
-    const fillAlpha = ghost.isAudible ? GHOST_FILL_ALPHA : GHOST_MUTED_FILL_ALPHA;
     const edgeAlpha = ghost.isAudible ? GHOST_EDGE_ALPHA : GHOST_MUTED_EDGE_ALPHA;
     ctx.globalAlpha = rowAlpha;
-    roundRect(ctx, x + 0.5, y, noteWidth - 1, inner, radius);
-    ctx.fillStyle = withAlpha(color, fillAlpha);
-    ctx.fill();
     ctx.strokeStyle = withAlpha(color, edgeAlpha);
-    roundRect(ctx, x + 1, y + 0.5, noteWidth - 2, inner - 1, radius - 0.5);
+    roundRect(ctx, x + 0.5, y + 0.5, Math.max(0, noteWidth - 3), inner - 1, radius);
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -144,15 +140,15 @@ export function drawTimeGrid(
   const grid = resolveGrid(editor.view.grid, ppq, v.pxPerTick, bars[0]?.sig);
   const subPx = grid * v.pxPerTick;
   const gridFade = easeOut(clamp((now - engine.gridChangedAt) / engine.motion.slow, 0, 1));
-  const subAlpha = clamp((subPx - 5) / 10, 0, 1) * gridFade;
+  const subAlpha = subPx >= 4 ? gridFade : 0;
+  const showBeats = ppq * v.pxPerTick >= 4;
   const x = (t: number) => (t - from) * v.pxPerTick;
 
   ctx.lineWidth = 1;
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     const barLen = (bars[i + 1]?.tick ?? bar.tick + (ppq * 4 * bar.sig.numerator) / bar.sig.denominator) - bar.tick;
-    const beat = beatLength(bar.sig, ppq);
-    const beatAlpha = clamp((beat * v.pxPerTick - 4) / 8, 0, 1);
+    const beat = ppq;
     // Subdivisions.
     if (subAlpha > 0.01) {
       ctx.strokeStyle = withAlpha(p['line-sub'], subAlpha);
@@ -167,8 +163,8 @@ export function drawTimeGrid(
       ctx.stroke();
     }
     // Beats.
-    if (beatAlpha > 0.01) {
-      ctx.strokeStyle = withAlpha(p['line-beat'], beatAlpha);
+    if (showBeats) {
+      ctx.strokeStyle = p['line-beat'];
       ctx.beginPath();
       for (let t = bar.tick + beat; t < bar.tick + barLen - 0.5; t += beat) {
         const xx = x(t);
@@ -207,11 +203,9 @@ export function drawLoop(ctx: CanvasRenderingContext2D, editor: Editor, v: Displ
 /** Playhead line. Dimmed while stopped. */
 export function drawPlayhead(ctx: CanvasRenderingContext2D, editor: Editor, v: DisplayView, p: Palette, height: number) {
   const pos = editor.transport.position;
-  if (!editor.transport.playing && pos <= 0) return;
   const x = (pos - v.scrollTick) * v.pxPerTick;
-  const color = editor.recorder.recording ? p.record : p.playhead;
-  ctx.fillStyle = editor.transport.playing ? color : withAlpha(color, 0.55);
-  ctx.fillRect(Math.round(x) - 0.75, 0, 1.5, height);
+  ctx.fillStyle = p.playhead;
+  ctx.fillRect(Math.round(x), 0, 1, height);
 }
 
 /** Rounded rect path (radius clamped to size). */
