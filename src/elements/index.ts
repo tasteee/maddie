@@ -10,6 +10,7 @@ export { MaddieChords } from './chords';
 export { MaddiePatternPicker } from './pattern-picker';
 export { MaddieInspector } from './inspector';
 export { MaddieChordBar } from './chord-bar';
+export { MaddieSilentBadge } from './silent-badge';
 export { MaddieTracks } from './tracks';
 export {
   MaddieToolbar,
