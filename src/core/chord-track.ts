@@ -146,6 +146,14 @@ export class ChordTrackCommands {
 
   constructor(private editor: Editor) {}
 
+  /** One bar at the start of the song, in ticks. New chords are this long unless they're fitted to a gap. */
+  barTicks(): Tick {
+    const ed = this.editor;
+    const signature = ed.meta.timeSignature[0];
+    const beatsPerBar = signature ? signature.numerator * (4 / signature.denominator) : 4;
+    return Math.round(ed.ppq * beatsPerBar);
+  }
+
   draft(chord: Pick<ChordRegion, 'root' | 'symbol' | 'intervals'>,
     { octave, inversion, voicing, templateId }: { octave: number; inversion: number; voicing: ScaledT.VoicingNameT; templateId: string }): ChordDraft {
     if (!engine) throw new Error('Chord tools are still loading.');
@@ -154,7 +162,7 @@ export class ChordTrackCommands {
     const root = (octave + 1) * 12 + tonic + pitchClass(chord.root - tonic);
     const template = templateId ? engine.performanceTemplates.find((item) => item.id === templateId) : undefined;
     if (templateId && !template) throw new Error('This performance is unavailable.');
-    const duration = template ? Math.max(1, Math.round(template.durationBeats * ed.ppq)) : ed.ppq;
+    const duration = this.barTicks();
     const region: ChordRegion = {
       ...chord, id: createId(), start: 0, duration, velocity: ed.view.noteVelocity, voicing, inversion, rootMidi: root,
       pitches: chord.intervals.map((interval) => root + interval),
@@ -165,6 +173,15 @@ export class ChordTrackCommands {
     region.pitches = voicing === 'guitar' ? pitches.map((pitch) => pitch + 12 * (octave - 3)) : pitches;
     if (!isValid([region])) throw new RangeError('This voicing is outside the MIDI range at the chosen octave.');
     return { region, notes: renderRegions([region], [], [], ed.ppq) };
+  }
+
+  /** The same draft at another length, re-rendered so a pattern fills the new window. */
+  fitDraft(draft: ChordDraft, duration: Tick): ChordDraft {
+    const isSameLength = duration === draft.region.duration;
+    if (isSameLength) return draft;
+    const region = { ...draft.region, id: 'draft', duration } as ChordRegion;
+    const notes = renderRegions([region], [], [], this.editor.ppq);
+    return { region: { ...draft.region, duration }, notes };
   }
 
   placeDraft(draft: ChordDraft, start: Tick): boolean {

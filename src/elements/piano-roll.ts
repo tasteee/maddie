@@ -16,6 +16,7 @@ import {
   snapTick,
   timeSigAt,
   type ChordRegion,
+  type ChordDraft,
   type ChordTrackEdit,
   type Editor,
   type Note,
@@ -31,6 +32,31 @@ import { importMidiFiles } from './midi-io';
 import { drawGhostNotes, drawPlayhead, drawTimeGrid, noteFill, playingFlash, resolveTrackColor, roundRect, type NoteState, type NoteStyle } from './paint';
 import type { Palette } from './tokens';
 import './zest';
+
+const CHORD_ZONE_PX = 10;
+
+type ChordDropPlanT =
+  | { kind: 'place'; start: number; draft: ChordDraft; label: string }
+  | { kind: 'edit'; start: number; draft: ChordDraft; edit: ChordTrackEdit; newId: string; label: string; commitLabel: string; insertion?: number };
+
+const QUARTERS = ['', '¼', '½', '¾'];
+
+/** "¾ bar", "1¼ bars", or beats when it isn't a quarter-bar step. */
+const formatBars = (duration: number, bar: number) => {
+  const quarters = Math.round((duration / bar) * 4);
+  const isQuarterStep = Math.abs(quarters * bar / 4 - duration) < 1;
+  if (!isQuarterStep) {
+    const beats = Math.round((duration / (bar / 4)) * 100) / 100;
+    return `${beats} ${beats === 1 ? 'beat' : 'beats'}`;
+  }
+  const whole = Math.floor(quarters / 4);
+  const part = QUARTERS[quarters % 4];
+  const isUnderOne = whole === 0;
+  if (isUnderOne) return `${part} bar`;
+  const isOne = quarters === 4;
+  if (isOne) return '1 bar';
+  return `${whole}${part} bars`;
+};
 
 type Zone = 'body' | 'start' | 'end';
 
@@ -184,18 +210,75 @@ export class MaddiePianoRoll extends CanvasElement {
       if (editor.chordRegions?.some((region) => region.performance)) void loadScaled().catch(() => {});
     };
     warmChordTools();
-    this.track(editor.on('tracks', warmChordTools), editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast), engine.onChordDrag(this.onChordDrag));
+    window.addEventListener('keydown', this.trackAlt, true);
+    window.addEventListener('keyup', this.trackAlt, true);
+    this.track(editor.on('tracks', warmChordTools), editor.on('view', () => this.updateCursor()), engine.onToast(this.showToast), engine.onChordDrag(this.onChordDrag),
+      () => {
+        window.removeEventListener('keydown', this.trackAlt, true);
+        window.removeEventListener('keyup', this.trackAlt, true);
+      });
   }
 
   // ── Chord drop (from <maddie-chords>) ───────────────────────────
 
-  private chordStartAt(drag: ChordDrag): number | undefined {
+  /**
+   * Where a dragged chord would land, and what dropping it does:
+   * - empty space: place, 1 bar or fitted to end where the next chord starts;
+   * - a chord's body: replace it (the new chord takes its start and length);
+   * - a seam between two touching chords: insert, sliding the later chords right.
+   * Nothing ever overlaps. Alt only skips snapping.
+   */
+  private chordDropPlan(drag: ChordDrag, isAltDown: boolean): ChordDropPlanT | undefined {
+    const ed = this.ed!;
     const { x, y } = this.local(drag);
-    if (x < 0 || y < 0 || x > this.width || y > this.height) return;
-    const start = this.snap(this.tickAt(x), { altKey: false }, 'floor');
-    const duration = drag.draft.region.duration;
-    if (this.ed?.chordRegions?.some((region) => start < region.start + region.duration && start + duration > region.start)) return;
-    return start;
+    const isOutside = x < 0 || y < 0 || x > this.width || y > this.height;
+    if (isOutside) return;
+    const view = ed.view;
+    const pointerTick = this.tickAt(x);
+    const zoneTicks = CHORD_ZONE_PX / view.pxPerTick;
+    const bar = drag.draft.region.duration;
+    const regions = ed.chordRegions;
+    const end = (region: ChordRegion) => region.start + region.duration;
+
+    if (regions) {
+      for (let index = 0; index + 1 < regions.length; index++) {
+        const left = regions[index];
+        const right = regions[index + 1];
+        const isTouching = end(left) === right.start;
+        const isNearSeam = Math.abs(pointerTick - right.start) <= zoneTicks;
+        if (!isTouching || !isNearSeam) continue;
+        const at = right.start;
+        const inserted = { ...drag.draft.region, id: createId(), start: at };
+        const shifted = regions.map((region) => (region.start >= at ? { ...region, start: region.start + bar } : region));
+        const moved = regions.length - index - 1;
+        const edit = ed.chordTrack.prepare([...shifted, inserted]);
+        if (!edit) return;
+        const label = `Insert · moves ${moved} ${moved === 1 ? 'chord' : 'chords'}`;
+        return { kind: 'edit', start: at, draft: drag.draft, edit, newId: inserted.id, label, insertion: at, commitLabel: 'Insert chord' };
+      }
+      const target = regions.find((region) => pointerTick >= region.start && pointerTick < end(region));
+      if (target) {
+        const isInBody = pointerTick - target.start > zoneTicks && end(target) - pointerTick > zoneTicks;
+        if (!isInBody) return;
+        const fitted = ed.chordTrack.fitDraft(drag.draft, target.duration);
+        const replacement = { ...fitted.region, id: createId(), start: target.start };
+        const edit = ed.chordTrack.prepare([...regions.filter((region) => region !== target), replacement]);
+        if (!edit) return;
+        return { kind: 'edit', start: target.start, draft: fitted, edit, newId: replacement.id, label: `Replace ${target.symbol}`, commitLabel: 'Replace chord' };
+      }
+    }
+
+    const start = this.snap(pointerTick, { altKey: isAltDown }, 'floor');
+    const next = regions?.find((region) => region.start > start);
+    const room = next ? next.start - start : bar;
+    const minimum = this.gridAt(start);
+    const hasRoom = room >= Math.min(minimum, bar);
+    if (!hasRoom) return;
+    const duration = Math.min(bar, room);
+    const draft = ed.chordTrack.fitDraft(drag.draft, duration);
+    const isFitted = duration < bar;
+    const label = isFitted ? `Fits ${formatBars(duration, bar)}` : '';
+    return { kind: 'place', start, draft, label };
   }
 
   private revealChord(pitches: readonly number[]) {
@@ -215,30 +298,37 @@ export class MaddiePianoRoll extends CanvasElement {
     const ed = this.ed;
     const engine = this.engine;
     if (!ed || !engine) return;
-    const start = phase === 'cancel' ? undefined : this.chordStartAt(drag);
-    const draft = drag.draft;
-    if (start === undefined) {
+    const plan = phase === 'cancel' ? undefined : this.chordDropPlan(drag, this.isAltDown);
+    if (!plan) {
       if (drag.overGrid || phase !== 'move') engine.clearPreview();
       drag.overGrid = false;
+      drag.label = undefined;
       return;
     }
-    const notes = draft.notes.map((note) => ({ ...note, start: start + note.start }));
+    const draft = plan.draft;
+    const notes = draft.notes.map((note) => ({ ...note, start: plan.start + note.start }));
     const pitches = notes.length ? notes.map((note) => note.pitch) : draft.region.pitches;
+    drag.label = plan.label || undefined;
     if (phase === 'move') {
       if (!drag.overGrid) this.revealChord(pitches);
       drag.overGrid = true;
-      engine.setPreview({ added: notes }, ed.view.snap);
+      const isEdit = plan.kind === 'edit';
+      if (isEdit) engine.previewChords(plan.edit, plan.insertion);
+      if (!isEdit) engine.setPreview({ added: notes }, ed.view.snap);
       return;
     }
-    const shouldConfirm = !ed.chordRegions;
-    const isConfirmed = shouldConfirm ? await confirmPlainChordPlacement(this) : true;
+    const isMidiTrack = !ed.chordRegions;
+    const isConfirmed = isMidiTrack ? await confirmPlainChordPlacement(this) : true;
     if (!isConfirmed) {
       engine.clearPreview();
       return;
     }
     try {
-      const added = ed.chordTrack.placeDraft(draft, start);
-      if (added) {
+      const isEdit = plan.kind === 'edit';
+      const isAdded = isEdit
+        ? ed.chordTrack.commit(plan.edit, plan.commitLabel, [plan.newId])
+        : ed.chordTrack.placeDraft(draft, plan.start);
+      if (isAdded) {
         this.revealChord(pitches);
         ed.chordTrack.auditionPitches([draft.region]);
       }
@@ -248,6 +338,10 @@ export class MaddiePianoRoll extends CanvasElement {
     }
     engine.clearPreview();
   };
+
+  /** Alt while dragging a chord from the panel skips snapping. The drag lives in another element, so track it here. */
+  private isAltDown = false;
+  private trackAlt = (event: KeyboardEvent) => { this.isAltDown = event.altKey; };
 
   protected resized() {
     if (!this.engine || !this.ed) return;
@@ -827,9 +921,9 @@ export class MaddiePianoRoll extends CanvasElement {
       ctx.restore();
     }
     if (engine.preview.insertion !== undefined) {
-      ctx.fillStyle = p.text;
+      ctx.fillStyle = p.accent;
       const x = (engine.preview.insertion - view.scrollTick) * view.pxPerTick;
-      ctx.fillRect(x - 1, 0, 2, this.height);
+      ctx.fillRect(x - 1.5, 0, 3, this.height);
     }
     ctx.restore();
   }

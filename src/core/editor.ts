@@ -419,6 +419,7 @@ export class Editor extends Emitter<EditorEvents> {
     let result: T;
     try {
       result = fn(this.txApi);
+      this.resolveOverlaps(this.tx.patches);
     } catch (err) {
       this.rollback(this.tx.patches);
       this.tx = null;
@@ -428,6 +429,82 @@ export class Editor extends Emitter<EditorEvents> {
     this.tx = null;
     this.finish(tx);
     return result;
+  }
+
+  /**
+   * Notes never overlap: two notes on the same pitch in a MIDI track never share time.
+   * The notes this transaction added or changed keep their full size. Notes they run into
+   * make room: fully covered ones are removed, others are trimmed at the edge they overlap,
+   * and one that surrounds an edited note ends where it starts (the tail is dropped).
+   * Runs inside the transaction, so the whole edit is one undo step. Chord tracks are
+   * left alone: their notes are rendered from chord regions, which never overlap.
+   */
+  private resolveOverlaps(patches: readonly Patch[]) {
+    const touchedByTrack = new Map<string, Set<NoteId>>();
+    for (const patch of patches) {
+      const isNoteEdit = patch.op === 'add' || patch.op === 'replace';
+      if (!isNoteEdit) continue;
+      const note = patch.op === 'add' ? patch.note : patch.to;
+      const ids = touchedByTrack.get(patch.track) ?? new Set<NoteId>();
+      ids.add(note.id);
+      touchedByTrack.set(patch.track, ids);
+    }
+    for (const [trackId, touchedIds] of touchedByTrack) {
+      const isChordTrack = !!this.tracks.get(trackId)?.track.chordRegions;
+      // The transaction API edits the active track, which is where note edits happen.
+      const isOtherTrack = trackId !== this.activeTrackId;
+      if (isChordTrack || isOtherTrack) continue;
+      const touched = [...touchedIds].flatMap((id) => this.getNote(id, trackId) ?? []);
+      this.resolveTouchedOverlaps(trackId, touched);
+      for (const winner of touched) this.makeRoomFor(trackId, winner, touchedIds);
+    }
+  }
+
+  /** Edited notes that overlap each other: the later one wins, the earlier one ends where it starts. */
+  private resolveTouchedOverlaps(trackId: string, touched: Note[]) {
+    const byPitch = new Map<number, Note[]>();
+    for (const note of touched) byPitch.set(note.pitch, [...(byPitch.get(note.pitch) ?? []), note]);
+    for (const group of byPitch.values()) {
+      const sorted = [...group].sort((a, b) => a.start - b.start);
+      for (let index = 0; index + 1 < sorted.length; index++) {
+        const earlier = this.getNote(sorted[index].id, trackId);
+        const later = sorted[index + 1];
+        if (!earlier) continue;
+        const isOverlapping = earlier.start + earlier.duration > later.start;
+        if (!isOverlapping) continue;
+        const room = later.start - earlier.start;
+        const hasRoom = room > 0;
+        if (hasRoom) this.txApi.update(earlier.id, { duration: room });
+        if (!hasRoom) this.txApi.remove(earlier.id);
+      }
+    }
+  }
+
+  private makeRoomFor(trackId: string, winner: Note, protectedIds: ReadonlySet<NoteId>) {
+    const current = this.getNote(winner.id, trackId);
+    if (!current) return;
+    const winnerEnd = current.start + current.duration;
+    const neighbors = this.notesInRange(current.start, winnerEnd, trackId);
+    for (const other of neighbors) {
+      const isSelf = other.id === current.id;
+      const isProtected = protectedIds.has(other.id);
+      const isOtherPitch = other.pitch !== current.pitch;
+      if (isSelf || isProtected || isOtherPitch) continue;
+      const otherEnd = other.start + other.duration;
+      const isOverlapping = other.start < winnerEnd && otherEnd > current.start;
+      if (!isOverlapping) continue;
+      const isCovered = other.start >= current.start && otherEnd <= winnerEnd;
+      if (isCovered) {
+        this.txApi.remove(other.id);
+        continue;
+      }
+      const startsBefore = other.start < current.start;
+      if (startsBefore) {
+        this.txApi.update(other.id, { duration: current.start - other.start });
+        continue;
+      }
+      this.txApi.update(other.id, { start: winnerEnd, duration: otherEnd - winnerEnd });
+    }
   }
 
   /** Apply patches from elsewhere (sync, collab). Not added to history. */

@@ -3,6 +3,7 @@ import { ref } from 'lit/directives/ref.js';
 import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 import { styleEditorToast } from './zest';
+import { themeRegion } from './tokens';
 import editorCss from './editor.css?raw';
 
 /**
@@ -13,6 +14,7 @@ import editorCss from './editor.css?raw';
 export class MaddieEditor extends MaddieRoot {
   static styles = [
     ...MaddieRoot.styles,
+    ...themeRegion,
     unsafeCSS(editorCss),
   ];
 
@@ -35,7 +37,6 @@ export class MaddieEditor extends MaddieRoot {
           <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
           <maddie-chords part="chords"></maddie-chords>
-          <maddie-chords-tab part="chords-tab"></maddie-chords-tab>
         </div>
         <slot name="inspector"><maddie-inspector part="inspector"></maddie-inspector></slot>
         <slot name="footer"></slot>

@@ -61,15 +61,14 @@ const viewValidators = {
   midiInput: boolean,
   midiDevice: nullable(id),
   chordsPanel: boolean,
-  chordsTab: oneOf('browse', 'suggestions', 'song'),
+  // Older projects saved browse / suggestions / song.
+  chordsTab: oneOf('all', 'project', 'browse', 'suggestions', 'song'),
+  suggestionsOpen: boolean,
   chordFamily: oneOf('all', ...CHORD_FAMILIES.map(({ id }) => id)),
   chordQuery: text,
-  chordToggledRoots: (value: unknown) => list(value, (root) => int(root, 0, 11)),
-  chordSetupOpen: boolean,
   chordOctave: (value: unknown) => int(value, 1, 6),
   chordInversion: (value: unknown) => int(value, 0, 3),
   chordVoicing: oneOf(...Object.keys(CHORD_VOICINGS)),
-  chordCategory: text,
   chordTemplateId: text,
   quantizeGrid: (value: unknown) => value === 'current' || grid(value),
   quantizeStrength: numberIn(0, 100),
@@ -86,7 +85,13 @@ export const PROJECT_VIEW_KEYS = Object.keys(viewValidators) as Exclude<keyof Vi
 export function restoreProjectView(settings: MaddieProject['settings']): ViewState {
   const view = settings?.view ?? {};
   const saved = PROJECT_VIEW_KEYS.filter((key) => view[key] !== undefined).map((key) => [key, view[key]]);
-  return { ...DEFAULT_VIEW, fold: settings?.fold ?? DEFAULT_VIEW.fold, ...Object.fromEntries(saved) };
+  const restored: ViewState = { ...DEFAULT_VIEW, fold: settings?.fold ?? DEFAULT_VIEW.fold, ...Object.fromEntries(saved) };
+  const legacyTab = restored.chordsTab as string;
+  const isLegacySongTab = legacyTab === 'song';
+  const isLegacyTab = legacyTab === 'browse' || legacyTab === 'suggestions';
+  if (isLegacySongTab) restored.chordsTab = 'project';
+  if (isLegacyTab) restored.chordsTab = 'all';
+  return restored;
 }
 
 function hasTime(value: Record<string, unknown>) {
