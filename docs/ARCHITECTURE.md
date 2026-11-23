@@ -526,7 +526,7 @@ editor.output = {
 
 ### 6.3.1 Marker, metronome, follow
 
-- **Marker:** play always starts at the marker; stop returns to it. Clicking the ruler or empty grid moves it (when stopped). While playing, clicking empty grid jumps playback there and keeps the marker. The rewind button jumps back to the marker while playing (double-click: to 0). A second stop rewinds to 0.
+- **Marker:** play always starts at the marker; stop returns to it. Only the ruler sets it with the mouse, on the grid line nearest the click. Clicking the grid never moves it. While playing, a ruler click moves the marker but leaves playback alone; stop returns to the new marker. With the loop on, a marker outside the loop starts play at the loop start. The rewind button jumps back to the marker while playing (double-click: to 0). A second stop rewinds to 0.
 - **Metronome:** `transport.setMetronome({ enabled, volume })`. Clicks are scheduled with the notes, on every beat (accent on the bar). Sound: `output.click(e)` if provided, otherwise a 60ms sine blip straight to the AudioContext. That blip is the one built-in sound; it's a utility, not an instrument.
 - **Follow:** `view.follow`, off by default. When on, the view pages forward as the playhead reaches the right edge.
 
@@ -803,7 +803,9 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 | Platform priority | **Desktop first.** Touch later. |
 | Package / tags | **`@tasteee/maddie`**, tags `maddie-*` (prefix configurable). |
 | Overlapping notes | **Never.** Two notes on the same pitch in a MIDI track never share time. The notes an edit adds or changes keep their full size; the notes they run into are trimmed or removed (`Editor.resolveOverlaps`, inside the same transaction, so one undo). Chord regions never overlap either. |
-| Chords panel vs. selection bar | **The panel makes new chords; the selection bar changes placed ones.** The crafting card's settings only shape the next chord you drag in. A selected chord is edited in the selection bar (Octave, Inversion, Voicing, Pattern). "Use in panel" copies a chord's settings into the card, on purpose. |
+| Chords panel vs. chord bar | **The panel makes new chords; the floating chord bar changes placed ones.** The crafting card's settings only shape the next chord you drag in. A selected chord is edited in the floating chord bar over the roll (Octave, Inversion, Voicing, Pattern, actions); the docked selection bar keeps the summary and Render to MIDI. "Use in panel" copies a chord's settings into the card, on purpose. |
 | Chord suggestions | Follow **only the editor selection** (a chord-track chord, or MIDI notes that name a chord), never a click in the panel. In key first, then Borrowed (rose: tertiary means "outside the key" and nothing else). |
 | Dropping a chord | Empty space: 1 bar, or fitted to end where the next chord starts. A chord's body: replace it. A seam between touching chords: insert and slide later chords right. Alt only skips snapping. |
-| Themes inside shadow roots | Zest's `[data-theme]` rules live in a document stylesheet, so a region inside a shadow root loads Zest's tokens itself (`themeRegion` in `tokens.ts`). The crafting card is inverted; toasts are inverted. |
+| Themes inside shadow roots | Zest's `[data-theme]` rules live in a document stylesheet, so a region inside a shadow root loads Zest's tokens itself (`themeRegion` in `tokens.ts`). The crafting card follows the panel's theme (an experimental setting can force it dark); toasts are inverted. |
+| Play marker | **Set from the ruler only.** Clicks in the grid select and deselect, never move the marker. Selecting a chord doesn't move it either: clicking already plays the chord, and Play selection plays from it. |
+| Selected notes | While anything is selected, other notes fade toward the grid; selected notes keep full color and get a ring in the text color. |

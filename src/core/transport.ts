@@ -78,13 +78,17 @@ export class Transport {
     if (this.state === 'playing') return;
     const ctx = this.audioContext;
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
-    const start = from ?? this.stoppedAt;
-    if (this.state === 'stopped') this.returnTo = start;
+    const requested = from ?? this.stoppedAt;
+    if (this.state === 'stopped') this.returnTo = requested;
+    const start = this.startInsideLoop(requested);
     const time = ctx.currentTime + 0.05;
     this.anchors = [{ time, tick: start }];
     this.scheduledUntil = time;
     this.state = 'playing';
     this.schedule();
+    // The first pass can already stop (starting past the end): don't leave a timer running.
+    const didStopAlready = this.state !== 'playing';
+    if (didStopAlready) return;
     this.timer = setInterval(() => this.schedule(), LOOKAHEAD_MS);
     this.emit();
   }
@@ -144,6 +148,26 @@ export class Transport {
       this.returnTo = tick;
     }
     this.emit();
+  }
+
+  /**
+   * Set where play starts and where stop returns. Stopped: the playhead moves there.
+   * Playing: playback carries on untouched; the next stop returns to the new marker.
+   */
+  setMarker(tick: Tick) {
+    tick = Math.max(0, tick);
+    if (this.state !== 'playing') return this.seek(tick);
+    this.returnTo = tick;
+    this.emit();
+  }
+
+  /** With the loop on, play never starts outside it: a start outside jumps to the loop start. */
+  private startInsideLoop(tick: Tick): Tick {
+    const isLoopOn = this.loop.enabled && this.loop.end > this.loop.start;
+    if (!isLoopOn) return tick;
+    const isInside = tick >= this.loop.start && tick < this.loop.end;
+    if (isInside) return tick;
+    return this.loop.start;
   }
 
   setLoop(loop: Partial<LoopRegion>) {

@@ -47,17 +47,10 @@ const toSymbol = (symbol: string) => symbol.replace(/♯/g, '#').replace(/♭/g,
 
 const noteNames = (chord: Chord) => chord.type.intervals.map((interval) => pitchClassName(chord.root + interval)).join(' ');
 
-const oppositeTheme = (theme: string) => (theme === 'dark' ? 'light' : 'dark');
-
-const pageTheme = () => {
-  const isDark = document.documentElement.dataset.theme === 'dark';
-  return isDark ? 'dark' : 'light';
-};
-
 /**
  * The chords panel: a Suggestions rail docked on the grid side, then the library and the
  * crafting card. Both parts fold to 40px strips, so the panel never needs a button elsewhere.
- * The panel only makes new chords. A placed chord is changed in the selection bar.
+ * The panel only makes new chords. A placed chord is changed in the floating chord bar.
  */
 @customElement('maddie-chords')
 export class MaddieChords extends MaddieElement {
@@ -314,8 +307,6 @@ export class MaddieChords extends MaddieElement {
   protected attach(ed: Editor, _engine: Engine) {
     this.ensureScaled();
     this.analyzeProject();
-    const themeObserver = new MutationObserver(() => this.requestUpdate());
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     this.track(
       ed.on('view', ({ view, prev }) => {
         const isClosing = !view.chordsPanel && prev.chordsPanel;
@@ -337,7 +328,6 @@ export class MaddieChords extends MaddieElement {
       () => {
         clearTimeout(this.analysisTimer);
         this.cancelDrag?.();
-        themeObserver.disconnect();
       },
     );
   }
@@ -834,7 +824,7 @@ export class MaddieChords extends MaddieElement {
     </div>`;
   }
 
-  private renderCraft(ed: Editor, theme: string) {
+  private renderCraft(ed: Editor, theme: string | undefined) {
     const view = ed.view;
     const crafting = this.crafting;
     const scaled = this.scaled;
@@ -859,7 +849,7 @@ export class MaddieChords extends MaddieElement {
           <span class="hero-hint">${isPlaying ? waveMark : nothing}Hold to hear · drag to place</span></span>
       </button>` : html`<div class="hero-empty">Click any chord to start shaping it here.</div>`;
 
-    return html`<div class="craft" data-theme=${theme} aria-label="Chord you're shaping">
+    return html`<div class="craft" data-theme=${theme ?? nothing} aria-label="Chord you're shaping">
       <div class=${crafting ? 'card' : 'card isEmpty'}>
         ${hero}
         <div class="props">
@@ -890,7 +880,7 @@ export class MaddieChords extends MaddieElement {
     </div>`;
   }
 
-  private renderMain(ed: Editor, theme: string | undefined, craftTheme: string) {
+  private renderMain(ed: Editor, theme: string | undefined, craftTheme: string | undefined) {
     const isOpen = ed.view.chordsPanel;
     const toggle = () => ed.setView({ chordsPanel: !isOpen, patternPicker: null });
     const keyName = ed.key && ed.key.scale !== 'chromatic' ? `${pitchClassName(ed.key.root)} ${ed.key.scale}` : 'No key';
@@ -920,11 +910,10 @@ export class MaddieChords extends MaddieElement {
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    const page = pageTheme();
     const view = ed.view;
     const mainTheme = view.chordsPanelDark ? 'dark' : undefined;
-    const mainEffective = mainTheme ?? page;
-    const craftTheme = view.chordCraftDark ? 'dark' : oppositeTheme(mainEffective);
+    // The crafting card follows the panel's theme unless the experimental toggle forces it dark.
+    const craftTheme = view.chordCraftDark ? 'dark' : undefined;
     const railTheme = view.suggestionsDark ? 'dark' : undefined;
     return html`
       ${this.renderRail(ed, railTheme)}
