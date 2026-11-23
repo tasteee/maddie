@@ -51,6 +51,14 @@ maddie-zoom {
   z-index: 2;
   margin: var(--space-2);
 }
+/* Floating chord bar: spans the roll's bottom edge, leaving room for the zoom pad. */
+maddie-chord-bar {
+  grid-area: roll;
+  align-self: end;
+  z-index: 3;
+  min-width: 0;
+  padding: 0 calc(var(--space-2) * 2 + 96px) var(--space-2) var(--space-2);
+}
 /* Toasts: one fixed spot, top-center of the grid, in the inverted theme
    (see styleEditorToast), so they stand out in a busy grid. */
 z-toaster {

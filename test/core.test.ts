@@ -389,6 +389,38 @@ describe('transport', () => {
     expect(ed.transport.position).toBe(PPQ);
     vi.useRealTimers();
   });
+
+  it('moves the marker while playing without touching playback', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    const ed = createEditor({ audioContext });
+    ed.transport.setMetronome({ enabled: false });
+    ed.transport.seek(PPQ);
+    await ed.transport.play();
+    ed.transport.setMarker(PPQ * 12);
+    expect(ed.transport.marker).toBe(PPQ * 12);
+    (audioContext as { currentTime: number }).currentTime = 1.5;
+    expect(ed.transport.position).toBeLessThan(PPQ * 4);
+    ed.transport.stop();
+    expect(ed.transport.position).toBe(PPQ * 12);
+    vi.useRealTimers();
+  });
+
+  it('starts at the loop start when the marker is outside the loop', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0, resume: async () => {} } as unknown as AudioContext;
+    const ed = createEditor({ audioContext });
+    ed.transport.setMetronome({ enabled: false });
+    ed.transport.setLoop({ start: PPQ * 4, end: PPQ * 8, enabled: true });
+    ed.transport.seek(PPQ * 20);
+    await ed.transport.play();
+    expect(ed.transport.position).toBe(PPQ * 4);
+    ed.transport.stop();
+    expect(ed.transport.position).toBe(PPQ * 20);
+    vi.useRealTimers();
+  });
 });
 
 describe('arrow keys without a selection', () => {

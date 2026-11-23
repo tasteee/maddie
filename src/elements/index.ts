@@ -9,6 +9,7 @@ export { MaddieVelocityLane } from './velocity-lane';
 export { MaddieChords } from './chords';
 export { MaddiePatternPicker } from './pattern-picker';
 export { MaddieInspector } from './inspector';
+export { MaddieChordBar } from './chord-bar';
 export { MaddieTracks } from './tracks';
 export {
   MaddieToolbar,
