@@ -62,5 +62,6 @@ export const icons = {
   wand: icon16(svg`<path d="M8 2.5l1.3 3.2 3.2 1.3-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z"/>`),
   follow: icon16(svg`<circle cx="8" cy="8" r="4.5"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"/>`),
   plus: icon16(svg`<path d="M8 3.5v9M3.5 8h9"/>`),
+  minus: icon16(svg`<path d="M3.5 8h9"/>`),
   close: icon16(svg`<path d="M4 4l8 8M12 4l-8 8"/>`),
 };
