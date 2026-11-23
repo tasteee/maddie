@@ -1023,13 +1023,17 @@ export class MaddieZoom extends ControlElement {
         <z-button size="xs" is-icon kind="ghost" aria-label=${label} ?is-disabled=${isDisabled}
           @click=${click}>${icon}</z-button>
       </z-tooltip>`;
-    const out = button('out', 'Zoom out in time — or drag the ruler down.', icons.timeInward, () => setTime(0.8), view.pxPerTick <= minTime);
-    const taller = button('taller', 'Taller rows — or drag the keyboard up.', icons.rowsTaller, () => setRows(2), view.rowHeight >= maxRow);
+    const out = button('out', 'Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.timeInward, () => setTime(0.8), view.pxPerTick <= minTime);
+    const taller = button('taller', 'Taller rows · Alt + scroll, or drag the keyboard up', icons.rowsTaller, () => setRows(2), view.rowHeight >= maxRow);
     const all = button('fit', 'Zoom to fit', icons.fit, fit, !ed.notes().length);
-    const shorter = button('shorter', 'Shorter rows — or drag the keyboard down.', icons.rowsShorter, () => setRows(-2), view.rowHeight <= minRow);
-    const inward = button('in', 'Zoom in on time — or drag the ruler up.', icons.timeOutward, () => setTime(1.25), view.pxPerTick >= maxTime);
+    const shorter = button('shorter', 'Shorter rows · Alt + scroll, or drag the keyboard down', icons.rowsShorter, () => setRows(-2), view.rowHeight <= minRow);
+    const inward = button('in', 'Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.timeOutward, () => setTime(1.25), view.pxPerTick >= maxTime);
 
-    return html`${out}${taller}${all}${shorter}${inward}`;
+    // An L around the grid's corner: time controls run along the bottom edge, row
+    // controls up the right edge, Fit sits where they meet. Each sits on the edge it changes.
+    return html`<div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
+      <div class="rows" role="group" aria-label="Row height">${taller}${shorter}</div>
+      <div class="corner">${all}</div>`;
   };
 }
 

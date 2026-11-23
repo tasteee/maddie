@@ -49,7 +49,7 @@ maddie-zoom {
   align-self: end;
   justify-self: end;
   z-index: 2;
-  margin: var(--space-4);
+  margin: var(--space-2);
 }
 /* Toasts: one fixed spot, top-center of the grid, in the inverted theme
    (see styleEditorToast), so they stand out in a busy grid. */

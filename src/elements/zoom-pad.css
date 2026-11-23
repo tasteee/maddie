@@ -1,24 +1,26 @@
 :host {
   display: grid;
-  grid-template-columns: var(--control-height-xs) var(--control-height-sm) var(--control-height-xs);
-  grid-template-rows: repeat(3, var(--control-height-xs));
-  grid-template-areas: 'out taller in' 'out fit in' 'out shorter in';
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  grid-template-areas: '. rows' 'time corner';
+  align-items: end;
+  justify-items: end;
+  gap: 4px;
+  opacity: 0.8;
+  transition: opacity 150ms;
+}
+:host(:hover), :host(:focus-within) { opacity: 1; }
+.time, .rows, .corner {
+  display: flex;
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--surface-overlay);
   box-shadow: var(--shadow-overlay);
-  opacity: 0.8;
-  transition: opacity 150ms;
 }
-:host(:hover), :host(:focus-within) { opacity: 1; }
+.time { grid-area: time; flex-direction: row; }
+.rows { grid-area: rows; flex-direction: column; }
+.corner { grid-area: corner; }
 z-tooltip { display: grid; place-items: center; }
-.out { grid-area: out; }
-.in { grid-area: in; }
-.taller { grid-area: taller; }
-.shorter { grid-area: shorter; }
-.fit { grid-area: fit; }
-.out z-button, .in z-button { display: grid; align-content: center; height: 100%; }
-.out, .in { align-items: center; }
 svg { scale: 1.2; }
