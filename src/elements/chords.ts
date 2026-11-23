@@ -213,6 +213,7 @@ export class MaddieChords extends MaddieElement {
       .project-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); width: 100%; height: 36px; margin-bottom: var(--space-1); padding: 0 var(--space-3); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); text-align: left; cursor: pointer; }
       .project-row:hover { border-color: var(--border-strong); background: var(--_surface); }
       .project-row[aria-current='true'] { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+      .project-row.isPlaying { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 20%, transparent); }
       .project-pos { color: var(--_text-faint); font: var(--font-size-xs) var(--_font-mono); }
       .project-name { font-weight: 600; }
       .project-track { display: flex; align-items: center; gap: 6px; color: var(--_text-muted); font-size: var(--font-size-xs); }
@@ -620,6 +621,49 @@ export class MaddieChords extends MaddieElement {
     if (isOffscreen) ed.setView({ scrollTick: Math.max(0, row.start - 40 / view.pxPerTick) }, { animate: true });
   }
 
+  /** The row's own notes, as they are in the song: its voicing and pattern included. */
+  private playProjectChord(row: ProjectChordT): (() => void) | undefined {
+    const ed = this.ed;
+    if (!ed) return;
+    const notes = row.regionId
+      ? ed.notes(row.trackId).filter((note) => note.chordRegionId === row.regionId)
+      : row.noteIds.flatMap((id) => ed.getNote(id, row.trackId) ?? []);
+    const hasNotes = notes.length > 0;
+    if (!hasNotes) return;
+    return ed.auditionNotes(notes, row.start);
+  }
+
+  /** Mouse down: select it in the editor and hear it until mouse up, like a tile. */
+  private pressProjectChord(event: PointerEvent, row: ProjectChordT) {
+    const isPrimary = event.button === 0 && event.isPrimary;
+    if (!isPrimary) return;
+    this.selectProjectChord(row);
+    const stop = this.playProjectChord(row);
+    this.playingId = 'project-' + row.key;
+    const source = event.currentTarget as HTMLElement;
+    source.setPointerCapture(event.pointerId);
+    const release = () => {
+      stop?.();
+      this.playingId = '';
+      source.removeEventListener('pointerup', release);
+      source.removeEventListener('pointercancel', release);
+      source.removeEventListener('lostpointercapture', release);
+    };
+    source.addEventListener('pointerup', release);
+    source.addEventListener('pointercancel', release);
+    source.addEventListener('lostpointercapture', release);
+  }
+
+  /** Enter or Space on a focused row: select it and play it once. */
+  private onProjectKey(event: KeyboardEvent, row: ProjectChordT) {
+    const isActivate = event.key === 'Enter' || event.key === ' ';
+    if (!isActivate) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectProjectChord(row);
+    this.playProjectChord(row);
+  }
+
   // ── Pattern picker ─────────────────────────────────────────────
 
   private openPicker(trigger: HTMLElement) {
@@ -763,10 +807,15 @@ export class MaddieChords extends MaddieElement {
     const rows = this.projectChords;
     const selection = ed.selection;
     return html`<div class="list" part="list">
-      <p class="hint">Chords found in this project. Click one to select it in the editor.</p>
+      <p class="hint">Chords found in this project. Hold one to hear it; it’s selected in the editor too.</p>
       ${rows.length ? rows.map((row) => {
         const isSelected = row.regionId ? selection.has(row.regionId) : row.noteIds.length > 0 && row.noteIds.every((id) => selection.has(id));
-        return html`<button type="button" class="project-row" aria-current=${isSelected} @click=${() => this.selectProjectChord(row)}>
+        const isPlaying = this.playingId === 'project-' + row.key;
+        const rowClass = isPlaying ? 'project-row isPlaying' : 'project-row';
+        return html`<button type="button" class=${rowClass} aria-current=${isSelected}
+          title="Hold to hear · selects it in the editor"
+          @pointerdown=${(event: PointerEvent) => this.pressProjectChord(event, row)}
+          @keydown=${(event: KeyboardEvent) => this.onProjectKey(event, row)}>
           <span class="project-pos">${row.position}</span>
           <span class="project-name">${row.chord.name}</span>
           <span class="project-track"><span class="project-dot" style=${'background:' + row.trackColor}></span>${row.trackName}</span>
