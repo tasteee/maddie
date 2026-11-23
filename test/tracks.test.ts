@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEditor, fromMidiFile, getAudibleTrackIds, toMidiFile } from '../src/core';
+import { createEditor, fromMidiFile, getAudibleTrackIds, getTrackSilence, toMidiFile } from '../src/core';
 
 const PPQ = 960;
 const note = (pitch: number, start = 0) => ({ pitch, start, duration: PPQ / 2, velocity: 0.8 });
@@ -338,5 +338,23 @@ describe('midi import into tracks', () => {
     expect(editor.trackIds).toHaveLength(2);
     expect(editor.notes().map((n) => n.pitch).sort((a, b) => a - b)).toEqual([36, 60, 64]);
     expect(editor.activeTrackId).toBe(keepId);
+  });
+});
+
+describe('getTrackSilence', () => {
+  const track = (id: string, extra: Partial<{ muted: boolean; solo: boolean; name: string }> = {}) => ({ id, color: '#000', ...extra });
+
+  it('is null for a track that plays', () => {
+    expect(getTrackSilence([track('a'), track('b')], 'a')).toBeNull();
+    expect(getTrackSilence([track('a', { solo: true }), track('b')], 'a')).toBeNull();
+  });
+
+  it('says muted when the track itself is muted, even with a solo elsewhere', () => {
+    expect(getTrackSilence([track('a', { muted: true }), track('b', { solo: true })], 'a')).toEqual({ kind: 'muted' });
+  });
+
+  it('names the soloed tracks when a solo leaves this one out', () => {
+    const tracks = [track('a'), track('b', { solo: true, name: 'Bass' }), track('c', { solo: true })];
+    expect(getTrackSilence(tracks, 'a')).toEqual({ kind: 'solo', soloedNames: ['Bass', 'Track 3'] });
   });
 });

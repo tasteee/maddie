@@ -13,7 +13,8 @@ import './zest';
 
 /**
  * The floating chord bar. Shows over the bottom of the piano roll while chords are selected
- * on a chord track: octave, inversion, voicing, pattern, and the chord actions.
+ * on a chord track: the chord, its pattern, inversion and voicing, and Use in panel.
+ * Octave is drag up/down or Shift+↑/↓; duplicate and delete live in the track menu and keys.
  * The docked selection bar keeps only the summary and Render to MIDI.
  */
 @customElement('maddie-chord-bar')
@@ -64,7 +65,8 @@ export class MaddieChordBar extends MaddieElement {
       .pattern-trigger-text.isEmpty { color: var(--_text-faint); }
       .pattern-trigger svg { flex: none; width: 12px; height: 12px; color: var(--_text-faint); }
       .chord-error { color: var(--status-danger); }
-      .actions { display: flex; align-items: center; gap: var(--space-1); }
+      .title { font-weight: 600; padding-inline: var(--space-2) var(--space-1); }
+      .chord-prop-label { color: var(--_text-faint); font-size: var(--font-size-xs); }
     `,
   ];
 
@@ -99,23 +101,12 @@ export class MaddieChordBar extends MaddieElement {
       if (!edit) return;
       const selectedIds = ed.selectedChordRegions.map((region) => region.id);
       ed.chordTrack.commit(edit, 'Style chords', selectedIds);
-      ed.chordTrack.audition();
+      // Hear the new shape for half a second, without the pattern.
+      const updatedFirst = ed.selectedChordRegions.slice(0, 1);
+      ed.chordTrack.auditionPitches(updatedFirst);
     } catch (error) {
       this.chordError = (error as Error).message;
     }
-  }
-
-  /** Move the selected chords up or down an octave. One undo step. */
-  private shiftOctave(ed: Editor, direction: -1 | 1) {
-    const selected = ed.selectedChordRegions;
-    const first = selected[0];
-    if (!first) return;
-    const regions = ed.chordTrack.planMove(first.id, first.start, direction, selected);
-    if (!regions) return this.engine?.toast('That octave is outside the MIDI range.');
-    const edit = ed.chordTrack.prepare(regions);
-    if (!edit) return;
-    ed.chordTrack.commit(edit, 'Change octave', selected.map((region) => region.id));
-    ed.chordTrack.audition();
   }
 
   /** "Use in panel": copy this chord's shape and pattern into the chords panel's crafting card. */
@@ -186,9 +177,6 @@ export class MaddieChordBar extends MaddieElement {
     const sharesVoicing = selected.every((region) => voicingOf(region) === voicingOf(first));
     const sharesTemplate = selected.every((region) => templateOf(region) === templateOf(first));
     const inversion = inversionOf(first);
-    const octaveOf = (region: ChordRegion) => Math.floor((region.rootMidi ?? Math.min(...region.pitches)) / 12) - 1;
-    const sharesOctave = selected.every((region) => octaveOf(region) === octaveOf(first));
-    const octaveLabel = sharesOctave ? 'Oct ' + octaveOf(first) : 'Mixed';
     const maxInversion = Math.min(3, Math.min(...selected.map((region) => region.intervals.length)) - 1);
     const inversionLabel = sharesInversion ? INVERSION_LABELS[inversion] : 'Mixed';
     const voicing = sharesVoicing ? voicingOf(first) : '';
@@ -198,28 +186,31 @@ export class MaddieChordBar extends MaddieElement {
     const isPickerOpen = ed.view.patternPicker === 'selection';
     const voicings = scaled?.voicingNames ?? [];
     const stepper = (label: string, value: string, canDown: boolean, canUp: boolean, down: () => void, up: () => void) => html`
-      <span class="chord-prop" title=${label}>
+      <span class="chord-prop"><span class="chord-prop-label">${label}</span>
         <span class="stepper" role="group" aria-label=${label}>
           <button type="button" aria-label=${label + ' down'} ?disabled=${!canDown} @click=${down}>${icons.back}</button>
           <span class="stepper-value">${value}</span>
           <button type="button" aria-label=${label + ' up'} ?disabled=${!canUp} @click=${up}>${forwardIcon}</button>
         </span></span>`;
 
+    const bar = formatBBT(first.start, ed.meta.timeSignature, ed.ppq).split('.')[0];
+    const title = selected.length === 1 ? `${first.symbol} · bar ${bar}` : `${selected.length} chords`;
+
     return html`<div class="chord-props">
-      ${stepper('Octave', octaveLabel, true, true, () => this.shiftOctave(ed, -1), () => this.shiftOctave(ed, 1))}
+      <span class="title" role="status">${title}</span>
+      <span class="chord-prop"><span class="chord-prop-label">Pattern</span>
+        <button type="button" class="pattern-trigger" data-pattern-trigger aria-haspopup="dialog" aria-expanded=${isPickerOpen} ?disabled=${!scaled}
+          @click=${(event: MouseEvent) => this.openPicker(ed, event.currentTarget as HTMLElement)}>
+          <span class=${hasPattern ? 'pattern-trigger-text' : 'pattern-trigger-text isEmpty'}>${patternText}</span>${icons.chevron}
+        </button></span>
       ${stepper('Inversion', inversionLabel, sharesInversion && inversion > 0, sharesInversion && inversion < maxInversion,
         () => this.applyChordStyle(ed, { inversion: inversion - 1 }), () => this.applyChordStyle(ed, { inversion: inversion + 1 }))}
-      <span class="chord-prop" title="Voicing">
+      <span class="chord-prop"><span class="chord-prop-label">Voicing</span>
         <select class="voicing" aria-label="Voicing" ?disabled=${!scaled} .value=${live(voicing)}
           @change=${(event: Event) => this.applyChordStyle(ed, { voicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
           ${sharesVoicing ? nothing : html`<option value="" selected disabled>Mixed</option>`}
           ${voicings.map((name) => html`<option value=${name} ?selected=${name === voicing}>${CHORD_VOICINGS[name] ?? name}</option>`)}
         </select></span>
-      <span class="chord-prop" title="Pattern">
-        <button type="button" class="pattern-trigger" data-pattern-trigger aria-haspopup="dialog" aria-expanded=${isPickerOpen} ?disabled=${!scaled}
-          @click=${(event: MouseEvent) => this.openPicker(ed, event.currentTarget as HTMLElement)}>
-          <span class=${hasPattern ? 'pattern-trigger-text' : 'pattern-trigger-text isEmpty'}>${patternText}</span>${icons.chevron}
-        </button></span>
       <z-tooltip content="Copy this chord's shape and pattern into the chords panel" placement="top">
         <z-button size="sm" kind="ghost" tone="secondary" @click=${() => this.useInPanel(ed)}>Use in panel</z-button>
       </z-tooltip>
@@ -233,25 +224,11 @@ export class MaddieChordBar extends MaddieElement {
     if (!ed?.chordRegions) return nothing;
     const selected = ed.selectedChordRegions;
     if (!selected.length) return nothing;
-    const run = (operation: Promise<unknown> | undefined) => {
-      void operation?.catch((error: Error) => this.engine?.toast(error.message, 'error'));
-    };
     return html`<div class="bar" role="toolbar" aria-label=${selected.length === 1 ? 'Selected chord' : 'Selected chords'}>
       ${this.renderChordSettings(ed)}
-      <z-separator is-vertical></z-separator>
-      <div class="actions">
-        ${iconAction('Audition', 'Hear the selected chords', icons.volume, () => ed.chordTrack.audition())}
-        ${iconAction('Duplicate', 'Duplicate after the selection', icons.duplicate, () => run(ed.chordTrack.duplicate()))}
-        ${iconAction('Delete', 'Delete   ⌫', icons.trash, () => run(ed.chordTrack.delete(ed.selection)), 'danger')}
-      </div>
     </div>`;
   }
 }
-
-/** Icon-only action with a tooltip above it (the bar floats near the bottom). */
-const iconAction = (label: string, tipText: string, icon: unknown, onClick: () => void, tone: 'neutral' | 'danger' = 'neutral') => html`<z-tooltip content=${tipText} placement="top"
-  ><z-button kind="ghost" size="sm" is-icon tone=${tone} aria-label=${label} @click=${onClick}>${icon}</z-button></z-tooltip
->`;
 
 const INVERSION_LABELS = ['Root', '1st', '2nd', '3rd'];
 const forwardIcon = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>`;

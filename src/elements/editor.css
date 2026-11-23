@@ -59,6 +59,18 @@ maddie-chord-bar {
   min-width: 0;
   padding: 0 calc(var(--space-2) * 2 + 96px) var(--space-2) var(--space-2);
 }
+/* While playing on a silent track: a bold badge, top-center of the roll. */
+maddie-silent-badge {
+  grid-area: roll;
+  align-self: start;
+  justify-self: center;
+  z-index: 3;
+  margin-top: var(--space-2);
+}
+/* Toasts make room for the badge while it shows. */
+maddie-silent-badge[is-showing] ~ z-toaster {
+  margin-top: 48px;
+}
 /* Toasts: one fixed spot, top-center of the grid, in the inverted theme
    (see styleEditorToast), so they stand out in a busy grid. */
 z-toaster {

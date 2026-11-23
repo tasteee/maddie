@@ -40,6 +40,8 @@ type SuggestionsT = { inKey: Chord[]; borrowed: Chord[] };
 
 const OCTAVES = [1, 2, 3, 4, 5, 6];
 const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
+/** How long a shape change plays (matches auditionChord's default). */
+const SHAPE_PREVIEW_MS = 500;
 const RAIL_OPEN = 148;
 const STRIP = 40;
 
@@ -482,6 +484,39 @@ export class MaddieChords extends MaddieElement {
       { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: view.chordTemplateId });
   }
 
+  /**
+   * Change a crafting setting and hear the new shape right away: the plain chord
+   * for half a second, without the pattern (hold the card to hear it with the pattern).
+   */
+  private changeShape(changes: Partial<Pick<Editor['view'], 'chordOctave' | 'chordInversion' | 'chordVoicing'>>) {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.setView(changes);
+    const crafting = this.crafting;
+    if (!crafting) return;
+    const view = ed.view;
+    const chord = crafting.chord;
+    try {
+      const plainDraft = ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
+        { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: '' });
+      ed.chordTrack.auditionDraft(plainDraft);
+      this.flashPlaying('craft', SHAPE_PREVIEW_MS);
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+    }
+  }
+
+  private flashTimer?: ReturnType<typeof setTimeout>;
+
+  private flashPlaying(id: string, milliseconds: number) {
+    clearTimeout(this.flashTimer);
+    this.playingId = id;
+    this.flashTimer = setTimeout(() => {
+      const isStillThis = this.playingId === id;
+      if (isStillThis) this.playingId = '';
+    }, milliseconds);
+  }
+
   private tryDraft(chord: Chord): ChordDraft | undefined {
     try {
       return this.makeDraft(chord);
@@ -837,8 +872,8 @@ export class MaddieChords extends MaddieElement {
     const isPickerOpen = view.patternPicker === 'craft';
     const isPlaying = this.playingId === 'craft';
     const voicings = scaled?.voicingNames ?? [view.chordVoicing];
-    const setOctave = (octave: number) => ed.setView({ chordOctave: octave });
-    const setInversion = (value: number) => ed.setView({ chordInversion: value });
+    const setOctave = (octave: number) => this.changeShape({ chordOctave: octave });
+    const setInversion = (value: number) => this.changeShape({ chordInversion: value });
 
     const hero = crafting ? html`<button type="button" class=${isPlaying ? 'hero isPlaying' : 'hero'}
         aria-label=${`${crafting.chord.name}, ${crafting.chord.type.name}. Hold to hear, drag to place, Enter to place at the playhead.`}
@@ -859,7 +894,7 @@ export class MaddieChords extends MaddieElement {
             () => setInversion(inversion - 1), () => setInversion(inversion + 1))}
           <div class="prop"><span class="prop-label">Voicing</span>
             <select class="voicing" aria-label="Voicing" .value=${live(view.chordVoicing)}
-              @change=${(event: Event) => ed.setView({ chordVoicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
+              @change=${(event: Event) => this.changeShape({ chordVoicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
               ${voicings.map((name) => html`<option value=${name} ?selected=${name === view.chordVoicing}>${CHORD_VOICINGS[name] ?? name}</option>`)}
             </select>
           </div>
