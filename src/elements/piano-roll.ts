@@ -23,9 +23,9 @@ import {
   type NoteId,
 } from '../core';
 import type { ChordDrag, ChordDragPhase, DisplayView, Engine, Toast } from '../engine/engine';
-import { clamp } from '../engine/ease';
+import { clamp, easeOut } from '../engine/ease';
 import { clampScrollRow, handleWheel, maxScrollTick } from '../engine/interact';
-import { normalizeColor, withAlpha } from '../engine/theme';
+import { mix, normalizeColor, withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
 import { icons } from './icons';
 import { importMidiFiles } from './midi-io';
@@ -72,6 +72,9 @@ interface Gesture {
 }
 
 const DRAG_THRESHOLD = 3;
+/** How far unselected notes fade toward the grid while something is selected. */
+const SELECTION_FADE = 0.62;
+const SELECTION_FADE_MS = 120;
 
 /**
  * The note grid. Drag to select, move and resize notes. Double-click to add or delete.
@@ -450,25 +453,9 @@ export class MaddiePianoRoll extends CanvasElement {
     return this.begin(e, this.marqueeGesture(e));
   };
 
-  /** Marker (or play position) before the last click-seek, so a double-click can put it back. */
-  private seekUndo: { tick: number; at: number } | null = null;
-
-  /** Stopped: move the marker. Playing: jump playback there and keep going; the marker stays where play started. */
-  private clickSeek(tick: number) {
-    const t = this.ed!.transport;
-    const now = performance.now();
-    // The second click of a double-click keeps the first one's "before".
-    if (!this.seekUndo || now - this.seekUndo.at > 500) this.seekUndo = { tick: t.playing ? t.position : t.marker, at: now };
-    else this.seekUndo.at = now;
-    t.seek(tick, { marker: !t.playing });
-  }
-
   private onDoubleClick = (e: MouseEvent) => {
     const ed = this.ed;
     if (!ed || ed.chordRegions) return;
-    // Double-click isn't a marker click: undo the seek its first click made.
-    if (this.seekUndo && performance.now() - this.seekUndo.at < 500) ed.transport.seek(this.seekUndo.tick, { marker: !ed.transport.playing });
-    this.seekUndo = null;
     const { x, y } = this.local(e);
     const hit = this.hitTest(x, y);
     if (hit) {
@@ -788,9 +775,8 @@ export class MaddiePianoRoll extends CanvasElement {
       },
       up: () => {
         if (dragging) return;
+        // A plain click on empty grid only clears the selection. The ruler sets the play marker.
         if (!initial.length) ed.clearSelection();
-        // A plain click on empty grid moves the play marker, or jumps playback there while playing.
-        this.clickSeek(this.snap(this.tickAt(origin.x), down, 'floor'));
       },
       cancel: () => ed.select(initial),
     };
@@ -928,6 +914,40 @@ export class MaddiePianoRoll extends CanvasElement {
     ctx.restore();
   }
 
+  private fade = { from: 0, to: 0, at: 0 };
+
+  /** 0 → 1 as a selection appears, eased over a short fade. Keeps frames coming until it settles. */
+  private selectionFade(hasSelection: boolean, now: number, engine: Engine): number {
+    const target = hasSelection ? 1 : 0;
+    const isNewTarget = target !== this.fade.to;
+    if (isNewTarget) {
+      const current = this.fadeAt(now);
+      this.fade = { from: current, to: target, at: now };
+    }
+    const amount = this.fadeAt(now);
+    const isSettled = amount === this.fade.to;
+    if (!isSettled) engine.invalidate();
+    return amount;
+  }
+
+  private fadeAt(now: number): number {
+    const progress = clamp((now - this.fade.at) / SELECTION_FADE_MS, 0, 1);
+    const eased = progress >= 1 ? 1 : easeOut(progress);
+    return this.fade.from + (this.fade.to - this.fade.from) * eased;
+  }
+
+  /** A selected note: a ring in the text color, with a thin gap of grid color between it and the note. */
+  private drawSelectionRing(ctx: CanvasRenderingContext2D, p: Palette, x: number, y: number, width: number, height: number, radius: number, outline?: string) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = p.bg;
+    roundRect(ctx, x - 0.5, y - 0.5, width + 1, height + 1, radius + 0.5);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = outline ?? p.text;
+    roundRect(ctx, x - 2, y - 2, width + 4, height + 4, radius + 2);
+    ctx.stroke();
+  }
+
   protected draw(ctx: CanvasRenderingContext2D, now: number, ed: Editor, engine: Engine, p: Palette) {
     const { width: w, height: h } = this;
     const v = engine.displayView(now);
@@ -987,6 +1007,11 @@ export class MaddiePianoRoll extends CanvasElement {
     const activeTrackColor = resolveTrackColor(p, ed.getTrackColor(ed.activeTrackId));
     this.drawRegions(ctx, ed, engine, v, p, activeTrackColor, notes);
 
+    // While anything is selected, the other notes fade toward the grid so the selection stands out.
+    const hasSelection = notes.some(isSelected);
+    const fadeAmount = this.selectionFade(hasSelection, now, engine);
+    const fadedColor = (color: string) => mix(color, p.bg, SELECTION_FADE * fadeAmount);
+
     const isTrackAudible = ed.isTrackAudible(ed.activeTrackId);
     // TODO(design): Decide whether inactive notes should become editable.
     const drawNote = (n: Note, d: ReturnType<typeof engine.notes.resolve>, state: NoteState) => {
@@ -1002,17 +1027,16 @@ export class MaddiePianoRoll extends CanvasElement {
       const y = (row - v.scrollRow) * rh + 1 + (inner - nh) / 2;
       if (y > h || y + nh < 0) return;
       const style = this.noteStyle?.(n, state);
-      const base = style?.fill ? normalizeColor(style.fill) : activeTrackColor;
+      const ownColor = style?.fill ? normalizeColor(style.fill) : activeTrackColor;
+      const shouldFade = !state.selected && fadeAmount > 0;
+      const base = shouldFade ? fadedColor(ownColor) : ownColor;
       ctx.globalAlpha = alpha;
       roundRect(ctx, x, y, nw - 2, nh, radius);
       ctx.fillStyle = noteFill(p, base, { velocity: 1 }, state);
       ctx.fill();
-      if (state.selected) {
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = style?.outline ?? p['note-outline'];
-        roundRect(ctx, x + 1.25, y + 0.75, nw - 2.5, nh - 1.5, radius - 0.5);
-        ctx.stroke();
-      }
+      // Chord-track notes sit inside the chord's own box, which already shows selection.
+      const shouldRing = state.selected && !ed.chordRegions;
+      if (shouldRing) this.drawSelectionRing(ctx, p, x, y, nw - 2, nh, radius, style?.outline);
       ctx.globalAlpha = 1;
     };
 

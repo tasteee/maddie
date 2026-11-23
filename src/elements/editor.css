@@ -49,7 +49,27 @@ maddie-zoom {
   align-self: end;
   justify-self: end;
   z-index: 2;
-  margin: var(--space-2);
+}
+/* Floating chord bar: spans the roll's bottom edge, leaving room for the zoom pad. */
+maddie-chord-bar {
+  grid-area: roll;
+  align-self: end;
+  z-index: 3;
+  min-width: 0;
+  /* Clear the zoom L (two 36px cells plus the corner). */
+  padding: 0 calc(108px + var(--space-2)) var(--space-2) var(--space-2);
+}
+/* While playing on a silent track: a bold badge, top-center of the roll. */
+maddie-silent-badge {
+  grid-area: roll;
+  align-self: start;
+  justify-self: center;
+  z-index: 3;
+  margin-top: var(--space-2);
+}
+/* Toasts make room for the badge while it shows. */
+maddie-silent-badge[is-showing] ~ z-toaster {
+  margin-top: 48px;
 }
 /* Toasts: one fixed spot, top-center of the grid, in the inverted theme
    (see styleEditorToast), so they stand out in a busy grid. */

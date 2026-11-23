@@ -33,6 +33,8 @@ export class MaddieEditor extends MaddieRoot {
           <maddie-keyboard part="keyboard"></maddie-keyboard>
           <maddie-piano-roll part="piano-roll"></maddie-piano-roll>
           <maddie-zoom part="zoom-pad"></maddie-zoom>
+          <maddie-chord-bar part="chord-bar"></maddie-chord-bar>
+          <maddie-silent-badge part="silent-badge"></maddie-silent-badge>
           <z-toaster ${ref(styleEditorToast)} position="bottom-center" part="toast"></z-toaster>
           <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>

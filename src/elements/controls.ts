@@ -7,6 +7,7 @@ import {
   exportFilename,
   formatBBT,
   GRID_OPTIONS,
+  type GridValue,
   GRID_MODIFIERS,
   canHaveModifier,
   getGridModifier,
@@ -199,6 +200,9 @@ const GRID_FEELS = [
 
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
+  /** The division to return to when Follow zoom is turned off. */
+  private lastFixedGrid: GridValue = '1/16';
+
   render = () => {
     const ed = this.ed;
     const hasEditor = Boolean(ed);
@@ -213,6 +217,7 @@ export class MaddieGridSelect extends ControlElement {
     // Straight renders nothing, so it adds no gap before the chevron.
     const hasSuffix = suffix !== '';
     const suffixBadge = hasSuffix ? html`<span class="accent-icon">${suffix}</span>` : nothing;
+    const triggerText = ed.view.grid === 'auto' ? 'Auto' : size;
     const pickSize = (value: string) => {
       const division = GRID_DIVISIONS.find((option) => option.value === value)?.value;
       if (!division) return;
@@ -231,6 +236,18 @@ export class MaddieGridSelect extends ControlElement {
     const modifiers = renderChoices('Feel', feels, feel, pickFeel, feels.length);
     const snap = switchRow('Snap to grid', 'Hold Alt while dragging to bypass', ed.view.snap,
       (isChecked) => ed.setView({ snap: isChecked }));
+    // Follow zoom: the grid gets finer as you zoom in, and snapping uses the lines you see.
+    // Picking a division turns it off; turning it off brings back the last division.
+    const isAuto = ed.view.grid === 'auto';
+    const toggleAuto = (isOn: boolean) => {
+      if (isOn) {
+        this.lastFixedGrid = ed.view.grid;
+        ed.setView({ grid: 'auto' });
+        return;
+      }
+      ed.setView({ grid: this.lastFixedGrid });
+    };
+    const followZoom = switchRow('Follow zoom', 'Finer lines as you zoom in; snaps to the lines you see', isAuto, toggleAuto);
     const toggle = iconToggle({
       label: 'Snap to grid',
       tip: 'Snap to grid',
@@ -243,13 +260,13 @@ export class MaddieGridSelect extends ControlElement {
       ${toggle}
       <z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Grid">
         <z-button class="grid-value" slot="trigger" kind="ghost" size="sm" aria-label="Grid settings">
-          ${size}${suffixBadge}${icons.chevron}
+          ${triggerText}${suffixBadge}${icons.chevron}
         </z-button>
         <div class="panel standard-panel">
           <strong>Grid</strong>
           <div class="field"><span class="hint">Division</span>${divisions}</div>
           <div class="field"><span class="hint">Feel</span>${modifiers}</div>
-          <z-separator></z-separator>${snap}
+          <z-separator></z-separator>${followZoom}${snap}
         </div>
       </z-popover>
     </z-button-group>`;
@@ -1018,21 +1035,20 @@ export class MaddieZoom extends ControlElement {
         scrollRow: clamp((top + bottom - height / rowHeight) / 2, 0, engine.maxScrollRow(rowHeight)),
       }, { animate: true });
     };
-    const button = (area: string, label: string, icon: unknown, click: () => void, isDisabled = false) => html`
-      <z-tooltip class=${area} content=${label} placement="top">
-        <z-button size="xs" is-icon kind="ghost" aria-label=${label} ?is-disabled=${isDisabled}
-          @click=${click}>${icon}</z-button>
+    const button = (label: string, icon: unknown, click: () => void, isDisabled = false) => html`
+      <z-tooltip content=${label} placement="top">
+        <button type="button" class="cell" aria-label=${label} ?disabled=${isDisabled} @click=${click}>${icon}</button>
       </z-tooltip>`;
-    const out = button('out', 'Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.timeInward, () => setTime(0.8), view.pxPerTick <= minTime);
-    const taller = button('taller', 'Taller rows · Alt + scroll, or drag the keyboard up', icons.rowsTaller, () => setRows(2), view.rowHeight >= maxRow);
-    const all = button('fit', 'Zoom to fit', icons.fit, fit, !ed.notes().length);
-    const shorter = button('shorter', 'Shorter rows · Alt + scroll, or drag the keyboard down', icons.rowsShorter, () => setRows(-2), view.rowHeight <= minRow);
-    const inward = button('in', 'Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.timeOutward, () => setTime(1.25), view.pxPerTick >= maxTime);
+    const out = button('Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.minus, () => setTime(0.8), view.pxPerTick <= minTime);
+    const inward = button('Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.plus, () => setTime(1.25), view.pxPerTick >= maxTime);
+    const shorter = button('Shorter rows · Alt + scroll, or drag the keyboard down', icons.minus, () => setRows(-2), view.rowHeight <= minRow);
+    const taller = button('Taller rows · Alt + scroll, or drag the keyboard up', icons.plus, () => setRows(2), view.rowHeight >= maxRow);
+    const all = button('Zoom to fit', icons.fit, fit, !ed.notes().length);
 
-    // An L around the grid's corner: time controls run along the bottom edge, row
-    // controls up the right edge, Fit sits where they meet. Each sits on the edge it changes.
-    return html`<div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
-      <div class="rows" role="group" aria-label="Row height">${taller}${shorter}</div>
+    // A flush L in the grid's corner: time zoom along the bottom edge, row height up
+    // the right edge, Fit where they meet. Each control sits on the edge it changes.
+    return html`<div class="rows" role="group" aria-label="Row height">${shorter}${taller}</div>
+      <div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
       <div class="corner">${all}</div>`;
   };
 }

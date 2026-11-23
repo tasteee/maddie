@@ -45,6 +45,20 @@ export const getAudibleTrackIds = (tracks: readonly TrackMetaT[]): Set<string> =
   return new Set(audibleTracks.map((track) => track.id));
 };
 
+/** Why a track is silent: muted itself, or left out by a solo on other tracks. Null when it plays. */
+export type TrackSilenceT = { kind: 'muted' } | { kind: 'solo'; soloedNames: string[] };
+
+export const getTrackSilence = (tracks: readonly TrackMetaT[], trackId: string): TrackSilenceT | null => {
+  const track = tracks.find((item) => item.id === trackId);
+  if (!track) return null;
+  if (track.muted) return { kind: 'muted' };
+  const soloedTracks = tracks.filter((item) => item.solo);
+  const isLeftOutBySolo = soloedTracks.length > 0 && !track.solo;
+  if (!isLeftOutBySolo) return null;
+  const soloedNames = soloedTracks.map((item) => getTrackName(item, tracks.indexOf(item)));
+  return { kind: 'solo', soloedNames };
+};
+
 /** Are two routes the same destination? Two missing routes are the same (both follow the default). */
 export const areRoutesEqual = (first: TrackRouteT | undefined, second: TrackRouteT | undefined): boolean => {
   if (!first || !second) return first === second;

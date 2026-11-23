@@ -6,14 +6,17 @@ import { clamp } from '../engine/ease';
 import { crisp, handleWheel } from '../engine/interact';
 import { withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
-import { roundRect } from './paint';
+import { nearestVisibleLine, roundRect } from './paint';
 import type { Palette } from './tokens';
 import rulerCss from './ruler.css?raw';
 
 const LOOP_STRIP = 10;
 const LOOP_HANDLE = 6;
 
-/** Bars and beats. Click to set the marker, drag to draw a loop, click the loop bar to toggle it. */
+/**
+ * Bars and beats. Click to set the play marker (the only place that sets it with the mouse),
+ * drag to draw a loop, click the loop bar to toggle it.
+ */
 @customElement('maddie-ruler')
 export class MaddieRuler extends CanvasElement {
   static styles = [
@@ -23,7 +26,7 @@ export class MaddieRuler extends CanvasElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.title = 'Click to seek. Drag left or right to draw a loop, or up or down to zoom.';
+    this.title = 'Click to set where playback starts. Drag left or right to draw a loop, or up or down to zoom.';
     this.addEventListener('pointerdown', this.onDown);
     this.addEventListener('pointermove', this.onHover);
     this.addEventListener('wheel', this.onWheel, { passive: false });
@@ -71,6 +74,12 @@ export class MaddieRuler extends CanvasElement {
       const grid = Math.max(resolveGrid(ed.view.grid, ed.ppq, view.pxPerTick, sig), beatLength(sig, ed.ppq));
       return Math.max(0, snapTick(tick, grid, timeSignature));
     };
+    // The marker lands on the drawn grid line nearest the click. Never on a hidden one.
+    const snapMarker = (tick: number, isAltDown: boolean) => {
+      const shouldSnap = ed.view.snap && !isAltDown;
+      if (!shouldSnap) return Math.max(0, Math.round(tick));
+      return nearestVisibleLine(ed, tick, view.pxPerTick);
+    };
     const start = snapLoop(anchor, event.altKey);
     let gesture: 'loop' | 'zoom' | undefined;
     const move = (next: PointerEvent) => {
@@ -106,9 +115,9 @@ export class MaddieRuler extends CanvasElement {
       if (hit) {
         ed.transport.setLoop({ enabled: !loop.enabled });
       } else {
-        const tick = Math.max(0, snapTick(anchor, ed.ppq / 4, timeSignature));
-        ed.transport.seek(tick);
-        ed.setView({ cursor: tick });
+        const markerTick = snapMarker(anchor, next.altKey);
+        ed.transport.setMarker(markerTick);
+        ed.setView({ cursor: markerTick });
       }
     };
     this.addEventListener('pointermove', move);
@@ -166,6 +175,20 @@ export class MaddieRuler extends CanvasElement {
       ctx.fillRect(crisp(bx) - 0.5, h - 10, 1, 8);
       ctx.fillStyle = p['text-muted'];
       ctx.fillText(String(bar.index), bx + 6, h / 2 + 1);
+    }
+
+    // While playing, a hollow triangle shows the marker that stop returns to.
+    const isPlaying = ed.transport.playing;
+    const markerX = Math.round(x(ed.transport.marker));
+    if (isPlaying) {
+      ctx.strokeStyle = p.playhead;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(markerX - 4, h - 9.5);
+      ctx.lineTo(markerX + 4, h - 9.5);
+      ctx.lineTo(markerX, h - 2);
+      ctx.closePath();
+      ctx.stroke();
     }
 
     const px = Math.round(x(ed.transport.position));

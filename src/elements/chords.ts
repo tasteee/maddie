@@ -40,6 +40,8 @@ type SuggestionsT = { inKey: Chord[]; borrowed: Chord[] };
 
 const OCTAVES = [1, 2, 3, 4, 5, 6];
 const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
+/** How long a shape change plays (matches auditionChord's default). */
+const SHAPE_PREVIEW_MS = 500;
 const RAIL_OPEN = 148;
 const STRIP = 40;
 
@@ -47,17 +49,10 @@ const toSymbol = (symbol: string) => symbol.replace(/♯/g, '#').replace(/♭/g,
 
 const noteNames = (chord: Chord) => chord.type.intervals.map((interval) => pitchClassName(chord.root + interval)).join(' ');
 
-const oppositeTheme = (theme: string) => (theme === 'dark' ? 'light' : 'dark');
-
-const pageTheme = () => {
-  const isDark = document.documentElement.dataset.theme === 'dark';
-  return isDark ? 'dark' : 'light';
-};
-
 /**
  * The chords panel: a Suggestions rail docked on the grid side, then the library and the
  * crafting card. Both parts fold to 40px strips, so the panel never needs a button elsewhere.
- * The panel only makes new chords. A placed chord is changed in the selection bar.
+ * The panel only makes new chords. A placed chord is changed in the floating chord bar.
  */
 @customElement('maddie-chords')
 export class MaddieChords extends MaddieElement {
@@ -213,6 +208,7 @@ export class MaddieChords extends MaddieElement {
       .project-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); width: 100%; height: 36px; margin-bottom: var(--space-1); padding: 0 var(--space-3); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); text-align: left; cursor: pointer; }
       .project-row:hover { border-color: var(--border-strong); background: var(--_surface); }
       .project-row[aria-current='true'] { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+      .project-row.isPlaying { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 20%, transparent); }
       .project-pos { color: var(--_text-faint); font: var(--font-size-xs) var(--_font-mono); }
       .project-name { font-weight: 600; }
       .project-track { display: flex; align-items: center; gap: 6px; color: var(--_text-muted); font-size: var(--font-size-xs); }
@@ -313,8 +309,6 @@ export class MaddieChords extends MaddieElement {
   protected attach(ed: Editor, _engine: Engine) {
     this.ensureScaled();
     this.analyzeProject();
-    const themeObserver = new MutationObserver(() => this.requestUpdate());
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     this.track(
       ed.on('view', ({ view, prev }) => {
         const isClosing = !view.chordsPanel && prev.chordsPanel;
@@ -336,7 +330,6 @@ export class MaddieChords extends MaddieElement {
       () => {
         clearTimeout(this.analysisTimer);
         this.cancelDrag?.();
-        themeObserver.disconnect();
       },
     );
   }
@@ -491,6 +484,39 @@ export class MaddieChords extends MaddieElement {
       { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: view.chordTemplateId });
   }
 
+  /**
+   * Change a crafting setting and hear the new shape right away: the plain chord
+   * for half a second, without the pattern (hold the card to hear it with the pattern).
+   */
+  private changeShape(changes: Partial<Pick<Editor['view'], 'chordOctave' | 'chordInversion' | 'chordVoicing'>>) {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.setView(changes);
+    const crafting = this.crafting;
+    if (!crafting) return;
+    const view = ed.view;
+    const chord = crafting.chord;
+    try {
+      const plainDraft = ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
+        { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: '' });
+      ed.chordTrack.auditionDraft(plainDraft);
+      this.flashPlaying('craft', SHAPE_PREVIEW_MS);
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+    }
+  }
+
+  private flashTimer?: ReturnType<typeof setTimeout>;
+
+  private flashPlaying(id: string, milliseconds: number) {
+    clearTimeout(this.flashTimer);
+    this.playingId = id;
+    this.flashTimer = setTimeout(() => {
+      const isStillThis = this.playingId === id;
+      if (isStillThis) this.playingId = '';
+    }, milliseconds);
+  }
+
   private tryDraft(chord: Chord): ChordDraft | undefined {
     try {
       return this.makeDraft(chord);
@@ -618,6 +644,49 @@ export class MaddieChords extends MaddieElement {
     const leftEdge = view.scrollTick;
     const isOffscreen = row.start < leftEdge || row.start > leftEdge + (this.engine?.viewport.width ?? 0) / view.pxPerTick;
     if (isOffscreen) ed.setView({ scrollTick: Math.max(0, row.start - 40 / view.pxPerTick) }, { animate: true });
+  }
+
+  /** The row's own notes, as they are in the song: its voicing and pattern included. */
+  private playProjectChord(row: ProjectChordT): (() => void) | undefined {
+    const ed = this.ed;
+    if (!ed) return;
+    const notes = row.regionId
+      ? ed.notes(row.trackId).filter((note) => note.chordRegionId === row.regionId)
+      : row.noteIds.flatMap((id) => ed.getNote(id, row.trackId) ?? []);
+    const hasNotes = notes.length > 0;
+    if (!hasNotes) return;
+    return ed.auditionNotes(notes, row.start);
+  }
+
+  /** Mouse down: select it in the editor and hear it until mouse up, like a tile. */
+  private pressProjectChord(event: PointerEvent, row: ProjectChordT) {
+    const isPrimary = event.button === 0 && event.isPrimary;
+    if (!isPrimary) return;
+    this.selectProjectChord(row);
+    const stop = this.playProjectChord(row);
+    this.playingId = 'project-' + row.key;
+    const source = event.currentTarget as HTMLElement;
+    source.setPointerCapture(event.pointerId);
+    const release = () => {
+      stop?.();
+      this.playingId = '';
+      source.removeEventListener('pointerup', release);
+      source.removeEventListener('pointercancel', release);
+      source.removeEventListener('lostpointercapture', release);
+    };
+    source.addEventListener('pointerup', release);
+    source.addEventListener('pointercancel', release);
+    source.addEventListener('lostpointercapture', release);
+  }
+
+  /** Enter or Space on a focused row: select it and play it once. */
+  private onProjectKey(event: KeyboardEvent, row: ProjectChordT) {
+    const isActivate = event.key === 'Enter' || event.key === ' ';
+    if (!isActivate) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectProjectChord(row);
+    this.playProjectChord(row);
   }
 
   // ── Pattern picker ─────────────────────────────────────────────
@@ -763,10 +832,15 @@ export class MaddieChords extends MaddieElement {
     const rows = this.projectChords;
     const selection = ed.selection;
     return html`<div class="list" part="list">
-      <p class="hint">Chords found in this project. Click one to select it in the editor.</p>
+      <p class="hint">Chords found in this project. Hold one to hear it; it’s selected in the editor too.</p>
       ${rows.length ? rows.map((row) => {
         const isSelected = row.regionId ? selection.has(row.regionId) : row.noteIds.length > 0 && row.noteIds.every((id) => selection.has(id));
-        return html`<button type="button" class="project-row" aria-current=${isSelected} @click=${() => this.selectProjectChord(row)}>
+        const isPlaying = this.playingId === 'project-' + row.key;
+        const rowClass = isPlaying ? 'project-row isPlaying' : 'project-row';
+        return html`<button type="button" class=${rowClass} aria-current=${isSelected}
+          title="Hold to hear · selects it in the editor"
+          @pointerdown=${(event: PointerEvent) => this.pressProjectChord(event, row)}
+          @keydown=${(event: KeyboardEvent) => this.onProjectKey(event, row)}>
           <span class="project-pos">${row.position}</span>
           <span class="project-name">${row.chord.name}</span>
           <span class="project-track"><span class="project-dot" style=${'background:' + row.trackColor}></span>${row.trackName}</span>
@@ -785,7 +859,7 @@ export class MaddieChords extends MaddieElement {
     </div>`;
   }
 
-  private renderCraft(ed: Editor, theme: string) {
+  private renderCraft(ed: Editor, theme: string | undefined) {
     const view = ed.view;
     const crafting = this.crafting;
     const scaled = this.scaled;
@@ -798,8 +872,8 @@ export class MaddieChords extends MaddieElement {
     const isPickerOpen = view.patternPicker === 'craft';
     const isPlaying = this.playingId === 'craft';
     const voicings = scaled?.voicingNames ?? [view.chordVoicing];
-    const setOctave = (octave: number) => ed.setView({ chordOctave: octave });
-    const setInversion = (value: number) => ed.setView({ chordInversion: value });
+    const setOctave = (octave: number) => this.changeShape({ chordOctave: octave });
+    const setInversion = (value: number) => this.changeShape({ chordInversion: value });
 
     const hero = crafting ? html`<button type="button" class=${isPlaying ? 'hero isPlaying' : 'hero'}
         aria-label=${`${crafting.chord.name}, ${crafting.chord.type.name}. Hold to hear, drag to place, Enter to place at the playhead.`}
@@ -810,7 +884,7 @@ export class MaddieChords extends MaddieElement {
           <span class="hero-hint">${isPlaying ? waveMark : nothing}Hold to hear · drag to place</span></span>
       </button>` : html`<div class="hero-empty">Click any chord to start shaping it here.</div>`;
 
-    return html`<div class="craft" data-theme=${theme} aria-label="Chord you're shaping">
+    return html`<div class="craft" data-theme=${theme ?? nothing} aria-label="Chord you're shaping">
       <div class=${crafting ? 'card' : 'card isEmpty'}>
         ${hero}
         <div class="props">
@@ -820,7 +894,7 @@ export class MaddieChords extends MaddieElement {
             () => setInversion(inversion - 1), () => setInversion(inversion + 1))}
           <div class="prop"><span class="prop-label">Voicing</span>
             <select class="voicing" aria-label="Voicing" .value=${live(view.chordVoicing)}
-              @change=${(event: Event) => ed.setView({ chordVoicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
+              @change=${(event: Event) => this.changeShape({ chordVoicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
               ${voicings.map((name) => html`<option value=${name} ?selected=${name === view.chordVoicing}>${CHORD_VOICINGS[name] ?? name}</option>`)}
             </select>
           </div>
@@ -841,7 +915,7 @@ export class MaddieChords extends MaddieElement {
     </div>`;
   }
 
-  private renderMain(ed: Editor, theme: string | undefined, craftTheme: string) {
+  private renderMain(ed: Editor, theme: string | undefined, craftTheme: string | undefined) {
     const isOpen = ed.view.chordsPanel;
     const toggle = () => ed.setView({ chordsPanel: !isOpen, patternPicker: null });
     const keyName = ed.key && ed.key.scale !== 'chromatic' ? `${pitchClassName(ed.key.root)} ${ed.key.scale}` : 'No key';
@@ -871,11 +945,10 @@ export class MaddieChords extends MaddieElement {
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
-    const page = pageTheme();
     const view = ed.view;
     const mainTheme = view.chordsPanelDark ? 'dark' : undefined;
-    const mainEffective = mainTheme ?? page;
-    const craftTheme = view.chordCraftDark ? 'dark' : oppositeTheme(mainEffective);
+    // The crafting card follows the panel's theme unless the experimental toggle forces it dark.
+    const craftTheme = view.chordCraftDark ? 'dark' : undefined;
     const railTheme = view.suggestionsDark ? 'dark' : undefined;
     return html`
       ${this.renderRail(ed, railTheme)}

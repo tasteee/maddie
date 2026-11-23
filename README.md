@@ -26,7 +26,7 @@ The editor is dense, so Zest's size dials are turned down once, in `src/app/styl
 
 The **top row** holds transport, tempo, input, output, and the MIDI file menu. The **edit row** holds grid division and feel, key and scale, row folding, chords, undo/redo, and zoom. The **track strip** keeps Add piano track, Add chord track, and Snap to grid at the right while tracks scroll. Open a track's options for rename, mute, solo, color, and remove.
 
-- **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid. While playing, click empty grid to jump there. **Enter** goes back to the start. While playing, the rewind button jumps back to the marker; double-click it for the start.
+- **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler; while playing, that click only changes where stop returns to. **Enter** goes back to the start. While playing, the rewind button jumps back to the marker; double-click it for the start.
 - **← / →** move to the previous / next grid line: the play marker when nothing is selected, else the selected notes (the first one lands on the line, the rest keep their spacing). **⇧← / ⇧→** move note ends to grid lines. Everything snaps to lines of the current grid, never a grid step away from an off-grid spot.
 - **Loop:** drag anywhere on the ruler to draw a loop; drag its ends to resize; click the loop bar to toggle it.
 - **Metronome** (**C**) and **volume** (**⇧M** mutes): open **Output** for the sound, volume, mute and metronome. The metronome uses `output.click(e)` if present, else a short built-in click. Volume uses `output.setVolume(v)` if present, else scales velocity.
