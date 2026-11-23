@@ -57,11 +57,12 @@ export class MaddieInspector extends MaddieElement {
       .stepper button:focus-visible, .pattern-trigger:focus-visible, .voicing:focus-visible { outline: 2px solid var(--_focus); outline-offset: 1px; }
       .stepper svg { width: 12px; height: 12px; }
       .stepper-value { font-variant-numeric: tabular-nums; text-align: center; }
-      .voicing { width: 7.5rem; height: var(--control-height-sm); padding: 0 var(--space-2); border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; }
-      .pattern-trigger { display: inline-flex; align-items: center; gap: var(--space-2); width: 13rem; height: var(--control-height-sm); padding: 0 var(--space-2); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; text-align: left; cursor: pointer; }
+      .voicing { width: 9rem; height: var(--control-height-sm); padding: 0 var(--space-2); border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; }
+      .pattern-trigger { display: inline-flex; align-items: center; gap: var(--space-2); width: 11rem; height: var(--control-height-sm); padding: 0 var(--space-2); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; text-align: left; cursor: pointer; }
       .pattern-trigger:hover, .pattern-trigger[aria-expanded='true'] { border-color: var(--border-strong); }
       .pattern-trigger-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .pattern-trigger-text.isEmpty { color: var(--_text-faint); }
+      .pattern-trigger svg { flex: none; width: 12px; height: 12px; color: var(--_text-faint); }
       .chord-error { color: var(--status-danger); }
       .count {
         font-weight: 600;
@@ -308,6 +309,9 @@ export class MaddieInspector extends MaddieElement {
     const sharesVoicing = selected.every((region) => voicingOf(region) === voicingOf(first));
     const sharesTemplate = selected.every((region) => templateOf(region) === templateOf(first));
     const inversion = inversionOf(first);
+    const octaveOf = (region: ChordRegion) => Math.floor((region.rootMidi ?? Math.min(...region.pitches)) / 12) - 1;
+    const sharesOctave = selected.every((region) => octaveOf(region) === octaveOf(first));
+    const octaveLabel = sharesOctave ? 'Oct ' + octaveOf(first) : 'Mixed';
     const maxInversion = Math.min(3, Math.min(...selected.map((region) => region.intervals.length)) - 1);
     const inversionLabel = sharesInversion ? INVERSION_LABELS[inversion] : 'Mixed';
     const voicing = sharesVoicing ? voicingOf(first) : '';
@@ -325,7 +329,7 @@ export class MaddieInspector extends MaddieElement {
         </span></span>`;
 
     return html`<div class="chord-props">
-      ${stepper('Octave', '±12', true, true, () => this.shiftOctave(ed, -1), () => this.shiftOctave(ed, 1))}
+      ${stepper('Octave', octaveLabel, true, true, () => this.shiftOctave(ed, -1), () => this.shiftOctave(ed, 1))}
       ${stepper('Inversion', inversionLabel, sharesInversion && inversion > 0, sharesInversion && inversion < maxInversion,
         () => this.applyChordStyle(ed, { inversion: inversion - 1 }), () => this.applyChordStyle(ed, { inversion: inversion + 1 }))}
       <span class="chord-prop"><span class="chord-prop-label">Voicing</span>
