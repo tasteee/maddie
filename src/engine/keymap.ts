@@ -25,10 +25,11 @@ export const rowZoomBy = (editor: Editor, factor: number) => {
 };
 
 /** Step the play marker to the previous / next grid line, scrolling to keep it in view. */
-const stepMarker = (editor: Editor, dir: -1 | 1) => {
+const stepMarker = (editor: Editor, dir: -1 | 1, gridOverride?: number) => {
   const { transport } = editor;
   const from = transport.playing ? transport.position : transport.marker;
-  const tick = stepGrid(from, editor.commands.gridTicks(from), editor.meta.timeSignature, dir);
+  const grid = gridOverride ?? editor.commands.gridTicks(from);
+  const tick = stepGrid(from, grid, editor.meta.timeSignature, dir);
   transport.seek(tick);
   editor.setView({ cursor: tick });
   const v = editor.view;
@@ -53,12 +54,19 @@ const editChords = async (editor: Editor, label: string, plan: () => readonly Ch
   }
 };
 
-/** Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step. */
-const nudge = (editor: Editor, dir: -1 | 1) => {
-  if (!editor.selection.size) return stepMarker(editor, dir);
+/** The fixed step for Ctrl+←/→: a 16th, whatever the zoom or the grid shows. */
+const FINE_NUDGE_DIVISION = 16;
+
+/**
+ * Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step.
+ * `fine` uses 1/16 lines instead of the visible grid, so a zoomed-out view can still make small, aligned moves.
+ */
+const nudge = (editor: Editor, dir: -1 | 1, { fine = false }: { fine?: boolean } = {}) => {
+  const fineGrid = (editor.ppq * 4) / FINE_NUDGE_DIVISION;
+  if (!editor.selection.size) return stepMarker(editor, dir, fine ? fineGrid : undefined);
   const chords = editor.selectedChordRegions;
   const from = chords[0]?.start ?? Math.min(...editor.selectedNotes.map((n) => n.start));
-  const grid = editor.commands.gridTicks(from);
+  const grid = fine ? fineGrid : editor.commands.gridTicks(from);
   const to = editor.view.snap ? stepGrid(from, grid, editor.meta.timeSignature, dir) : from + dir * grid;
   if (chords.length) return void editChords(editor, 'Move chords', () => editor.chordTrack.planNudge(dir, to));
   editor.commands.move(undefined, { ticks: to - from });
@@ -137,6 +145,8 @@ export const actions: Record<string, Action> = {
   legato: (e) => e.selection.size && e.commands.legato(),
   nudgeLeft: (e) => nudge(e, -1),
   nudgeRight: (e) => nudge(e, 1),
+  nudgeFineLeft: (e) => nudge(e, -1, { fine: true }),
+  nudgeFineRight: (e) => nudge(e, 1, { fine: true }),
   pitchUp: (e) => pitchNudge(e, 1),
   pitchDown: (e) => pitchNudge(e, -1),
   octaveUp: (e) => pitchNudge(e, 12),
@@ -206,6 +216,10 @@ export const defaultKeymap: Keymap = {
   l: 'legato',
   arrowleft: 'nudgeLeft',
   arrowright: 'nudgeRight',
+  'mod+arrowleft': 'nudgeFineLeft',
+  'mod+arrowright': 'nudgeFineRight',
+  'ctrl+arrowleft': 'nudgeFineLeft',
+  'ctrl+arrowright': 'nudgeFineRight',
   arrowup: 'pitchUp',
   arrowdown: 'pitchDown',
   'shift+arrowup': 'octaveUp',

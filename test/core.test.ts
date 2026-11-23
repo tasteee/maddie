@@ -613,3 +613,20 @@ describe('grid modifier', () => {
   });
 });
 
+describe('Ctrl + arrow nudge', () => {
+  it('moves the selection by 1/16 lines, whatever the zoom shows', async () => {
+    const { vi } = await import('vitest');
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ grid: 'auto', snap: true, pxPerTick: 0.005 });
+    expect(ed.commands.gridTicks()).toBeGreaterThan(PPQ);
+    ed.commands.add([{ pitch: 60, start: PPQ * 4, duration: PPQ, velocity: 0.8 }]);
+    actions.nudgeFineRight(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 + PPQ / 4);
+    actions.nudgeFineLeft(ed);
+    actions.nudgeFineLeft(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 - PPQ / 4);
+  });
+});
+
