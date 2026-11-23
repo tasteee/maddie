@@ -2,11 +2,12 @@ import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { ScaledT } from '@tasteee/scaled/types';
 import { live } from 'lit/directives/live.js';
-import { CHORD_VOICINGS, GRID_OPTIONS, gridTicks, loadScaled, pitchName, toMidiVelocity, type ChordRegion, type Editor } from '../core';
+import { CHORD_VOICINGS, formatBBT, GRID_OPTIONS, gridTicks, loadScaled, pitchName, toMidiVelocity, type ChordRegion, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
-import { chordSelect, nestedPerformanceOptions } from './chord-controls';
+import { formatPatternCategory } from './pattern-picker';
+import './pattern-picker';
 import { dividerStyles, partStyles } from './controls';
 import { icons } from './icons';
 import { tokens } from './tokens';
@@ -46,15 +47,22 @@ export class MaddieInspector extends MaddieElement {
         min-width: 8.5rem;
         white-space: nowrap;
       }
-      .chord-settings {
-        display: grid;
-        gap: var(--space-2);
-        width: min(18rem, 70vw);
-        padding: var(--space-2);
-        white-space: normal;
-      }
-      .chord-field { display: grid; gap: var(--space-1); color: var(--_text-muted); }
-      .chord-field z-select { width: 100%; min-width: 0; }
+      .chord-props { display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+      .chord-prop { display: flex; align-items: center; gap: var(--space-1); }
+      .chord-prop-label { color: var(--_text-faint); font-size: var(--font-size-xs); }
+      .stepper { display: grid; grid-template-columns: 24px 3.5rem 24px; align-items: center; height: var(--control-height-sm); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); }
+      .stepper button { display: inline-flex; align-items: center; justify-content: center; height: 100%; padding: 0; border: 0; background: transparent; color: var(--_text-muted); cursor: pointer; }
+      .stepper button:hover { background: var(--_surface-2); color: var(--_text); }
+      .stepper button:disabled { opacity: 0.4; background: transparent; cursor: default; }
+      .stepper button:focus-visible, .pattern-trigger:focus-visible, .voicing:focus-visible { outline: 2px solid var(--_focus); outline-offset: 1px; }
+      .stepper svg { width: 12px; height: 12px; }
+      .stepper-value { font-variant-numeric: tabular-nums; text-align: center; }
+      .voicing { width: 7.5rem; height: var(--control-height-sm); padding: 0 var(--space-2); border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; }
+      .pattern-trigger { display: inline-flex; align-items: center; gap: var(--space-2); width: 13rem; height: var(--control-height-sm); padding: 0 var(--space-2); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); font: inherit; text-align: left; cursor: pointer; }
+      .pattern-trigger:hover, .pattern-trigger[aria-expanded='true'] { border-color: var(--border-strong); }
+      .pattern-trigger-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pattern-trigger-text.isEmpty { color: var(--_text-faint); }
+      .chord-error { color: var(--status-danger); }
       .count {
         font-weight: 600;
         color: var(--_text);
@@ -88,11 +96,19 @@ export class MaddieInspector extends MaddieElement {
   @property({ attribute: 'velocity-display' }) velocityDisplay: 'midi' | 'percent' = 'midi';
   @state() private scaled?: ScaledT;
   @state() private chordError = '';
+  @state() private pickerPosition = { left: 0, top: 0 };
 
   protected attach(editor: Editor, _engine: Engine) {
     const update = () => this.requestUpdate();
     const reset = () => { editor.stopChord(); update(); };
-    this.track(editor.on('selection', reset), editor.on('change', reset), editor.on('tracks', reset),
+    const loadChordTools = () => {
+      const isChordTrack = !!editor.chordRegions;
+      const needsTools = isChordTrack && !this.scaled;
+      if (!needsTools) return;
+      void loadScaled().then((loaded) => { this.scaled = loaded; }, (error: Error) => { this.chordError = error.message; });
+    };
+    loadChordTools();
+    this.track(editor.on('selection', reset), editor.on('change', reset), editor.on('tracks', () => { reset(); loadChordTools(); }),
       editor.on('view', update), () => editor.stopChord());
   }
 
@@ -211,40 +227,124 @@ export class MaddieInspector extends MaddieElement {
     }
   }
 
+  /** Move the selected chords up or down an octave. One undo step. */
+  private shiftOctave(ed: Editor, direction: -1 | 1) {
+    const selected = ed.selectedChordRegions;
+    const first = selected[0];
+    if (!first) return;
+    const regions = ed.chordTrack.planMove(first.id, first.start, direction, selected);
+    if (!regions) return this.engine?.toast('That octave is outside the MIDI range.');
+    const edit = ed.chordTrack.prepare(regions);
+    if (!edit) return;
+    ed.chordTrack.commit(edit, 'Change octave', selected.map((region) => region.id));
+    ed.chordTrack.audition();
+  }
+
+  /** "Use in panel": copy this chord's shape and pattern into the chords panel's crafting card. */
+  private useInPanel(ed: Editor) {
+    const region = ed.selectedChordRegions[0];
+    if (!region) return;
+    const rootMidi = region.rootMidi ?? Math.min(...region.pitches);
+    const octave = Math.max(1, Math.min(6, Math.floor(rootMidi / 12) - 1));
+    ed.setView({
+      chordsPanel: true,
+      chordOctave: octave,
+      chordInversion: region.inversion ?? 0,
+      chordVoicing: region.voicing ?? 'rootPosition',
+      chordTemplateId: region.performance?.templateId ?? '',
+    });
+    this.engine?.toast(`The panel now uses ${region.symbol}’s shape and pattern`);
+  }
+
+  private openPicker(ed: Editor, trigger: HTMLElement) {
+    const isOpen = ed.view.patternPicker === 'selection';
+    if (isOpen) return ed.setView({ patternPicker: null });
+    const bar = this.getBoundingClientRect();
+    const box = trigger.getBoundingClientRect();
+    const width = Math.min(540, window.innerWidth - 16);
+    const height = Math.min(470, window.innerHeight - 16);
+    const centered = box.left + box.width / 2 - width / 2;
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, centered));
+    const top = Math.max(8, bar.top - height - 8);
+    this.pickerPosition = { left, top };
+    ed.setView({ patternPicker: 'selection' });
+  }
+
+  private renderPicker(ed: Editor) {
+    const isOpen = ed.view.patternPicker === 'selection';
+    const region = ed.selectedChordRegions[0];
+    if (!isOpen || !region) return nothing;
+    const bar = formatBBT(region.start, ed.meta.timeSignature, ed.ppq).split('.')[0];
+    const preview = (templateId: string) => {
+      try {
+        const rootMidi = region.rootMidi ?? Math.min(...region.pitches);
+        const octave = Math.max(1, Math.min(6, Math.floor(rootMidi / 12) - 1));
+        const draft = ed.chordTrack.draft({ symbol: region.symbol, root: region.root, intervals: region.intervals },
+          { octave, inversion: region.inversion ?? 0, voicing: region.voicing ?? 'rootPosition', templateId });
+        return ed.chordTrack.auditionDraft(draft, true) ?? (() => {});
+      } catch (error) {
+        this.engine?.toast((error as Error).message, 'error');
+        return;
+      }
+    };
+    const apply = (templateId: string) => this.applyChordStyle(ed, { templateId: templateId || null });
+    const close = () => ed.setView({ patternPicker: null });
+    const projectIds = ed.doc.tracks.flatMap((track) => track.chordRegions ?? []).flatMap((item) => item.performance?.templateId ?? []);
+    const uniqueIds = [...new Set(projectIds)];
+    const style = `left: ${this.pickerPosition.left}px; top: ${this.pickerPosition.top}px`;
+    return html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${region.performance?.templateId ?? ''}
+      .targetPrefix=${'Changing'} .targetName=${`${region.symbol} · bar ${bar}`} .projectIds=${uniqueIds}
+      .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`;
+  }
+
   private renderChordSettings(ed: Editor) {
     const scaled = this.scaled;
     const selected = ed.selectedChordRegions;
-    const firstChord = selected[0];
-    const inversionOf = (region: ChordRegion) => String(region.inversion ?? 0);
+    const first = selected[0];
+    const inversionOf = (region: ChordRegion) => region.inversion ?? 0;
     const voicingOf = (region: ChordRegion) => region.voicing ?? 'rootPosition';
     const templateOf = (region: ChordRegion) => region.performance?.templateId ?? '';
-    const sharesInversion = !!firstChord && selected.every((region) => inversionOf(region) === inversionOf(firstChord));
-    const sharesVoicing = !!firstChord && selected.every((region) => voicingOf(region) === voicingOf(firstChord));
-    const sharesTemplate = !!firstChord && selected.every((region) => templateOf(region) === templateOf(firstChord));
-    const inversionValue = sharesInversion ? inversionOf(firstChord) : '';
-    const voicingValue = sharesVoicing ? voicingOf(firstChord) : '';
-    const templateValue = sharesTemplate ? templateOf(firstChord) : '';
-    const inversionOptions = ['Root', '1st', '2nd', '3rd'].map((label, index) => ({ value: String(index), label }));
-    return html`<z-popover placement="top-start" label="Edit selected chords" @toggle=${(event: CustomEvent<{ open: boolean }>) => {
-      if (event.composedPath()[0] !== event.currentTarget) return;
-      if (!event.detail.open) ed.stopChord();
-      else if (!this.scaled) void loadScaled().then((loaded) => { this.scaled = loaded; }, (error: Error) => {
-        this.chordError = error.message;
-      });
-    }}>
-      <z-button slot="trigger" kind="outline" size="sm" ?is-disabled=${!selected.length}>Edit chords ${icons.chevron}</z-button>
-      <div class="chord-settings">
-        <strong>Edit selected chords</strong>
-        ${scaled ? html`
-          ${chordSelect('Inversion', inversionValue, inversionOptions,
-            (value) => this.applyChordStyle(ed, { inversion: Number(value) }))}
-          ${chordSelect('Voicing', voicingValue, scaled.voicingNames.map((value) => ({ value, label: CHORD_VOICINGS[value] })),
-            (value) => this.applyChordStyle(ed, { voicing: value as ScaledT.VoicingNameT }))}
-          ${chordSelect('Performance', templateValue, nestedPerformanceOptions(scaled),
-            (value) => this.applyChordStyle(ed, { templateId: value || null }))}` : !this.chordError ? html`<span role="status">Loading chord tools…</span>` : nothing}
-        ${this.chordError ? html`<div role="alert">${this.chordError}</div>` : nothing}
-      </div>
-    </z-popover>`;
+    const sharesInversion = selected.every((region) => inversionOf(region) === inversionOf(first));
+    const sharesVoicing = selected.every((region) => voicingOf(region) === voicingOf(first));
+    const sharesTemplate = selected.every((region) => templateOf(region) === templateOf(first));
+    const inversion = inversionOf(first);
+    const maxInversion = Math.min(3, Math.min(...selected.map((region) => region.intervals.length)) - 1);
+    const inversionLabel = sharesInversion ? INVERSION_LABELS[inversion] : 'Mixed';
+    const voicing = sharesVoicing ? voicingOf(first) : '';
+    const template = sharesTemplate && templateOf(first) ? scaled?.performanceTemplates.find((item) => item.id === templateOf(first)) : undefined;
+    const patternText = !sharesTemplate ? 'Mixed patterns' : template ? `${template.name} · ${formatPatternCategory(template.category)}` : 'No pattern';
+    const hasPattern = sharesTemplate && !!template;
+    const isPickerOpen = ed.view.patternPicker === 'selection';
+    const voicings = scaled?.voicingNames ?? [];
+    const stepper = (label: string, value: string, canDown: boolean, canUp: boolean, down: () => void, up: () => void) => html`
+      <span class="chord-prop"><span class="chord-prop-label">${label}</span>
+        <span class="stepper" role="group" aria-label=${label}>
+          <button type="button" aria-label=${label + ' down'} ?disabled=${!canDown} @click=${down}>${icons.back}</button>
+          <span class="stepper-value">${value}</span>
+          <button type="button" aria-label=${label + ' up'} ?disabled=${!canUp} @click=${up}>${forwardIcon}</button>
+        </span></span>`;
+
+    return html`<div class="chord-props">
+      ${stepper('Octave', '±12', true, true, () => this.shiftOctave(ed, -1), () => this.shiftOctave(ed, 1))}
+      ${stepper('Inversion', inversionLabel, sharesInversion && inversion > 0, sharesInversion && inversion < maxInversion,
+        () => this.applyChordStyle(ed, { inversion: inversion - 1 }), () => this.applyChordStyle(ed, { inversion: inversion + 1 }))}
+      <span class="chord-prop"><span class="chord-prop-label">Voicing</span>
+        <select class="voicing" aria-label="Voicing" ?disabled=${!scaled} .value=${live(voicing)}
+          @change=${(event: Event) => this.applyChordStyle(ed, { voicing: (event.target as HTMLSelectElement).value as ScaledT.VoicingNameT })}>
+          ${sharesVoicing ? nothing : html`<option value="" selected disabled>Mixed</option>`}
+          ${voicings.map((name) => html`<option value=${name} ?selected=${name === voicing}>${CHORD_VOICINGS[name] ?? name}</option>`)}
+        </select></span>
+      <span class="chord-prop"><span class="chord-prop-label">Pattern</span>
+        <button type="button" class="pattern-trigger" data-pattern-trigger aria-haspopup="dialog" aria-expanded=${isPickerOpen} ?disabled=${!scaled}
+          @click=${(event: MouseEvent) => this.openPicker(ed, event.currentTarget as HTMLElement)}>
+          <span class=${hasPattern ? 'pattern-trigger-text' : 'pattern-trigger-text isEmpty'}>${patternText}</span>${icons.chevron}
+        </button></span>
+      <z-tooltip content="Copy this chord's shape and pattern into the chords panel" placement="top">
+        <z-button size="sm" kind="ghost" tone="secondary" @click=${() => this.useInPanel(ed)}>Use in panel</z-button>
+      </z-tooltip>
+      ${this.chordError ? html`<span class="chord-error" role="alert">${this.chordError}</span>` : nothing}
+    </div>
+    ${this.renderPicker(ed)}`;
   }
 
   private renderChordInspector(ed: Editor) {
@@ -255,11 +355,12 @@ export class MaddieInspector extends MaddieElement {
     };
     return html`<div class="summary" role="status">
       ${selected.length
-        ? html`<z-text size="sm" weight="600">${selected.length === 1 ? selected[0].symbol : selected.length + ' chords selected'}</z-text>`
+        ? html`<z-text size="sm" weight="600">${selected.length === 1 ? `${selected[0].symbol} · bar ${formatBBT(selected[0].start, ed.meta.timeSignature, ed.ppq).split('.')[0]}` : selected.length + ' chords selected'}</z-text>`
         : html`<z-text size="sm" color="muted">${hasChords ? 'Select chords to edit' : 'Add chords from the Chords panel'}</z-text>`}
     </div>
     ${selected.length ? html`<div class="group">
       ${this.renderChordSettings(ed)}
+      <z-separator is-vertical></z-separator>
       <z-button size="sm" kind="ghost" @click=${() => ed.chordTrack.audition()}>Audition</z-button>
       <z-button size="sm" kind="ghost" @click=${() => run(ed.chordTrack.duplicate())}>Duplicate</z-button>
       <z-button size="sm" kind="ghost" @click=${() => run(ed.chordTrack.delete(ed.selection))}>Delete</z-button>
@@ -397,6 +498,9 @@ function iconAction(label: string, tipText: string, icon: unknown, onClick: () =
     ><z-button class="icon" kind="ghost" size="sm" tone=${tone} aria-label=${label} @click=${onClick}>${icon}</z-button></z-tooltip
   >`;
 }
+
+const INVERSION_LABELS = ['Root', '1st', '2nd', '3rd'];
+const forwardIcon = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>`;
 
 declare global {
   interface HTMLElementTagNameMap {

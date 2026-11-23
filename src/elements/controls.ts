@@ -27,7 +27,7 @@ import { setBaseOctave, setComputerKeyboard, setKeyboardScale } from '../engine/
 import { captureMidi, modKeyLabel } from '../engine/keymap';
 import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
 import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
-import { applyTheme, readAppSettings, writeAppSettings, type ThemePreferenceT } from '../engine/app-settings';
+import { applyTheme, readAppSettings, writeAppSettings, type ExperimentalThemeKeyT, type ThemePreferenceT } from '../engine/app-settings';
 import { getSoundOptions } from './sound-options';
 import { MaddieElement } from './base';
 import { icons } from './icons';
@@ -818,7 +818,12 @@ export class MaddieSettings extends ControlElement {
     super.attach(editor, engine);
     const settings = readAppSettings();
     applyTheme(settings.theme);
-    editor.setView({ ghostNotes: settings.ghostNotes });
+    editor.setView({
+      ghostNotes: settings.ghostNotes,
+      chordsPanelDark: settings.chordsPanelDark,
+      chordCraftDark: settings.chordCraftDark,
+      suggestionsDark: settings.suggestionsDark,
+    });
     const watchSystem = matchMedia('(prefers-color-scheme: dark)');
     const followSystem = () => {
       const isSystem = readAppSettings().theme === 'system';
@@ -840,6 +845,11 @@ export class MaddieSettings extends ControlElement {
     ed.setView({ ghostNotes: isOn });
   };
 
+  private toggleExperimental = (ed: Editor, key: ExperimentalThemeKeyT, isOn: boolean) => {
+    writeAppSettings({ [key]: isOn });
+    ed.setView({ [key]: isOn });
+  };
+
   render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
@@ -852,6 +862,12 @@ export class MaddieSettings extends ControlElement {
     const theme = select('Theme', settings.theme, themeOptions, this.chooseTheme);
     const ghostNotes = switchRow('Show other tracks', "Faint notes from other tracks behind the active one", ed.view.ghostNotes,
       (isOn) => this.toggleGhostNotes(ed, isOn));
+    const darkPanel = switchRow('Dark chords panel', 'The whole chords panel in the dark theme', ed.view.chordsPanelDark,
+      (isOn) => this.toggleExperimental(ed, 'chordsPanelDark', isOn));
+    const darkCraft = switchRow('Dark chord card', 'The crafting card stays dark, whatever the panel is', ed.view.chordCraftDark,
+      (isOn) => this.toggleExperimental(ed, 'chordCraftDark', isOn));
+    const darkSuggestions = switchRow('Dark suggestions', 'The Suggestions rail in the dark theme', ed.view.suggestionsDark,
+      (isOn) => this.toggleExperimental(ed, 'suggestionsDark', isOn));
 
     return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Settings">
       <z-button slot="trigger" kind="ghost" size="md" is-icon aria-label="Settings">${icons.settings}</z-button>
@@ -860,6 +876,11 @@ export class MaddieSettings extends ControlElement {
         <div class="field"><span class="hint">Theme</span>${theme}</div>
         <z-separator></z-separator>
         ${ghostNotes}
+        <z-separator></z-separator>
+        <span class="hint">Experimental</span>
+        ${darkPanel}
+        ${darkCraft}
+        ${darkSuggestions}
       </div>
     </z-popover>`;
   };

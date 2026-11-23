@@ -86,6 +86,13 @@ export const styleEditorToast = (element?: Element) => connectShadow(element, (r
   observer.observe(root, { childList: true, subtree: true });
   observer.observe(host, { attributes: true, attributeFilter: ['data-capture'] });
   update();
+  // Toasts use the opposite theme to the page.
+  const invert = () => {
+    const isPageDark = document.documentElement.dataset.theme === 'dark';
+    host.setAttribute('data-theme', isPageDark ? 'light' : 'dark');
+  };
+  new MutationObserver(invert).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  invert();
 });
 
 export const showEditorToast = (title: string, isCapture = false) => {

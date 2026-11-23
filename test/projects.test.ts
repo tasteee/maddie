@@ -111,9 +111,9 @@ describe('Maddie projects', () => {
       grid: '1/64T', snap: false, scaleLock: true, scaleHighlight: false, follow: true,
       noteLength: 180, noteVelocity: 0.45, noteColor: 'mono',
       computerKeyboard: true, keyboardBase: 60, keyboardScale: true, midiInput: true, midiDevice: 'keys',
-      chordsPanel: true, chordsTab: 'song', chordFamily: 'seventh', chordQuery: 'maj7', chordToggledRoots: [1, 7],
-      chordSetupOpen: true, chordOctave: 4, chordInversion: 2, chordVoicing: 'drop2',
-      chordCategory: 'Arpeggios', chordTemplateId: 'pattern', quantizeGrid: '1/8.',
+      chordsPanel: true, chordsTab: 'project', chordFamily: 'seventh', chordQuery: 'maj7',
+      chordOctave: 4, chordInversion: 2, chordVoicing: 'drop2',
+      chordTemplateId: 'pattern', quantizeGrid: '1/8.',
       quantizeStrength: 75, humanizeTiming: 25, humanizeVelocity: 9,
     } as const;
     editor.setView(view);

@@ -49,17 +49,23 @@ export interface ViewState {
   midiInput: boolean;
   /** MIDI input device id to listen to. `null` = every device. */
   midiDevice: string | null;
-  /** Show the chords panel (drag chords that fit the key onto the grid). */
+  /** Chords panel open. Closed, it folds to a strip at the right edge. */
   chordsPanel: boolean;
-  chordsTab: 'browse' | 'suggestions' | 'song';
+  /** `all`: every chord that fits the key. `project`: chords found in this project. */
+  chordsTab: 'all' | 'project';
+  /** The Suggestions rail beside the chords panel, open or folded. It shows either way. */
+  suggestionsOpen: boolean;
+  /** Which pattern picker is open: for the chord being crafted, or for the selected chords. */
+  patternPicker: 'craft' | 'selection' | null;
+  /** Experimental app settings: force parts of the chords panel to the dark theme. */
+  chordsPanelDark: boolean;
+  chordCraftDark: boolean;
+  suggestionsDark: boolean;
   chordFamily: ChordFamily | 'all';
   chordQuery: string;
-  chordToggledRoots: readonly number[];
-  chordSetupOpen: boolean;
   chordOctave: number;
   chordInversion: number;
   chordVoicing: ScaledT.VoicingNameT;
-  chordCategory: string;
   chordTemplateId: string;
   quantizeGrid: GridValue;
   quantizeStrength: number;
@@ -96,15 +102,17 @@ export const DEFAULT_VIEW: ViewState = {
   midiInput: false,
   midiDevice: null,
   chordsPanel: false,
-  chordsTab: 'browse',
+  chordsTab: 'all',
+  suggestionsOpen: true,
+  patternPicker: null,
+  chordsPanelDark: false,
+  chordCraftDark: false,
+  suggestionsDark: false,
   chordFamily: 'all',
   chordQuery: '',
-  chordToggledRoots: [],
-  chordSetupOpen: false,
   chordOctave: 3,
   chordInversion: 0,
   chordVoicing: 'rootPosition',
-  chordCategory: '',
   chordTemplateId: '',
   quantizeGrid: 'current',
   quantizeStrength: 100,
@@ -118,7 +126,7 @@ export const DEFAULT_VIEW: ViewState = {
 };
 
 /** View keys that belong to the app, not to a project. Projects neither save nor restore them. */
-export type AppViewKeyT = 'ghostNotes';
+export type AppViewKeyT = 'ghostNotes' | 'patternPicker' | 'chordsPanelDark' | 'chordCraftDark' | 'suggestionsDark';
 
 export const ZOOM_LIMITS = {
   pxPerTick: [0.0001, DEFAULT_VIEW.pxPerTick * 4] as const,

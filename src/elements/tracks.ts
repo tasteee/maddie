@@ -253,8 +253,9 @@ export class MaddieTracks extends MaddieElement {
       const isContextClick = event.detail !== -1;
       if (!isContextClick) return;
       ed.setActiveTrack(track.id);
-      const tab = event.currentTarget as HTMLElement;
-      tab.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+      // Close other menus from outside the sortable strip. A synthetic pointerdown on the
+      // tab itself starts a sort drag that never ends, so the tab follows the mouse.
+      this.closeOpenMenus();
     };
     const selectAction = (event: CustomEvent<{ value: TrackActionT }>) => {
       const action = event.detail.value;
@@ -355,7 +356,7 @@ export class MaddieTracks extends MaddieElement {
     const addTrack = (event: CustomEvent<{ value: string }>) => {
       const isChord = event.detail.value === 'chords';
       ed.commands.addTrack({ chords: isChord });
-      if (isChord) ed.setView({ chordsPanel: true, chordsTab: 'browse' });
+      if (isChord) ed.setView({ chordsPanel: true, chordsTab: 'all' });
     };
     const tracks = repeat(ed.trackList, (track) => track.id, (track, index) => this.renderTrack(ed, track, index));
 

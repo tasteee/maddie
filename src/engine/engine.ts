@@ -37,6 +37,8 @@ export interface ChordDrag {
   clientY: number;
   /** Set by the piano roll while the chord is over the grid. */
   overGrid: boolean;
+  /** Set by the piano roll: what dropping here does ("Replace G", "Fits ¾ bar", "Insert · moves 3 chords"). */
+  label?: string;
 }
 
 export type ChordDragPhase = 'move' | 'drop' | 'cancel';

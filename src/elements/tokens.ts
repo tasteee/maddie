@@ -1,4 +1,5 @@
-import { css } from 'lit';
+import { unsafeCSS } from 'lit';
+import zestTokens from '@tasteee/zest/tokens.css?raw';
 
 /**
  * Design tokens. Maddie speaks Zest (`@tasteee/zest`): every `--_*` value resolves to a Zest semantic
@@ -10,8 +11,10 @@ import { css } from 'lit';
  * Colors name a role, never a literal: `dom` is Zest's dominant accent (purple), `sub` its subordinate
  * one (pink). `error` is left to destructive actions.
  */
-export const tokens = css`
-  :host {
+// The declarations live in one string so a themed region inside a shadow root
+// can re-run them (see `themeRegion`). Custom properties resolve where they're
+// declared, so a region that flips the theme must declare them again.
+const tokenDeclarations = `
     --_font: var(--maddie-font, var(--font-sans));
     --_font-mono: var(--maddie-font-mono, var(--font-mono));
 
@@ -75,6 +78,11 @@ export const tokens = css`
     font-family: var(--_font);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+`;
+
+export const tokens = unsafeCSS(`
+  :host {
+${tokenDeclarations}
   }
   @media (prefers-reduced-motion: reduce) {
     :host {
@@ -83,7 +91,18 @@ export const tokens = css`
       --_motion-slow: 0ms;
     }
   }
-`;
+`);
+
+/**
+ * Themed regions inside a shadow root. Zest's theme rules live in a document
+ * stylesheet, which can't reach into shadow trees, so the region loads Zest's
+ * tokens itself and re-declares Maddie's. Put `data-theme="dark"` (or `light`)
+ * on any element in the shadow root to theme that subtree.
+ */
+export const themeRegion = [
+  unsafeCSS(zestTokens),
+  unsafeCSS(`[data-theme] {${tokenDeclarations}  color: var(--_text);\n  }`),
+];
 
 /** Theme palette resolved to concrete colors for canvas drawing. */
 export const PALETTE_TOKENS = [
