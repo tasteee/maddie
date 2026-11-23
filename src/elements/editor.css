@@ -49,7 +49,6 @@ maddie-zoom {
   align-self: end;
   justify-self: end;
   z-index: 2;
-  margin: var(--space-2);
 }
 /* Floating chord bar: spans the roll's bottom edge, leaving room for the zoom pad. */
 maddie-chord-bar {
@@ -57,7 +56,8 @@ maddie-chord-bar {
   align-self: end;
   z-index: 3;
   min-width: 0;
-  padding: 0 calc(var(--space-2) * 2 + 96px) var(--space-2) var(--space-2);
+  /* Clear the zoom L (two 36px cells plus the corner). */
+  padding: 0 calc(108px + var(--space-2)) var(--space-2) var(--space-2);
 }
 /* While playing on a silent track: a bold badge, top-center of the roll. */
 maddie-silent-badge {

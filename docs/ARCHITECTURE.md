@@ -526,7 +526,7 @@ editor.output = {
 
 ### 6.3.1 Marker, metronome, follow
 
-- **Marker:** play always starts at the marker; stop returns to it. Only the ruler sets it with the mouse, on the grid line nearest the click. Clicking the grid never moves it. While playing, a ruler click moves the marker but leaves playback alone; stop returns to the new marker. With the loop on, a marker outside the loop starts play at the loop start. The rewind button jumps back to the marker while playing (double-click: to 0). A second stop rewinds to 0.
+- **Marker:** play always starts at the marker; stop returns to it. Only the ruler sets it with the mouse, on the drawn grid line nearest the click (never a line hidden at this zoom). Clicking the grid never moves it. While playing, a ruler click moves the marker but leaves playback alone; stop returns to the new marker. With the loop on, a marker outside the loop starts play at the loop start. The rewind button jumps back to the marker while playing (double-click: to 0). A second stop rewinds to 0.
 - **Metronome:** `transport.setMetronome({ enabled, volume })`. Clicks are scheduled with the notes, on every beat (accent on the bar). Sound: `output.click(e)` if provided, otherwise a 60ms sine blip straight to the AudioContext. That blip is the one built-in sound; it's a utility, not an instrument.
 - **Follow:** `view.follow`, off by default. When on, the view pages forward as the playhead reaches the right edge.
 
@@ -807,7 +807,9 @@ Status as of v0.0.1: ✅ done · 🟡 partial · ⬜ not started
 | Chord suggestions | Follow **only the editor selection** (a chord-track chord, or MIDI notes that name a chord), never a click in the panel. In key first, then Borrowed (rose: tertiary means "outside the key" and nothing else). |
 | Dropping a chord | Empty space: 1 bar, or fitted to end where the next chord starts. A chord's body: replace it. A seam between touching chords: insert and slide later chords right. Alt only skips snapping. |
 | Themes inside shadow roots | Zest's `[data-theme]` rules live in a document stylesheet, so a region inside a shadow root loads Zest's tokens itself (`themeRegion` in `tokens.ts`). The crafting card follows the panel's theme (an experimental setting can force it dark); toasts are inverted. |
-| Play marker | **Set from the ruler only.** Clicks in the grid select and deselect, never move the marker. Selecting a chord doesn't move it either: clicking already plays the chord, and Play selection plays from it. |
+| Play marker | **Set from the ruler only**, on the nearest line the grid actually draws. Clicks in the grid select and deselect, never move the marker. Selecting a chord doesn't move it either: clicking already plays the chord, and Play selection plays from it. |
 | Selected notes | While anything is selected, other notes fade toward the grid; selected notes keep full color and get a ring in the text color. |
 | Shape previews | Changing octave, inversion or voicing (crafting card or chord bar) plays the plain chord for 0.5s, without the pattern. Holding the card, or a pattern in the picker, plays the pattern. |
 | Silent track while playing | A bold badge, top-center of the roll: red when the track is muted, amber when a solo elsewhere leaves it out (naming the soloed tracks). Only while playing. |
+| Grid follows zoom | **Optional** (Follow zoom in the grid menu, grid `auto`). Lines get finer as you zoom in and snapping uses the lines you see. Picking a division turns it off. |
+| Zoom controls | A flush L in the roll's bottom-right corner: row height up the right edge, time zoom along the bottom, Fit where they meet. Flat, part of the frame. |

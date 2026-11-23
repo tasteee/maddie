@@ -1,26 +1,36 @@
 :host {
+  --_cell: 36px;
   display: grid;
-  grid-template-columns: auto auto;
-  grid-template-rows: auto auto;
+  grid-template-columns: auto var(--_cell);
+  grid-template-rows: auto var(--_cell);
   grid-template-areas: '. rows' 'time corner';
-  align-items: end;
-  justify-items: end;
-  gap: 4px;
-  opacity: 0.8;
-  transition: opacity 150ms;
 }
-:host(:hover), :host(:focus-within) { opacity: 1; }
-.time, .rows, .corner {
+/* Flat strips flush to the grid's right and bottom edges: surface fill and
+   hairline borders, no radius or shadow, so they read as part of the frame. */
+.rows,
+.time,
+.corner {
   display: flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-overlay);
+  background: var(--_surface);
+  border-left: 1px solid var(--_border);
+  border-top: 1px solid var(--_border);
 }
-.time { grid-area: time; flex-direction: row; }
 .rows { grid-area: rows; flex-direction: column; }
+.time { grid-area: time; flex-direction: row; }
 .corner { grid-area: corner; }
-z-tooltip { display: grid; place-items: center; }
-svg { scale: 1.2; }
+z-tooltip { display: flex; }
+.cell {
+  display: grid;
+  place-items: center;
+  width: var(--_cell);
+  height: var(--_cell);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--_text-muted);
+  cursor: pointer;
+}
+.cell svg { width: 16px; height: 16px; }
+.cell:hover { background: var(--_surface-2); color: var(--_text); }
+.cell:disabled { color: var(--_text-faint); background: transparent; cursor: default; }
+.cell:focus-visible { outline: 2px solid var(--_focus); outline-offset: -2px; }

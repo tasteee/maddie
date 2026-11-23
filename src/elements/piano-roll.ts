@@ -1034,7 +1034,9 @@ export class MaddiePianoRoll extends CanvasElement {
       roundRect(ctx, x, y, nw - 2, nh, radius);
       ctx.fillStyle = noteFill(p, base, { velocity: 1 }, state);
       ctx.fill();
-      if (state.selected) this.drawSelectionRing(ctx, p, x, y, nw - 2, nh, radius, style?.outline);
+      // Chord-track notes sit inside the chord's own box, which already shows selection.
+      const shouldRing = state.selected && !ed.chordRegions;
+      if (shouldRing) this.drawSelectionRing(ctx, p, x, y, nw - 2, nh, radius, style?.outline);
       ctx.globalAlpha = 1;
     };
 

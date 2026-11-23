@@ -1,4 +1,4 @@
-import { barsInRange, pitchClass, resolveGrid, type Editor, type Note, type NoteColorMode } from '../core';
+import { barsInRange, pitchClass, resolveGrid, snapTick, timeSigAt, type Editor, type Note, type NoteColorMode } from '../core';
 import type { NoteDisplay } from '../engine/animation';
 import { clamp, easeOut } from '../engine/ease';
 import type { DisplayView, Engine } from '../engine/engine';
@@ -140,8 +140,8 @@ export function drawTimeGrid(
   const grid = resolveGrid(editor.view.grid, ppq, v.pxPerTick, bars[0]?.sig);
   const subPx = grid * v.pxPerTick;
   const gridFade = easeOut(clamp((now - engine.gridChangedAt) / engine.motion.slow, 0, 1));
-  const subAlpha = subPx >= 4 ? gridFade : 0;
-  const showBeats = ppq * v.pxPerTick >= 4;
+  const subAlpha = subPx >= MIN_LINE_PX ? gridFade : 0;
+  const showBeats = ppq * v.pxPerTick >= MIN_LINE_PX;
   const x = (t: number) => (t - from) * v.pxPerTick;
 
   ctx.lineWidth = 1;
@@ -177,7 +177,7 @@ export function drawTimeGrid(
   }
   // Bars (thinned when zoomed far out).
   const barPx = (bars[0] ? (ppq * 4 * bars[0].sig.numerator) / bars[0].sig.denominator : ppq * 4) * v.pxPerTick;
-  const every = barPx >= 12 ? 1 : Math.pow(2, Math.ceil(Math.log2(12 / barPx)));
+  const every = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
   ctx.strokeStyle = p['line-bar'];
   ctx.beginPath();
   for (const bar of bars) {
@@ -188,6 +188,40 @@ export function drawTimeGrid(
     ctx.lineTo(crisp(xx), top + height);
   }
   ctx.stroke();
+}
+
+// The grid's drawing thresholds, shared with snapping so nothing snaps to a hidden line.
+const MIN_LINE_PX = 4;
+const MIN_BAR_PX = 12;
+
+/**
+ * The drawn grid line nearest `tick`: bar lines (thinned when zoomed out), beat lines,
+ * and subdivisions, each only while the grid draws it at this zoom.
+ */
+export function nearestVisibleLine(editor: Editor, tick: number, pxPerTick: number): number {
+  const { ppq, meta } = editor;
+  const sigs = meta.timeSignature;
+  const near = barsInRange(Math.max(0, tick - ppq * 32), tick + ppq * 32, sigs, ppq);
+  const firstSig = near[0]?.sig;
+  const barTicks = firstSig ? (ppq * 4 * firstSig.numerator) / firstSig.denominator : ppq * 4;
+  const barPx = barTicks * pxPerTick;
+  const barEvery = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
+  const candidates = near.filter((bar) => (bar.index - 1) % barEvery === 0).map((bar) => bar.tick);
+
+  const areBeatsDrawn = ppq * pxPerTick >= MIN_LINE_PX;
+  if (areBeatsDrawn) candidates.push(snapTick(tick, ppq, sigs));
+  const grid = resolveGrid(editor.view.grid, ppq, pxPerTick, timeSigAt(Math.max(0, tick), sigs));
+  const areSubdivisionsDrawn = grid * pxPerTick >= MIN_LINE_PX;
+  if (areSubdivisionsDrawn) candidates.push(snapTick(tick, grid, sigs));
+
+  const hasCandidates = candidates.length > 0;
+  if (!hasCandidates) return Math.max(0, Math.round(tick));
+  let nearest = candidates[0];
+  for (const candidate of candidates) {
+    const isCloser = Math.abs(candidate - tick) < Math.abs(nearest - tick);
+    if (isCloser) nearest = candidate;
+  }
+  return Math.max(0, nearest);
 }
 
 /** Loop region tint. */

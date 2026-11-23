@@ -6,7 +6,7 @@ import { clamp } from '../engine/ease';
 import { crisp, handleWheel } from '../engine/interact';
 import { withAlpha } from '../engine/theme';
 import { CanvasElement } from './canvas-element';
-import { roundRect } from './paint';
+import { nearestVisibleLine, roundRect } from './paint';
 import type { Palette } from './tokens';
 import rulerCss from './ruler.css?raw';
 
@@ -74,13 +74,11 @@ export class MaddieRuler extends CanvasElement {
       const grid = Math.max(resolveGrid(ed.view.grid, ed.ppq, view.pxPerTick, sig), beatLength(sig, ed.ppq));
       return Math.max(0, snapTick(tick, grid, timeSignature));
     };
-    // The marker lands on the grid line nearest the click, in the grid the roll shows.
+    // The marker lands on the drawn grid line nearest the click. Never on a hidden one.
     const snapMarker = (tick: number, isAltDown: boolean) => {
       const shouldSnap = ed.view.snap && !isAltDown;
       if (!shouldSnap) return Math.max(0, Math.round(tick));
-      const sig = timeSigAt(Math.max(0, tick), timeSignature);
-      const grid = resolveGrid(ed.view.grid, ed.ppq, view.pxPerTick, sig);
-      return Math.max(0, snapTick(tick, grid, timeSignature, 'round'));
+      return nearestVisibleLine(ed, tick, view.pxPerTick);
     };
     const start = snapLoop(anchor, event.altKey);
     let gesture: 'loop' | 'zoom' | undefined;
