@@ -1,11 +1,13 @@
 /// <reference types="vite/client" />
-import { SplendidGrandPiano, Soundfont, ElectricPiano } from 'smplr';
+import { SplendidGrandPiano, Soundfont, ElectricPiano, type LoadProgress } from 'smplr';
 import { toMidiVelocity, type Output } from '../core';
 import '@tasteee/zest/ink.css';
 import '@tasteee/zest/fonts.css';
-import { ZThemeSwitcher } from '@tasteee/zest/z-theme-switcher';
 import '../elements';
-import { DEMO_TEMPO, demoBass, demoChords, demoLead } from './demo-song';
+import { OutputRouter } from '../engine/output-router';
+import './project-menu';
+import type { MaddieProjectMenu } from './project-menu';
+import { PROJECT_STORAGE_KEY, Projects } from './projects';
 
 const editorEl = document.querySelector('maddie-editor')!;
 const editor = editorEl.editor;
@@ -53,19 +55,74 @@ const makeOutput = (player: Player, isReady: () => boolean = () => true): Output
   };
 };
 
-// Builds the instrument (and fetches its samples) on first use, so unused sounds cost nothing.
-const lazySound = (id: string, label: string, create: () => Output) => {
+type SoundLoad = { label: string; state: 'loading' | 'ready' | 'error'; progress?: LoadProgress };
+type SampledPlayer = Player & { ready: Promise<void>; loadProgress: LoadProgress };
+
+const router = OutputRouter.for(editor);
+const soundLoads = new Map<string, SoundLoad>();
+const loading = document.querySelector<HTMLElement>('#instrument-loading')!;
+const loadingLabel = loading.querySelector<HTMLElement>('#instrument-loading-label')!;
+const loadingPercent = loading.querySelector<HTMLElement>('#instrument-loading-percent')!;
+const progressBar = loading.querySelector<HTMLProgressElement>('progress')!;
+
+// The default sound, then any sound a track uses on its own.
+function getWatchedSoundIds(): string[] {
+  const trackSoundIds = editor.trackList.flatMap((track) => (track.route?.kind === 'sound' ? [track.route.soundId] : []));
+  return [router.source, ...trackSoundIds];
+}
+
+function updateSoundIndicator() {
+  const watchedLoads = getWatchedSoundIds().map((id) => soundLoads.get(id));
+  const sound = watchedLoads.find((load) => load && load.state !== 'ready') ?? watchedLoads[0];
+  const visible = !!sound && sound.state !== 'ready';
+  loading.hidden = !visible;
+  if (!visible || !sound) return;
+  const failed = sound.state === 'error';
+  const label = failed ? 'Could not load ' + sound.label : 'Loading ' + sound.label;
+  if (loadingLabel.textContent !== label) loadingLabel.textContent = label;
+  progressBar.hidden = failed;
+  if (!failed && sound.progress && sound.progress.total > 0) {
+    const { loaded, total } = sound.progress;
+    const percent = Math.min(100, Math.floor(100 * loaded / total));
+    progressBar.max = 100;
+    progressBar.value = percent;
+    loadingPercent.textContent = percent + '%';
+  } else {
+    progressBar.removeAttribute('value');
+    loadingPercent.textContent = '';
+  }
+}
+
+router.onChange(updateSoundIndicator);
+
+// Create each instrument on first use and show progress only for the active sound.
+function instrumentSound(id: string, label: string, create: (onLoadProgress: (progress: LoadProgress) => void) => SampledPlayer, playPartial = false) {
   let output: Output | undefined;
   return {
     id,
     label,
     get output() {
-      return (output ??= create());
+      if (output) return output;
+      const load: SoundLoad = { label, state: 'loading' };
+      soundLoads.set(id, load);
+      const player = create((progress) => {
+        load.progress = progress;
+        updateSoundIndicator();
+      });
+      load.progress = player.loadProgress;
+      void player.ready.then(() => {
+        load.state = 'ready';
+        updateSoundIndicator();
+      }, (error: unknown) => {
+        load.state = 'error';
+        updateSoundIndicator();
+        console.error('Could not load sound', error);
+      });
+      return output = makeOutput(player, () => load.state === 'ready' ||
+        (playPartial && (load.progress?.loaded ?? 0) > 0));
     },
   };
-};
-
-const piano = SplendidGrandPiano(audioContext, { volume: 100 });
+}
 
 // General MIDI sounds from smplr's Soundfont (MusyngKite kit). Each is fetched on first use.
 const GM_SOUNDS: [id: string, label: string, instrument: string][] = [
@@ -85,44 +142,24 @@ const GM_SOUNDS: [id: string, label: string, instrument: string][] = [
   ['gm-marimba', 'Marimba', 'marimba'],
 ];
 
-const loaded = (player: { ready: Promise<void> }) => {
-  let ready = false;
-  player.ready.then(() => (ready = true)).catch((err) => console.error('Could not load sound', err));
-  return () => ready;
-};
-
-const gmOutput = (instrument: string): Output => {
-  const player = Soundfont(audioContext, { instrument, kit: 'MusyngKite', volume: 100 });
-  return makeOutput(player, loaded(player));
-};
-
-const electricPianoOutput = (instrument: string): Output => {
-  const player = ElectricPiano(audioContext, { instrument, volume: 100 });
-  return makeOutput(player, loaded(player));
-};
-
+let storage: Storage | null = null;
+try { storage = localStorage; } catch {}
+const projects = new Projects(editor, storage);
 editorEl.sounds = [
-  { id: 'piano', label: 'Grand Piano', output: makeOutput(piano) },
-  lazySound('ep-pianet', 'Pianet T', () => electricPianoOutput('PianetT')),
-  lazySound('ep-wurlitzer', 'Wurlitzer', () => electricPianoOutput('WurlitzerEP200')),
-  ...GM_SOUNDS.map(([id, label, instrument]) => lazySound(id, label, () => gmOutput(instrument))),
+  instrumentSound('piano', 'Grand Piano', (onLoadProgress) => SplendidGrandPiano(audioContext, { volume: 100, onLoadProgress }), true),
+  instrumentSound('ep-pianet', 'Pianet T', (onLoadProgress) => ElectricPiano(audioContext, { instrument: 'PianetT', volume: 100, onLoadProgress })),
+  instrumentSound('ep-wurlitzer', 'Wurlitzer EP200', (onLoadProgress) => ElectricPiano(audioContext, { instrument: 'WurlitzerEP200', volume: 100, onLoadProgress })),
+  ...GM_SOUNDS.map(([id, label, instrument]) => instrumentSound(id, label,
+    (onLoadProgress) => Soundfont(audioContext, { instrument, kit: 'MusyngKite', volume: 100, onLoadProgress }))),
 ];
 
-// ── Content ─────────────────────────────────────────────────────────
-editorEl.notes = demoChords();
-// Three tracks, so the track list and ghost notes have something to show. Not part of undo history.
-const chordsTrackId = editor.activeTrackId;
-editor.commands.renameTrack(chordsTrackId, 'Chords', { origin: 'load' });
-editor.commands.addTrack({ name: 'Lead', notes: demoLead() }, { origin: 'load' });
-editor.commands.addTrack({ name: 'Bass', notes: demoBass() }, { origin: 'load' });
-editor.setActiveTrack(chordsTrackId);
-editor.commands.setTempo(DEMO_TEMPO, { origin: 'load' });
-editor.transport.setLoop({ start: 0, end: editor.ppq * 16, enabled: true });
-editor.setView({ pxPerTick: 0.075 });
-
-// ── Theme ───────────────────────────────────────────────────────────
-// Zest 0.8.1 defines <z-theme-switcher> in a shared chunk that bundlers drop as side-effect free, so define it from the export.
-if (!customElements.get('z-theme-switcher')) customElements.define('z-theme-switcher', ZThemeSwitcher);
-// Zest owns this: <z-theme-switcher> writes data-theme on <html>, and every token (and the canvas) follows it.
-const themes = document.querySelector<HTMLElement & { themes: string[] }>('z-theme-switcher')!;
-themes.themes = ['dark', 'light', 'console', 'studio'];
+const projectMenu = document.querySelector<MaddieProjectMenu>('maddie-project-menu')!;
+projectMenu.editor = editor;
+projectMenu.projects = projects;
+window.addEventListener('pagehide', projects.flush);
+window.addEventListener('storage', (event) => {
+  if (event.key === PROJECT_STORAGE_KEY) projects.refreshLibrary();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') projects.flush();
+});

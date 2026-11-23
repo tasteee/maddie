@@ -1,0 +1,7 @@
+/* One divider for every bar: full height inside the bar, the same space on both sides. */
+z-separator[is-vertical] {
+  flex: none;
+  align-self: stretch;
+  margin-block: var(--space-2);
+  margin-inline: var(--space-2);
+}

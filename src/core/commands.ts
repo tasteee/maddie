@@ -6,8 +6,8 @@ import { transposeDegrees } from './music/scale';
 import { timeSigAt } from './music/timeline';
 import { clampVelocity } from './music/velocity';
 import { fromMidiFile, type MidiImport } from './midi/read';
-import { getTrackName, pickNewTrackColor, pickNewTrackName, TRACK_COLORS } from './tracks';
-import type { Key, Note, NoteId, NoteInput, Tick, Track } from './types';
+import { areRoutesEqual, getTrackName, pickNewTrackColor, pickNewTrackName, TRACK_COLORS } from './tracks';
+import type { Key, Note, NoteId, NoteInput, Tick, Track, TrackRouteT } from './types';
 
 type Ids = Iterable<NoteId> | undefined;
 
@@ -35,6 +35,7 @@ export class Commands {
   }
 
   add(inputs: NoteInput[], { select = true, ...opts }: TransactOptions & { select?: boolean } = {}): Note[] {
+    if (this.editor.chordRegions) return [];
     const notes = inputs.map((n) => normalize({ ...n, id: n.id ?? createId() }));
     this.editor.transact(
       notes.length === 1 ? 'Add note' : 'Add notes',
@@ -47,6 +48,7 @@ export class Commands {
 
   delete(ids?: Ids, opts?: TransactOptions) {
     const list = this.ids(ids);
+    if (this.editor.chordRegions) return this.editor.chordTrack.delete(list);
     this.editor.transact(list.length === 1 ? 'Delete note' : 'Delete notes', (tx) => list.forEach((id) => tx.remove(id)), opts);
   }
 
@@ -209,6 +211,25 @@ export class Commands {
   }
 
   /**
+   * Velocity from `from` on the first note to `to` on the last, in even steps.
+   * Notes are ordered by start; notes that start together share a step.
+   * If every note starts together (one chord), the steps go from the lowest pitch to the highest.
+   */
+  rampVelocity(ids: Ids, from: number, to: number, opts?: TransactOptions) {
+    this.update(rampVelocities(this.notesOf(ids), from, to), 'Ramp velocity', opts);
+  }
+
+  /**
+   * Spread notes that start together (a chord) so they sound one after another.
+   * `down` plays the lowest pitch first, like a downstroke on a guitar. `up` plays the highest first.
+   * `amount` is 0–1. At 1 the last note starts halfway through the chord's shortest note.
+   * Every note keeps its end, so only the starts move. Single notes are left alone.
+   */
+  strum(ids: Ids, direction: StrumDirectionT, amount: number, opts?: TransactOptions) {
+    this.update(strumChanges(this.notesOf(ids), direction, amount), 'Strum', opts);
+  }
+
+  /**
    * Random nudges to timing and velocity, so programmed parts feel played.
    * `timing` is the max offset in ticks; `velocity` the max offset (0–1).
    */
@@ -238,6 +259,7 @@ export class Commands {
 
   /** @internal Add copies of notes offset in time/pitch. Used by duplicate and ⌘-drag. */
   addCopies(notes: Note[], ticks: Tick, label = 'Copy notes', pitches = 0, opts?: TransactOptions): Note[] {
+    if (this.editor.chordRegions) return [];
     const copies = notes.map((n) => normalize({ ...n, id: createId(), start: n.start + ticks, pitch: n.pitch + pitches }));
     this.editor.transact(label, (tx) => copies.forEach((n) => tx.add(n)), opts);
     this.editor.select(copies.map((n) => n.id));
@@ -245,13 +267,16 @@ export class Commands {
   }
 
   copy(ids?: Ids) {
+    if (this.editor.chordRegions && ids === undefined) return this.editor.chordTrack.copy();
     const notes = this.notesOf(ids);
     if (!notes.length) return;
     const start = Math.min(...notes.map((n) => n.start));
-    this.editor.clipboard = notes.map((n) => ({ ...n, start: n.start - start }));
+    this.editor.chordTrack.clearClipboard();
+    this.editor.clipboard = notes.map(({ chordRegionId: _owner, ...note }) => ({ ...note, start: note.start - start }));
   }
 
   cut(ids?: Ids) {
+    if (this.editor.chordRegions) return;
     this.copy(ids);
     this.delete(ids);
   }
@@ -283,11 +308,11 @@ export class Commands {
   }
 
   selectAll() {
-    this.editor.select(this.editor.notes().map((n) => n.id));
+    this.editor.select((this.editor.chordRegions ?? this.editor.notes()).map((item) => item.id));
   }
 
   /**
-   * Load a .mid file in one undoable step, with its tempo, time signature and key.
+   * Load a .mid file in one undoable step. Appending preserves the document metadata by default.
    *
    * - `tracks: 'split'` (default): one Maddie track per MIDI track, named after it.
    *   The first imported track becomes the active one.
@@ -297,47 +322,77 @@ export class Commands {
    */
   importMidi(
     input: ArrayBuffer | Uint8Array,
-    { replace = true, tracks = 'split' }: { replace?: boolean; tracks?: 'split' | 'merge' } = {},
+    { replace = true, tracks = 'split', importMetadata = replace }: { replace?: boolean; tracks?: 'split' | 'merge'; importMetadata?: boolean } = {},
   ): MidiImport {
     const ed = this.editor;
     const midi = fromMidiFile(input, { ppq: ed.ppq });
     const isMerge = tracks === 'merge';
-    if (isMerge) this.importIntoActiveTrack(midi, replace);
-    if (!isMerge) this.importAsTracks(midi, replace);
+    if (isMerge && ed.chordRegions) throw new Error('Select a MIDI track to merge a MIDI file.');
+    if (isMerge) this.importIntoActiveTrack(midi, replace, importMetadata);
+    else if (replace || midi.tracks.length) {
+      const start = replace ? 0 : ed.trackIds.length;
+      const imported = this.makeImportedTracks(midi, (track, index) => ({
+        name: getTrackName(track, start + index),
+        color: TRACK_COLORS[(start + index) % TRACK_COLORS.length],
+      }));
+      this.applyImportedTracks(imported, replace, importMetadata ? midi : undefined);
+    }
     return midi;
   }
 
-  private importIntoActiveTrack(midi: MidiImport, replace: boolean) {
+  /** Append already parsed files in order, with one undo step and one color per file. */
+  appendMidiFiles(files: readonly { name: string; midi: MidiImport }[]): readonly Track[] {
+    if (!files.length) return [];
+    const colorsInUse = [...this.editor.trackList];
+    const tracks: Track[] = [];
+    for (const { name, midi } of files) {
+      const stem = name.replace(/\.(mid|midi|smf)$/i, '').trim() || name;
+      const color = pickNewTrackColor(colorsInUse);
+      const group = this.makeImportedTracks(midi, (track, index) => ({
+        name: midi.tracks.length > 1 ? `${stem} — ${getTrackName(track, index)}` : stem,
+        color,
+      }));
+      tracks.push(...group);
+      // Count each file once when the palette wraps.
+      colorsInUse.push(group[0]);
+    }
+    this.applyImportedTracks(tracks);
+    const committed = new Set(this.editor.trackIds);
+    return tracks.filter((track) => committed.has(track.id));
+  }
+
+  private importIntoActiveTrack(midi: MidiImport, replace: boolean, importMetadata: boolean) {
     const ed = this.editor;
     ed.transact('Import MIDI', (tx) => {
       if (replace) for (const n of [...ed.notes()]) tx.remove(n.id);
       for (const n of midi.notes) tx.add(normalize({ ...n, id: createId() }));
-      this.applyImportedMeta(tx, midi);
+      if (importMetadata) this.applyImportedMeta(tx, midi);
     });
     ed.clearSelection();
   }
 
-  private importAsTracks(midi: MidiImport, replace: boolean) {
+  private makeImportedTracks(
+    midi: MidiImport,
+    describe: (track: { id: string; name?: string }, index: number) => Pick<Track, 'name' | 'color'>,
+  ): Track[] {
+    const importedTracks = midi.tracks.length > 0 ? midi.tracks : [{ name: undefined, notes: [] }];
+    return importedTracks.map((imported, index) => {
+      const draft = { id: createTrackId(), name: imported.name?.trim() || undefined };
+      const notes = imported.notes.map((n) => normalize({ ...n, id: createId() }));
+      return { id: draft.id, ...describe(draft, index), notes };
+    });
+  }
+
+  private applyImportedTracks(newTracks: readonly Track[], replace = false, metadata?: MidiImport) {
     const ed = this.editor;
     const oldTrackIds = ed.trackIds;
-    const keptTracks = replace ? [] : [...ed.trackList];
-    const importedTracks = midi.tracks.length > 0 ? midi.tracks : [{ name: undefined, notes: [] }];
-    const newTracks: Track[] = [];
-    for (const imported of importedTracks) {
-      const position = keptTracks.length + newTracks.length;
-      const draft = { id: createTrackId(), name: imported.name?.trim() || undefined };
-      const name = getTrackName(draft, position);
-      const color = TRACK_COLORS[position % TRACK_COLORS.length];
-      const notes = imported.notes.map((n) => normalize({ ...n, id: createId() }));
-      newTracks.push({ id: draft.id, name, color, notes });
-    }
     ed.transact('Import MIDI', (tx) => {
       // New tracks go in first: a document is never without a track.
       for (const track of newTracks) tx.addTrack(track);
       if (replace) for (const id of oldTrackIds) tx.removeTrack(id);
-      this.applyImportedMeta(tx, midi);
+      if (metadata) this.applyImportedMeta(tx, metadata);
     });
-    ed.setActiveTrack(newTracks[0].id);
+    if (ed.trackIds.includes(newTracks[0].id)) ed.setActiveTrack(newTracks[0].id);
   }
 
   private applyImportedMeta(tx: TxApi, midi: MidiImport) {
@@ -353,22 +408,73 @@ export class Commands {
    * It gets the next free "Track N" name and palette color unless you pass your own.
    */
   addTrack(
-    input: { name?: string; color?: string; notes?: NoteInput[]; activate?: boolean } = {},
+    input: { name?: string; color?: string; notes?: NoteInput[]; activate?: boolean; chords?: boolean } = {},
     opts?: TransactOptions,
   ): Track {
     const ed = this.editor;
     const existing = ed.trackList;
-    const notes = (input.notes ?? []).map((n) => normalize({ ...n, id: n.id ?? createId() }));
+    const notes = (input.chords ? [] : input.notes ?? []).map((n) => normalize({ ...n, id: n.id ?? createId() }));
     const track: Track = {
       id: createTrackId(),
-      name: input.name?.trim() || pickNewTrackName(existing),
+      name: input.name?.trim() || (input.chords ? 'Chords' : pickNewTrackName(existing)),
       color: input.color ?? pickNewTrackColor(existing),
+      ...(input.chords ? { chordRegions: [] } : {}),
       notes,
     };
     ed.transact('Add track', (tx) => tx.addTrack(track), opts);
     const shouldActivate = input.activate ?? true;
-    if (shouldActivate) ed.setActiveTrack(track.id);
+    if (shouldActivate && ed.trackIds.includes(track.id)) ed.setActiveTrack(track.id);
     return track;
+  }
+
+  duplicateTrack = (trackId: string): Track | undefined => {
+    const ed = this.editor;
+    const index = ed.trackIds.indexOf(trackId);
+    const hasTrack = index >= 0;
+    if (!hasTrack) return;
+    const source = ed.doc.tracks[index];
+    const regionIds = new Map<string, string>();
+    const chordRegions = source.chordRegions?.map((region) => {
+      const id = createId();
+      regionIds.set(region.id, id);
+      return { ...region, id };
+    });
+    const notes = source.notes.map((note) => {
+      const chordRegionId = note.chordRegionId ? regionIds.get(note.chordRegionId) : undefined;
+      return { ...note, id: createId(), chordRegionId };
+    });
+    const track: Track = {
+      ...source,
+      id: createTrackId(),
+      name: getTrackName(source, index) + ' copy',
+      color: ed.getTrackColor(trackId),
+      solo: false,
+      chordRegions,
+      notes,
+    };
+    ed.transact('Duplicate track', (tx) => tx.addTrack(track, index + 1));
+    const didInsert = ed.trackIds.includes(track.id);
+    if (didInsert) ed.setActiveTrack(track.id);
+    return didInsert ? track : undefined;
+  };
+
+  /** Move a track to a new position in the list. One undo step. Returns false if nothing moved. */
+  moveTrack(trackId: string, newIndex: number): boolean {
+    const ed = this.editor;
+    const oldIndex = ed.trackIds.indexOf(trackId);
+    const hasTrack = oldIndex >= 0;
+    const hasOtherTracks = ed.trackIds.length > 1;
+    if (!hasTrack || !hasOtherTracks) return false;
+    const lastIndex = ed.trackIds.length - 1;
+    const targetIndex = Math.max(0, Math.min(lastIndex, newIndex));
+    const isSamePlace = targetIndex === oldIndex;
+    if (isSamePlace) return false;
+    const source = ed.doc.tracks[oldIndex];
+    ed.transact('Move track', (tx) => {
+      tx.removeTrack(trackId);
+      tx.addTrack(source, targetIndex);
+    });
+    return true;
   }
 
   /** Remove a track and its notes. The last track stays. Returns false if nothing was removed. */
@@ -392,6 +498,31 @@ export class Commands {
     this.editor.transact('Change track color', (tx) => tx.updateTrack(trackId, { color }), opts);
   }
 
+  setTrackGain(trackId: string, gain: number, opts?: TransactOptions) {
+    if (!Number.isFinite(gain)) return;
+    const level = Math.max(0, Math.min(1, gain));
+    if (this.editor.getTrackGain(trackId) === level) return;
+    this.editor.transact('Change track gain', (tx) => tx.updateTrack(trackId, { gain: level }), opts);
+  }
+
+  /**
+   * Choose where a track sounds. `undefined` puts it back on the project's default output.
+   * Whatever the track was sounding on is silenced, so no note hangs on the old output.
+   */
+  setTrackRoute(trackId: string, route: TrackRouteT | undefined, opts?: TransactOptions) {
+    const ed = this.editor;
+    const hasTrack = ed.trackIds.includes(trackId);
+    if (!hasTrack) return;
+    const previousRoute = ed.trackList.find((track) => track.id === trackId)?.route;
+    const isSame = areRoutesEqual(previousRoute, route);
+    if (isSame) return;
+    const previousOutput = ed.getTrackOutput(trackId);
+    ed.transact('Change track output', (tx) => tx.updateTrack(trackId, { route }), opts);
+    const nextOutput = ed.getTrackOutput(trackId);
+    const didOutputChange = previousOutput !== nextOutput;
+    if (didOutputChange) previousOutput?.allNotesOff();
+  }
+
   setTrackMuted(trackId: string, isMuted: boolean, opts?: TransactOptions) {
     const label = isMuted ? 'Mute track' : 'Unmute track';
     this.editor.transact(label, (tx) => tx.updateTrack(trackId, { muted: isMuted }), opts);
@@ -400,6 +531,25 @@ export class Commands {
   setTrackSolo(trackId: string, isSolo: boolean, opts?: TransactOptions) {
     const label = isSolo ? 'Solo track' : 'Unsolo track';
     this.editor.transact(label, (tx) => tx.updateTrack(trackId, { solo: isSolo }), opts);
+  }
+
+  /**
+   * Solo a track on its own: every other solo is cleared in the same undo step.
+   * With `isAdditive`, other solos stay, so several tracks can play together.
+   * Clicking the only soloed track unsolos it.
+   */
+  soloTrack(trackId: string, isAdditive: boolean, opts?: TransactOptions) {
+    const tracks = this.editor.trackList;
+    const target = tracks.find((track) => track.id === trackId);
+    if (!target) return;
+    const otherSoloed = isAdditive ? [] : tracks.filter((track) => track.id !== trackId && track.solo);
+    const hasOtherSolos = otherSoloed.length > 0;
+    const willSolo = hasOtherSolos ? true : !target.solo;
+    const label = willSolo ? 'Solo track' : 'Unsolo track';
+    this.editor.transact(label, (tx) => {
+      for (const other of otherSoloed) tx.updateTrack(other.id, { solo: false });
+      tx.updateTrack(trackId, { solo: willSolo });
+    }, opts);
   }
 
   /** Same as `editor.setActiveTrack`. Not an undo step: it is a view of the song, like the selection. */
@@ -437,6 +587,44 @@ export function remapVelocities(notes: readonly Note[], lo: number, hi: number):
     return order.map((n, i) => ({ id: n.id, velocity: a + ((b - a) * i) / (order.length - 1) }));
   }
   return notes.map((n) => ({ id: n.id, velocity: a + ((n.velocity - min) / (max - min)) * (b - a) }));
+}
+
+/** Velocity steps from `from` to `to` over the notes, in time order. Pure: use with `commands.update`. */
+export function rampVelocities(notes: readonly Note[], from: number, to: number): Array<{ id: NoteId; velocity: number }> {
+  if (!notes.length) return [];
+  const ordered = [...notes].sort((a, b) => a.start - b.start || a.pitch - b.pitch);
+  const hasOneStart = ordered.every((n) => n.start === ordered[0].start);
+  const slotOf = (n: Note) => (hasOneStart ? n.pitch : n.start);
+  const slots = [...new Set(ordered.map(slotOf))];
+  const lastSlot = slots.length - 1;
+  return ordered.map((n) => {
+    const progress = lastSlot === 0 ? 0 : slots.indexOf(slotOf(n)) / lastSlot;
+    return { id: n.id, velocity: clampVelocity(from + (to - from) * progress) };
+  });
+}
+
+export type StrumDirectionT = 'down' | 'up';
+/** At full amount the last note of a strum starts this far into the chord's shortest note. */
+export const MAX_STRUM_SPAN = 0.5;
+
+/** Start and length changes that strum each group of notes sharing a start. Pure: use with `commands.update`. */
+export function strumChanges(notes: readonly Note[], direction: StrumDirectionT, amount: number): Array<{ id: NoteId; start: Tick; duration: Tick }> {
+  const chords = new Map<Tick, Note[]>();
+  for (const note of notes) chords.set(note.start, [...(chords.get(note.start) ?? []), note]);
+  const changes: Array<{ id: NoteId; start: Tick; duration: Tick }> = [];
+  const strength = Math.max(0, Math.min(1, amount));
+  for (const chord of chords.values()) {
+    if (chord.length < 2) continue;
+    const ordered = [...chord].sort((a, b) => (direction === 'down' ? a.pitch - b.pitch : b.pitch - a.pitch));
+    const shortest = Math.min(...chord.map((n) => n.duration));
+    const span = shortest * MAX_STRUM_SPAN * strength;
+    const lastIndex = ordered.length - 1;
+    ordered.forEach((note, index) => {
+      const offset = Math.round((span * index) / lastIndex);
+      changes.push({ id: note.id, start: note.start + offset, duration: Math.max(1, note.duration - offset) });
+    });
+  }
+  return changes;
 }
 
 function normalize(n: Note): Note {

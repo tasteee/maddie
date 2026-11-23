@@ -1,0 +1,5 @@
+:host {
+  height: var(--_ruler-height);
+  cursor: crosshair;
+  background: var(--_surface);
+}

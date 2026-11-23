@@ -1,6 +1,7 @@
 export * from './types';
 export * from './editor';
 export * from './commands';
+export * from './chord-track';
 export * from './patches';
 export * from './history';
 export * from './notes';

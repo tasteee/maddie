@@ -57,6 +57,14 @@ export function keyLabelsByPitch(editor: Editor): Map<number, string> {
   return out;
 }
 
+export const setBaseOctave = (editor: Editor, octave: number) => {
+  const isValid = Number.isFinite(octave);
+  if (!isValid) return;
+  const next = Math.max(0, Math.min(7, Math.round(octave)));
+  releaseAll(editor);
+  editor.setView({ keyboardBase: (next + 1) * 12 });
+};
+
 const held = new WeakMap<Editor, Map<string, number>>();
 
 /**
@@ -69,13 +77,15 @@ export function computerKeyDown(editor: Editor, e: KeyboardEvent): boolean {
     setComputerKeyboard(editor, !editor.view.computerKeyboard);
     return true;
   }
-  if (!editor.view.computerKeyboard) return false;
-  if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
-    releaseAll(editor);
-    const dir = e.code === 'Equal' || e.code === 'NumpadAdd' ? 1 : -1;
-    editor.setView({ keyboardBase: stepOctave(editor.view.keyboardBase, dir) });
+  const isOctaveUp = e.code === 'Equal' || e.code === 'NumpadAdd';
+  const isOctaveDown = e.code === 'Minus' || e.code === 'NumpadSubtract';
+  const shouldShift = isOctaveUp || isOctaveDown;
+  if (shouldShift) {
+    const shift = isOctaveUp ? 1 : -1;
+    setBaseOctave(editor, editor.view.keyboardBase / 12 - 1 + shift);
     return true;
   }
+  if (!editor.view.computerKeyboard) return false;
   const off = KEY_OFFSETS.get(e.code);
   if (off === undefined) return false;
   if (e.repeat) return true;

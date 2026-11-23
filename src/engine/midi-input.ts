@@ -28,6 +28,7 @@ export class MidiInput {
   /** Incoming pitch → the pitch it sounds (differs when scale-only snaps it). */
   private held = new Map<number, number>();
   private listeners = new Set<() => void>();
+  private choice = 0;
 
   private constructor(private editor: Editor) {
     editor.on('view', ({ view, prev }) => {
@@ -49,6 +50,25 @@ export class MidiInput {
   onChange(listener: () => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  resetPerformance() {
+    this.choice++;
+    this.releaseAll();
+  }
+
+  async setEnabled(on: boolean) {
+    const choice = ++this.choice;
+    if (!on) return this.editor.setView({ midiInput: false });
+    const allowed = await this.request();
+    if (choice !== this.choice) return;
+    const engine = Engine.for(this.editor);
+    if (!allowed) {
+      engine.toast(this.status === 'unsupported' ? "This browser can't read MIDI devices" : 'MIDI access was blocked', 'error');
+      return;
+    }
+    this.editor.setView({ midiInput: true });
+    if (!this.devices.length) engine.toast('No MIDI devices found · plug one in');
   }
 
   /** Ask the browser for MIDI access. Safe to call more than once. */
@@ -83,6 +103,7 @@ export class MidiInput {
         if (midiDevice === null || input.id === midiDevice) want.add(input);
       }
     }
+    if ([...this.listening].some((input) => !want.has(input))) this.releaseAll();
     for (const input of this.listening) {
       if (want.has(input)) continue;
       input.removeEventListener('midimessage', this.onMessage as EventListener);
@@ -93,7 +114,6 @@ export class MidiInput {
       input.addEventListener('midimessage', this.onMessage as EventListener);
       this.listening.add(input);
     }
-    if (!midiInput) this.releaseAll();
   }
 
   private onMessage = (e: MIDIMessageEvent) => {
@@ -152,16 +172,8 @@ export class MidiInput {
  * Turn MIDI input on or off. Asks for access the first time.
  * Independent of the computer keyboard: both can be on at once.
  */
-export async function setMidiInput(editor: Editor, on: boolean) {
-  const midi = MidiInput.for(editor);
-  if (!on) return editor.setView({ midiInput: false });
-  if (!(await midi.request())) {
-    const engine = Engine.for(editor);
-    engine.toast(midi.status === 'unsupported' ? "This browser can't read MIDI devices" : 'MIDI access was blocked', 'error');
-    return;
-  }
-  editor.setView({ midiInput: true });
-  if (!midi.devices.length) Engine.for(editor).toast('No MIDI devices found · plug one in');
+export function setMidiInput(editor: Editor, on: boolean) {
+  return MidiInput.for(editor).setEnabled(on);
 }
 
 /** Listen to one device, or every device (`null`). */

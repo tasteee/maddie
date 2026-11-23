@@ -1,10 +1,12 @@
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import type { ScaledT } from '@tasteee/scaled/types';
 import { live } from 'lit/directives/live.js';
-import { GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type Editor } from '../core';
+import { CHORD_VOICINGS, GRID_OPTIONS, gridTicks, loadScaled, pitchName, toMidiVelocity, type ChordRegion, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
+import { chordSelect, nestedPerformanceOptions } from './chord-controls';
 import { dividerStyles, partStyles } from './controls';
 import { icons } from './icons';
 import { tokens } from './tokens';
@@ -12,7 +14,7 @@ import './zest';
 
 /**
  * The selection bar. Always visible, fixed height, never over the notes.
- * Controls dim when nothing is selected, so nothing moves around.
+ * The empty state reserves the bar's height and shows a selection hint.
  */
 @customElement('maddie-inspector')
 export class MaddieInspector extends MaddieElement {
@@ -24,28 +26,35 @@ export class MaddieInspector extends MaddieElement {
       :host {
         display: flex;
         align-items: center;
-        gap: var(--space-sm);
+        gap: var(--space-2);
         height: var(--maddie-inspector-height, 56px);
-        padding: 0 var(--space-md);
+        padding: 0 var(--space-3);
         background-color: var(--_surface);
-        background-image: var(--material-surface);
-        box-shadow: var(--elevation-flush);
         border-top: 1px solid var(--_border);
         box-sizing: border-box;
         overflow-x: auto;
         scrollbar-width: none;
         container-type: inline-size;
         color: var(--_text);
-        font-size: var(--control-font-size-sm);
+        font-size: var(--font-size-sm);
         font-weight: 500;
       }
       .summary {
         display: flex;
         align-items: center;
-        gap: var(--space-sm);
+        gap: var(--space-2);
         min-width: 8.5rem;
         white-space: nowrap;
       }
+      .chord-settings {
+        display: grid;
+        gap: var(--space-2);
+        width: min(18rem, 70vw);
+        padding: var(--space-2);
+        white-space: normal;
+      }
+      .chord-field { display: grid; gap: var(--space-1); color: var(--_text-muted); }
+      .chord-field z-select { width: 100%; min-width: 0; }
       .count {
         font-weight: 600;
         color: var(--_text);
@@ -56,16 +65,12 @@ export class MaddieInspector extends MaddieElement {
       .group {
         display: flex;
         align-items: center;
-        gap: var(--space-xs);
+        gap: var(--space-1);
         white-space: nowrap;
         transition: opacity var(--_motion-fast) var(--_ease);
       }
       .group[part~='actions'] {
         margin-inline-start: auto;
-      }
-      :host([empty]) .group {
-        opacity: var(--control-disabled-opacity);
-        pointer-events: none;
       }
       z-number-input {
         width: 4.75rem;
@@ -81,14 +86,14 @@ export class MaddieInspector extends MaddieElement {
 
   /** Display velocity as MIDI 0–127 (default) or percent. */
   @property({ attribute: 'velocity-display' }) velocityDisplay: 'midi' | 'percent' = 'midi';
-  @state() private quantizeGrid = 'current';
-  @state() private strength = 100;
-  @state() private humanizeTiming = 20;
-  @state() private humanizeVelocity = 10;
+  @state() private scaled?: ScaledT;
+  @state() private chordError = '';
 
   protected attach(editor: Editor, _engine: Engine) {
     const update = () => this.requestUpdate();
-    this.track(editor.on('selection', update), editor.on('change', update), editor.on('view', update));
+    const reset = () => { editor.stopChord(); update(); };
+    this.track(editor.on('selection', reset), editor.on('change', reset), editor.on('tracks', reset),
+      editor.on('view', update), () => editor.stopChord());
   }
 
   private get notes() {
@@ -126,8 +131,9 @@ export class MaddieInspector extends MaddieElement {
   private quantize() {
     const ed = this.ed;
     if (!ed) return;
-    const grid = this.quantizeGrid === 'current' ? undefined : (gridTicks(this.quantizeGrid, ed.ppq) ?? undefined);
-    ed.commands.quantize(undefined, { grid, strength: this.strength / 100 });
+    const { quantizeGrid, quantizeStrength } = ed.view;
+    const grid = quantizeGrid === 'current' ? undefined : (gridTicks(quantizeGrid, ed.ppq) ?? undefined);
+    ed.commands.quantize(undefined, { grid, strength: quantizeStrength / 100 });
   }
 
   private humanize() {
@@ -135,9 +141,21 @@ export class MaddieInspector extends MaddieElement {
     if (!ed) return;
     const grid = ed.commands.gridTicks();
     ed.commands.humanize(undefined, {
-      timing: Math.round((grid * this.humanizeTiming) / 100 / 2),
-      velocity: this.humanizeVelocity / 100 / 2,
+      timing: Math.round((grid * ed.view.humanizeTiming) / 100 / 2),
+      velocity: ed.view.humanizeVelocity / 100 / 2,
     });
+  }
+
+  private rampVelocity() {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.commands.rampVelocity(undefined, ed.view.rampFrom / 100, ed.view.rampTo / 100);
+  }
+
+  private strum() {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.commands.strum(undefined, ed.view.strumDirection, ed.view.strumAmount / 100);
   }
 
   private transpose(semitones: number) {
@@ -180,12 +198,88 @@ export class MaddieInspector extends MaddieElement {
     >`;
   }
 
+  private applyChordStyle(ed: Editor, style: Parameters<Editor['chordTrack']['previewStyle']>[0]) {
+    this.chordError = '';
+    try {
+      const edit = ed.chordTrack.previewStyle(style);
+      if (!edit) return;
+      const selectedIds = ed.selectedChordRegions.map((region) => region.id);
+      ed.chordTrack.commit(edit, 'Style chords', selectedIds);
+      ed.chordTrack.audition();
+    } catch (error) {
+      this.chordError = (error as Error).message;
+    }
+  }
+
+  private renderChordSettings(ed: Editor) {
+    const scaled = this.scaled;
+    const selected = ed.selectedChordRegions;
+    const firstChord = selected[0];
+    const inversionOf = (region: ChordRegion) => String(region.inversion ?? 0);
+    const voicingOf = (region: ChordRegion) => region.voicing ?? 'rootPosition';
+    const templateOf = (region: ChordRegion) => region.performance?.templateId ?? '';
+    const sharesInversion = !!firstChord && selected.every((region) => inversionOf(region) === inversionOf(firstChord));
+    const sharesVoicing = !!firstChord && selected.every((region) => voicingOf(region) === voicingOf(firstChord));
+    const sharesTemplate = !!firstChord && selected.every((region) => templateOf(region) === templateOf(firstChord));
+    const inversionValue = sharesInversion ? inversionOf(firstChord) : '';
+    const voicingValue = sharesVoicing ? voicingOf(firstChord) : '';
+    const templateValue = sharesTemplate ? templateOf(firstChord) : '';
+    const inversionOptions = ['Root', '1st', '2nd', '3rd'].map((label, index) => ({ value: String(index), label }));
+    return html`<z-popover placement="top-start" label="Edit selected chords" @toggle=${(event: CustomEvent<{ open: boolean }>) => {
+      if (event.composedPath()[0] !== event.currentTarget) return;
+      if (!event.detail.open) ed.stopChord();
+      else if (!this.scaled) void loadScaled().then((loaded) => { this.scaled = loaded; }, (error: Error) => {
+        this.chordError = error.message;
+      });
+    }}>
+      <z-button slot="trigger" kind="outline" size="sm" ?is-disabled=${!selected.length}>Edit chords ${icons.chevron}</z-button>
+      <div class="chord-settings">
+        <strong>Edit selected chords</strong>
+        ${scaled ? html`
+          ${chordSelect('Inversion', inversionValue, inversionOptions,
+            (value) => this.applyChordStyle(ed, { inversion: Number(value) }))}
+          ${chordSelect('Voicing', voicingValue, scaled.voicingNames.map((value) => ({ value, label: CHORD_VOICINGS[value] })),
+            (value) => this.applyChordStyle(ed, { voicing: value as ScaledT.VoicingNameT }))}
+          ${chordSelect('Performance', templateValue, nestedPerformanceOptions(scaled),
+            (value) => this.applyChordStyle(ed, { templateId: value || null }))}` : !this.chordError ? html`<span role="status">Loading chord tools…</span>` : nothing}
+        ${this.chordError ? html`<div role="alert">${this.chordError}</div>` : nothing}
+      </div>
+    </z-popover>`;
+  }
+
+  private renderChordInspector(ed: Editor) {
+    const selected = ed.selectedChordRegions;
+    const hasChords = !!ed.chordRegions?.length;
+    const run = (operation: Promise<unknown> | undefined) => {
+      void operation?.catch((error: Error) => this.engine?.toast(error.message, 'error'));
+    };
+    return html`<div class="summary" role="status">
+      ${selected.length
+        ? html`<z-text size="sm" weight="600">${selected.length === 1 ? selected[0].symbol : selected.length + ' chords selected'}</z-text>`
+        : html`<z-text size="sm" color="muted">${hasChords ? 'Select chords to edit' : 'Add chords from the Chords panel'}</z-text>`}
+    </div>
+    ${selected.length ? html`<div class="group">
+      ${this.renderChordSettings(ed)}
+      <z-button size="sm" kind="ghost" @click=${() => ed.chordTrack.audition()}>Audition</z-button>
+      <z-button size="sm" kind="ghost" @click=${() => run(ed.chordTrack.duplicate())}>Duplicate</z-button>
+      <z-button size="sm" kind="ghost" @click=${() => run(ed.chordTrack.delete(ed.selection))}>Delete</z-button>
+    </div>` : nothing}
+    ${hasChords ? html`<div class="group" part="actions">
+      <z-button size="sm" kind="outline"
+        title="Convert this track to editable MIDI notes" @click=${() => ed.chordTrack.renderToMidi()}>Render to MIDI</z-button>
+    </div>` : nothing}`;
+  }
+
   render() {
     const ed = this.ed;
     if (!ed) return nothing;
+    if (ed.chordRegions) {
+      return this.renderChordInspector(ed);
+    }
     const notes = this.notes;
-    const empty = notes.length === 0;
-    this.toggleAttribute('empty', empty);
+    if (!notes.length) return html`<div class="summary" role="status">
+      <z-text size="sm" color="muted">${ed.notes().length ? 'Select notes to edit' : 'Double-click the grid to add a note'}</z-text>
+    </div>`;
 
     const pitches = notes.map((n) => n.pitch);
     const folded = ed.view.fold === 'scale' || ed.view.fold === 'used';
@@ -193,15 +287,14 @@ export class MaddieInspector extends MaddieElement {
     const vels = notes.map((n) => this.vel(n.velocity));
     const lo = Math.min(...pitches);
     const hi = Math.max(...pitches);
-    const vLo = empty ? 0 : Math.min(...vels);
-    const vHi = empty ? 0 : Math.max(...vels);
+    const vLo = Math.min(...vels);
+    const vHi = Math.max(...vels);
     const currentGrid = GRID_OPTIONS.find((o) => o.value === ed.view.grid)?.label ?? ed.view.grid;
 
     return html`
       <div class="summary" role="status" aria-live="polite">
-        <z-text size="sm" color="muted" ?hidden=${!empty} style=${empty ? '' : 'display:none'}>Select notes to edit</z-text>
-        <span class="count" ?hidden=${empty}>${empty ? '' : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}</span>
-        <z-badge class="range" size="sm" ?hidden=${empty} style=${empty ? 'display:none' : ''}>${empty ? '' : lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
+        <span class="count">${notes.length} ${notes.length === 1 ? 'note' : 'notes'}</span>
+        <z-badge class="range" size="sm">${lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
       </div>
 
       <z-separator is-vertical></z-separator>
@@ -226,19 +319,45 @@ export class MaddieInspector extends MaddieElement {
                   { value: 'current', label: `Grid (${currentGrid})` },
                   ...GRID_OPTIONS.filter((o) => o.value !== 'auto').map((o) => ({ value: o.value, label: o.label })),
                 ]}
-                .value=${live(this.quantizeGrid)}
-                @change=${(e: CustomEvent<{ value: string }>) => (this.quantizeGrid = e.detail.value)}
+                .value=${live(ed.view.quantizeGrid)}
+                @change=${(e: CustomEvent<{ value: string }>) => ed.setView({ quantizeGrid: e.detail.value })}
               ></z-select>
             </div>
-            ${this.percent('Strength', this.strength, 0, 100, 5, (v) => (this.strength = v))}`,
+            ${this.percent('Strength', ed.view.quantizeStrength, 0, 100, 5, (v) => ed.setView({ quantizeStrength: v }))}`,
           () => this.quantize(),
         )}
         ${this.settings(
           'Humanize',
           'Random nudges to timing and velocity',
-          html`${this.percent('Timing', this.humanizeTiming, 0, 100, 5, (v) => (this.humanizeTiming = v))}
-            ${this.percent('Velocity', this.humanizeVelocity, 0, 50, 1, (v) => (this.humanizeVelocity = v))}`,
+          html`${this.percent('Timing', ed.view.humanizeTiming, 0, 100, 5, (v) => ed.setView({ humanizeTiming: v }))}
+            ${this.percent('Velocity', ed.view.humanizeVelocity, 0, 50, 1, (v) => ed.setView({ humanizeVelocity: v }))}`,
           () => this.humanize(),
+        )}
+        ${this.settings(
+          'Ramp',
+          'Velocity steps evenly from the first note to the last',
+          html`${this.percent('First note', ed.view.rampFrom, 0, 100, 1, (v) => ed.setView({ rampFrom: v }))}
+            ${this.percent('Last note', ed.view.rampTo, 0, 100, 1, (v) => ed.setView({ rampTo: v }))}`,
+          () => this.rampVelocity(),
+        )}
+        ${this.settings(
+          'Strum',
+          'Spread chords so the notes sound one after another',
+          html`<div class="field">
+              <z-text class="field-label" size="xs" color="muted">Direction</z-text>
+              <z-select
+                size="sm"
+                label="Strum direction"
+                .options=${[
+                  { value: 'down', label: 'Down (low to high)' },
+                  { value: 'up', label: 'Up (high to low)' },
+                ]}
+                .value=${live(ed.view.strumDirection)}
+                @change=${(e: CustomEvent<{ value: 'down' | 'up' }>) => ed.setView({ strumDirection: e.detail.value })}
+              ></z-select>
+            </div>
+            ${this.percent('Amount', ed.view.strumAmount, 0, 100, 5, (v) => ed.setView({ strumAmount: v }))}`,
+          () => this.strum(),
         )}
       </div>
 

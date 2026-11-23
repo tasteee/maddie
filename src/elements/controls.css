@@ -1,0 +1,167 @@
+/* An icon-only <z-button>: Zest sizes the icon and the height; this makes the cap square. */
+z-button.icon {
+  width: var(--control-height-sm);
+}
+.label {
+  margin-inline: var(--space-1) 0;
+  color: var(--_text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* In a narrow bar the field names go first; each control still has its tooltip and accessible name. */
+@container (max-width: 1280px) {
+  .label.optional {
+    display: none;
+  }
+}
+.value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.unit {
+  color: var(--_text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+z-select {
+  min-width: 6.5rem;
+}
+z-popover {
+  --z-overlay-padding: var(--space-3);
+  --z-overlay-max-width: 20rem;
+}
+/* Panels inside a popover. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 15.5rem;
+  color: var(--_text);
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.setting .hint {
+  padding-inline-start: 2.5rem;
+  margin-top: -0.25rem;
+}
+.panel.wide-panel { width: min(278px, 80vw); }
+.panel.standard-panel { width: min(246px, 76vw); }
+.accent-icon { color: var(--accent-secondary); }
+.accent-icon svg { width: 14px; height: 14px; display: block; }
+.hint { color: var(--_text-faint); font-size: var(--font-size-xs); }
+.key-value { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-value[data-unset] { color: var(--text-secondary); }
+.scale-list { height: 168px; }
+.choices {
+  background: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-0-5);
+}
+.choices[aria-label='Root'] { width: auto; }
+.choices z-toggle-button-group-item {
+  --z-toggle-button-on-bg: var(--surface-default);
+  --z-toggle-button-on-color: var(--text-primary);
+  --z-toggle-button-on-border: var(--border-strong);
+  --z-toggle-button-padding-inline: var(--space-1);
+  flex: 1;
+}
+.scale-list z-toggle-button-group-item { --z-toggle-button-padding-inline: var(--space-3); }
+/* Toolbar glyphs are drawn on a 16 grid, so they render at 16px: Zest's 14px default shrinks them. */
+z-button svg.icon,
+z-toggle-button svg.icon {
+  width: 1rem;
+  height: 1rem;
+}
+/* Zest nudges .label down 1px to center text, and slotted icons ride along. Cancel it for icons and dots. */
+z-button svg,
+z-toggle-button svg,
+z-button z-status-dot {
+  translate: 0 calc(var(--space-1) / -4);
+}
+/* Chip: the outlined trigger for Key, Input and Output. Tighter padding, smaller text, quiet icons. */
+z-button.chip,
+z-button.grid-value {
+  --space-4: var(--space-2-5);
+  --space-3-5: var(--space-2-5);
+  --font-size-sm: 0.78125rem;
+}
+z-button.chip > svg:first-child {
+  width: 0.9375rem;
+  height: 0.9375rem;
+  color: var(--text-tertiary);
+}
+z-button.chip > svg:last-child,
+z-button.grid-value > svg:last-child {
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--text-tertiary);
+}
+.grid-chip {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
+}
+z-button.grid-value {
+  --z-button-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.grid-chip > z-tooltip {
+  border-inline-end: 1px solid var(--border-default);
+}
+.grid-chip z-toggle-button { --z-toggle-button-radius: var(--radius-md) 0 0 var(--radius-md); }
+.switch-copy { display: grid; gap: var(--space-0-5); }
+.switch-row z-switch { flex: none; }
+.fold { color: var(--accent); }
+.fold[is-pressed] { --on-accent: var(--accent); }
+z-popover[is-open] > z-button[slot='trigger'] {
+  background: var(--surface-page);
+  border-radius: var(--radius-md);
+}
+z-status-dot[status='offline'] { --color: var(--border-strong); }
+z-status-dot { --dot: var(--space-1-5); }
+z-toggle-button:not([tone='danger']) svg { color: var(--text-secondary); }
+z-toggle-button[is-pressed]:not([tone='danger']) { --accent-secondary: var(--accent-soft); }
+z-toggle-button[is-pressed]:not([tone='danger']) svg { color: var(--accent); }
+z-toggle-button[tone='danger'] svg { color: var(--record); fill: currentColor; }
+z-toggle-button[is-pressed][tone='danger'] { --status-danger: var(--record-soft); }
+.sub-panel { display: grid; gap: var(--space-2); padding: var(--space-3); background: var(--surface-page); border-radius: var(--radius-md); }
+.octave { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.octave z-number-input { width: 96px; }
+.level-row { display: grid; gap: var(--space-1); }
+.level-label { display: flex; justify-content: space-between; color: var(--_text-muted); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+.level-controls { display: flex; align-items: center; gap: var(--space-2); }
+.level-controls z-slider { flex: 1; }
+.level-controls.isDim z-slider { opacity: 0.45; }
+.panel z-select {
+  min-width: 0;
+}
+.panel z-separator {
+  margin-block: 0;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  color: var(--_text);
+  font-size: var(--font-size-sm);
+}
+.switch-row label { cursor: pointer; }
+.switch-row:has(z-switch[is-disabled]) { color: var(--_text-muted); }

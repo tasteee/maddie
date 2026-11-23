@@ -1,4 +1,4 @@
-import type { Editor, Note, NoteId } from '../core';
+import type { ChordDraft, ChordRegion, ChordTrackEdit, Editor, Note, NoteId } from '../core';
 import { NoteAnimator, ValueTween } from './animation';
 import { requestFrame } from './frame';
 import { RowLayout } from './rows';
@@ -10,6 +10,8 @@ export interface Preview {
   added: Note[];
   /** Notes hidden during the gesture (erase). */
   hidden: Set<NoteId>;
+  regions?: readonly ChordRegion[];
+  insertion?: number;
 }
 
 export type DisplayView = {
@@ -30,11 +32,7 @@ type Renderer = (now: number) => void;
 
 /** A chord being dragged from the chords panel onto the grid. */
 export interface ChordDrag {
-  /** Root pitch class. */
-  root: number;
-  /** Semitones above the root (already inverted). */
-  intervals: readonly number[];
-  name: string;
+  draft: ChordDraft;
   clientX: number;
   clientY: number;
   /** Set by the piano roll while the chord is over the grid. */
@@ -55,7 +53,7 @@ export type GhostNoteT = {
 
 export interface Toast {
   message: string;
-  kind: 'info' | 'error';
+  kind: 'info' | 'error' | 'capture';
 }
 
 const engines = new WeakMap<Editor, Engine>();
@@ -92,6 +90,8 @@ export class Engine {
   chordDrag: ChordDrag | null = null;
   private chordListeners = new Set<(drag: ChordDrag, phase: ChordDragPhase) => void>();
   private scheduled = false;
+  private isFollowPaused = false;
+  private wasPlaying = false;
 
   private constructor(readonly editor: Editor) {
     this.rows = new RowLayout(editor.rowMap);
@@ -117,7 +117,12 @@ export class Engine {
       this.reflowRows(this.motion.slow, performance.now());
       this.invalidate();
     });
-    editor.on('transport', () => this.invalidate());
+    editor.on('transport', () => {
+      const isPlaying = editor.transport.playing;
+      if (isPlaying && !this.wasPlaying) this.isFollowPaused = false;
+      this.wasPlaying = isPlaying;
+      this.invalidate();
+    });
     editor.on('view', ({ view, prev, animate }) => {
       const now = performance.now();
       this.view.set(this.targetView(), animate ? this.motion.slow : 0, now);
@@ -210,20 +215,36 @@ export class Engine {
     this.invalidate();
   }
 
+  previewChords(edit: ChordTrackEdit, insertion?: number) {
+    const notes = this.editor.notes();
+    const existing = new Map(notes.map((note) => [note.id, note]));
+    const rendered = new Map(edit.notes.map((note) => [note.id, note]));
+    const overrides = new Map(edit.notes.filter((note) => existing.has(note.id) && existing.get(note.id) !== note).map((note) => [note.id, note]));
+    this.setPreview({
+      overrides,
+      added: edit.notes.filter((note) => !existing.has(note.id)),
+      hidden: new Set(notes.filter((note) => !rendered.has(note.id)).map((note) => note.id)),
+      regions: edit.regions,
+      insertion,
+    });
+    return this.preview;
+  }
+
   get previewing() {
     const p = this.preview;
-    return p.overrides.size > 0 || p.added.length > 0 || p.hidden.size > 0;
+    return !!p.regions || p.overrides.size > 0 || p.added.length > 0 || p.hidden.size > 0;
   }
 
   /** Notes to draw in a tick range, with the drag preview applied. */
   visibleNotes(from: number, to: number): Note[] {
-    const { overrides, added, hidden } = this.preview;
+    const { overrides, added, hidden, regions } = this.preview;
     const out: Note[] = [];
     for (const n of this.editor.notesInRange(from, to)) {
       if (!hidden.has(n.id) && !overrides.has(n.id)) out.push(n);
     }
-    for (const n of overrides.values()) if (!hidden.has(n.id)) out.push(n);
-    for (const n of added) out.push(n);
+    const overlaps = (n: Note) => !regions || (n.start < to && n.start + n.duration > from);
+    for (const n of overrides.values()) if (!hidden.has(n.id) && overlaps(n)) out.push(n);
+    for (const n of added) if (overlaps(n)) out.push(n);
     return out;
   }
 
@@ -261,16 +282,21 @@ export class Engine {
     if (busy) this.invalidate();
   }
 
-  private followPlayhead() {
-    const { editor } = this;
-    if (!editor.transport.playing || !editor.view.follow || !this.viewport.width) return;
-    const v = editor.view;
-    const pos = editor.transport.position;
-    const visible = this.viewport.width / v.pxPerTick;
-    if (pos > v.scrollTick + visible * 0.92 || pos < v.scrollTick) {
-      editor.setView({ scrollTick: Math.max(0, pos - visible * 0.08) }, { animate: true });
-    }
-  }
+  pauseFollow = () => {
+    this.isFollowPaused = this.editor.transport.playing;
+  };
+
+  private followPlayhead = () => {
+    const editor = this.editor;
+    const shouldFollow = editor.transport.playing && editor.view.follow && !this.isFollowPaused && this.viewport.width > 80;
+    if (!shouldFollow) return;
+    const view = editor.view;
+    const position = editor.transport.position;
+    const x = (position - view.scrollTick) * view.pxPerTick;
+    const shouldJump = x >= this.viewport.width - 40 || x < 0;
+    if (!shouldJump) return;
+    editor.setView({ scrollTick: Math.max(0, position - 40 / view.pxPerTick) });
+  };
 
   /** Scroll to the start and center the rows on the notes (or middle C). */
   centerOnNotes({ resetTime = false, animate = false } = {}) {
@@ -278,9 +304,13 @@ export class Engine {
     const h = this.viewport.height;
     if (!h) return;
     const notes = editor.notes();
-    const pitch = notes.length
-      ? (Math.max(...notes.map((n) => n.pitch)) + Math.min(...notes.map((n) => n.pitch))) / 2
-      : 60;
+    let low = 127;
+    let high = 0;
+    for (const note of notes) {
+      low = Math.min(low, note.pitch);
+      high = Math.max(high, note.pitch);
+    }
+    const pitch = notes.length ? (low + high) / 2 : 60;
     const rh = editor.view.rowHeight;
     const row = editor.rowMap.virtual[Math.round(pitch)] - h / rh / 2;
     editor.setView(

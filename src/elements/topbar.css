@@ -1,0 +1,13 @@
+:host {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  background: var(--surface-page);
+  overflow: visible;
+  z-index: 4;
+}
+.project { min-width: 0; }
+.sound { justify-self: end; gap: 6px; }
+.project z-separator { margin-inline: 8px 4px; }
+@container (max-width: 850px) {
+  :host { grid-template-columns: minmax(0, 1fr) auto auto; }
+}

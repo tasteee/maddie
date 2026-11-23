@@ -24,7 +24,7 @@ The editor is dense, so Zest's size dials are turned down once, in `src/app/styl
 
 ## Controls
 
-Two toolbar rows. The **top row** is global: play/stop, record, back to start, position, tempo, metronome, volume, loop, follow, keyboard input, MIDI input, import/export. The **edit row** changes the grid: grid/snap, key/scale lock, fold (one button: click to cycle Off · Scale · Notes), undo/redo, row height, zoom.
+The **top row** holds transport, tempo, input, output, and the MIDI file menu. The **edit row** holds grid division and feel, key and scale, row folding, chords, undo/redo, and zoom. The **track strip** keeps Add piano track, Add chord track, and Snap to grid at the right while tracks scroll. Open a track's options for rename, mute, solo, color, and remove.
 
 - **Space** plays from the **marker** and stops back to it. Set the marker by clicking the ruler or empty grid. While playing, click empty grid to jump there. **Enter** goes back to the start. While playing, the rewind button jumps back to the marker; double-click it for the start.
 - **← / →** move to the previous / next grid line: the play marker when nothing is selected, else the selected notes (the first one lands on the line, the rest keep their spacing). **⇧← / ⇧→** move note ends to grid lines. Everything snaps to lines of the current grid, never a grid step away from an off-grid spot.
@@ -45,11 +45,11 @@ Two toolbar rows. The **top row** is global: play/stop, record, back to start, p
 
 ## Import / export MIDI
 
-**Import:** the toolbar's **Import** button (`⌘O`), or drop a `.mid` file on the grid. Notes, tempo, time signature and key are replaced in one undoable step. `<maddie-import>` fires a cancelable `maddie-import` event with `{ file, bytes }`.
+**Import:** choose **Import MIDI** from the toolbar's **MIDI** menu (`⌘O`) or drop one or more MIDI files onto the grid. Maddie appends the tracks in one undo step and keeps the project's tempo, time signature, and key. Tracks from the same file share a color, and multi-track files prefix each track name with the filename. Each file fires a cancelable `maddie-import` event with `{ file, bytes }`.
 
 **Export:**
 
-The toolbar has an **Export** button (`⌘⇧E`). Or do it in code:
+Choose **Export MIDI** from a track's options to download that track, or from the toolbar's **MIDI** menu (`⌘⇧E`) to download the full project. Or do it in code:
 
 ```js
 import { toMidiFile, fromMidiFile, downloadMidi } from '@tasteee/maddie/core';
@@ -80,7 +80,7 @@ Pieces find the nearest `<maddie-root>` automatically. Or wire one directly: `ro
 
 Maddie follows Zest's design system, so theming is Zest theming.
 
-1. **Theme:** set `data-theme` (`dark`, `light`, `console`, `studio`) on `<html>`, or on `<maddie-editor theme="studio">` for the editor alone. Zest's `<z-theme-switcher>` does it for the whole page, and the canvas follows.
+1. **Theme:** set `data-theme` (`dark` or `light`) on `<html>`, or use `<maddie-editor theme="light">` for the editor alone. Zest's `<z-theme-switcher>` does it for the whole page, and the canvas follows.
 2. **Tokens:** every Maddie color is a Zest role (`--background`, `--card`, `--border`, `--foreground`, `--purple`, `--pink`, …). Override one with `--maddie-accent`, `--maddie-bg`, `--maddie-note`, `--maddie-note-radius`, `--maddie-scale` (root tint + scale dots), `--maddie-row-out-of-scale`, `--maddie-key-out-of-scale`, …
 3. **Parts:** `maddie-editor::part(toolbar)`, `::part(piano-roll)`, …
 4. **Slots:** replace `toolbar`, `corner`, `lane-label`, `inspector`, `footer`; add controls with `toolbar-start` / `toolbar-end` (a `<z-button kind="ghost" size="sm">` fits)

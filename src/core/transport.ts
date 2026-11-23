@@ -16,6 +16,9 @@ export interface Metronome {
   volume: number;
 }
 
+export const DEFAULT_METRONOME_VOLUME = 0.7;
+export const DEFAULT_METRONOME: Readonly<Metronome> = { enabled: true, volume: DEFAULT_METRONOME_VOLUME };
+
 export interface ClickEvent {
   /** AudioContext time. */
   time: number;
@@ -40,7 +43,7 @@ const HORIZON_S = 0.12;
 export class Transport {
   state: TransportState = 'stopped';
   loop: LoopRegion = { enabled: false, start: 0, end: 0 };
-  metronome: Metronome = { enabled: true, volume: 0.7 };
+  metronome: Metronome = { ...DEFAULT_METRONOME };
   private clickListeners = new Set<(e: ClickEvent) => void>();
   private stoppedAt: Tick = 0;
   private returnTo: Tick = 0;
@@ -131,7 +134,7 @@ export class Transport {
   seek(tick: Tick, { marker = true }: { marker?: boolean } = {}) {
     tick = Math.max(0, tick);
     if (this.state === 'playing') {
-      this.editor.output?.allNotesOff();
+      this.editor.allOutputsOff();
       const time = this.audioContext.currentTime + 0.02;
       this.anchors = [{ time, tick }];
       this.scheduledUntil = time;
@@ -165,7 +168,7 @@ export class Transport {
     this.timer = null;
     this.anchors = [];
     this.state = state;
-    this.editor.output?.allNotesOff();
+    this.editor.allOutputsOff();
     this.emit();
   }
 
@@ -222,8 +225,10 @@ export class Transport {
       this.scheduledUntil = wrapTime;
     }
 
-    // Auto-stop well past the end of the longest track when not looping.
-    if (!this.loop.enabled && this.position > this.editor.contentEnd() + ppq * 8) this.stop();
+    const contentEnd = this.editor.contentEnd();
+    const end = contentEnd > 0 ? contentEnd : ppq * 8;
+    const shouldStop = !this.loop.enabled && !this.editor.recorder.recording && this.position >= end;
+    if (shouldStop) this.stop();
   }
 
   /** Called for every scheduled metronome click, slightly ahead of `e.time`. Fires even at volume 0, so a UI can pulse. */

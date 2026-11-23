@@ -1,7 +1,10 @@
-import type { TrackMetaT } from './types';
+import type { TrackMetaT, TrackRouteT } from './types';
 
 /** Colors given to tracks in order. Wraps around after the last one. */
-export const TRACK_COLORS = ['#8b7cf6', '#f472b6', '#fb923c', '#facc15', '#4ade80', '#22d3ee', '#60a5fa', '#c084fc'] as const;
+export const TRACK_COLORS = [
+  'var(--accent-spark-1)', 'var(--accent-spark-2)', 'var(--accent-spark-4)',
+  'var(--accent-spark-3)', 'var(--accent-spark-5)',
+] as const;
 
 /** The color a track draws in: its own, or a palette color for its position. */
 export const getTrackColor = (track: TrackMetaT, index: number): string => {
@@ -10,13 +13,8 @@ export const getTrackColor = (track: TrackMetaT, index: number): string => {
   return TRACK_COLORS[index % TRACK_COLORS.length];
 };
 
-/** The first palette color no track uses yet. Wraps when all are taken. */
-export const pickNewTrackColor = (tracks: readonly TrackMetaT[]): string => {
-  const usedColors = new Set(tracks.map((track, index) => getTrackColor(track, index)));
-  const freeColor = TRACK_COLORS.find((color) => !usedColors.has(color));
-  if (freeColor) return freeColor;
-  return TRACK_COLORS[tracks.length % TRACK_COLORS.length];
-};
+export const pickNewTrackColor = (tracks: readonly TrackMetaT[]): string =>
+  TRACK_COLORS[tracks.length % TRACK_COLORS.length];
 
 /** The name shown for a track: its own, or "Track N" for its position. */
 export const getTrackName = (track: TrackMetaT, index: number): string => {
@@ -45,4 +43,16 @@ export const getAudibleTrackIds = (tracks: readonly TrackMetaT[]): Set<string> =
     return !!track.solo;
   });
   return new Set(audibleTracks.map((track) => track.id));
+};
+
+/** Are two routes the same destination? Two missing routes are the same (both follow the default). */
+export const areRoutesEqual = (first: TrackRouteT | undefined, second: TrackRouteT | undefined): boolean => {
+  if (!first || !second) return first === second;
+  if (first.kind === 'sound' && second.kind === 'sound') return first.soundId === second.soundId;
+  if (first.kind === 'midi' && second.kind === 'midi') {
+    const isSamePort = first.portId === second.portId;
+    const isSameChannel = (first.channel ?? 0) === (second.channel ?? 0);
+    return isSamePort && isSameChannel;
+  }
+  return false;
 };

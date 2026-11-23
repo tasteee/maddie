@@ -575,7 +575,7 @@ Token groups:
 - **Space:** `row-height` (default), `keyboard-width`, `ruler-height`, `lane-height`
 - **Motion:** `motion-fast`, `motion-medium`, `motion-slow`, `ease-out`, `ease-spring`
 
-Every token resolves to a Zest semantic token from `@tasteee/zest/ink.css`, so Maddie follows Zest's four themes (`dark`, `light`, `console`, `studio`). Set `data-theme` on `<html>` (Zest's `<z-theme-switcher>` does this) or `theme="studio"` on one editor. Uses `oklch` for perceptually even velocity shading.
+Maddie's palette uses semantic tokens from `@tasteee/zest/ink.css`. Set `data-theme` to `dark` or `light` on `<html>` (the Zest theme switcher does this) or use `theme="light"` on one editor. Velocity shading uses `oklch`.
 
 | Maddie role | Zest token |
 | --- | --- |

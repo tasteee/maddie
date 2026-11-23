@@ -10,7 +10,7 @@ import { pickMidiFile } from './midi-io';
 import { tokens } from './tokens';
 
 /** Zest elements that handle their own keyboard input: the editor's shortcuts stay out of the way. */
-const OWN_KEYS = new Set(['z-select', 'z-number-input', 'z-input', 'z-slider', 'z-range', 'z-range-handle', 'z-switch', 'z-popover', 'z-badge']);
+const OWN_KEYS = new Set(['z-select', 'z-number-input', 'z-input', 'z-slider', 'z-range', 'z-range-handle', 'z-switch', 'z-popover', 'z-badge', 'z-menu', 'z-context-menu', 'z-toggle-button-group']);
 
 const bool = (v: string | null) => v !== null && v !== 'false' && v !== 'off';
 
@@ -31,7 +31,7 @@ export interface MaddieChangeDetail {
  * @fires maddie-viewchange - `detail: { view }`
  * @fires maddie-transportchange - `detail: { state, position }`
  * @fires maddie-noteon - A note was scheduled during playback. `detail: { note, time, track }`
- * @fires maddie-trackchange - A track was added, removed, renamed, recolored, muted or soloed, or the active track changed. `detail: { tracks, activeId }`
+ * @fires maddie-trackchange - The track list, track settings, or the active track changed. `detail: { tracks, activeId }`
  */
 @customElement('maddie-root')
 export class MaddieRoot extends LitElement {
@@ -60,7 +60,7 @@ export class MaddieRoot extends LitElement {
   /** `pitch` (default), `pitch-class`, or `mono`. */
   @property({ attribute: 'note-color' }) noteColor?: NoteColorMode;
   /**
-   * A Zest theme for this editor alone: `dark`, `light`, `console` or `studio`. Sets `data-theme` on the element.
+   * A Zest theme for this editor alone: `dark` or `light`. Sets `data-theme` on the element.
    * Leave it unset to follow the page's `data-theme` (Zest's `<z-theme-switcher>` sets that on `<html>`).
    */
   @property() theme?: 'dark' | 'light' | 'console' | 'studio';
@@ -94,6 +94,23 @@ export class MaddieRoot extends LitElement {
     });
     // Clicking any non-focusable part (ruler, keyboard, lanes) still focuses the editor,
     // so shortcuts like Space keep working.
+    // Buttons must not keep focus, or Space would "press" them instead of toggling playback.
+    this.addEventListener('mousedown', (event) => {
+      const path = event.composedPath();
+      const target = path[0] as HTMLElement | undefined;
+      const isTextField = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      const isSlider = path.some((el) => el instanceof HTMLElement && el.localName === 'z-slider');
+      const isNumberInput = path.some((el) => el instanceof HTMLElement && el.localName === 'z-number-input');
+      const isFieldTarget = isTextField || isSlider || isNumberInput;
+      if (isFieldTarget) return;
+      const isPressable = path.some((el) => el instanceof HTMLElement && (el.localName === 'button' || el.localName.startsWith('z-')));
+      if (!isPressable) return;
+      event.preventDefault();
+      const active = document.activeElement as HTMLElement | null;
+      const hasFocusedControl = active && active !== document.body && active !== this;
+      if (hasFocusedControl) active.blur();
+      this.focus({ preventScroll: true });
+    });
     this.addEventListener('pointerdown', () => {
       requestAnimationFrame(() => {
         const active = document.activeElement;
@@ -125,7 +142,7 @@ export class MaddieRoot extends LitElement {
     const doc = this.editor.doc;
     let i = 0;
     const withIds = notes.map((n) => ({ ...n, id: n.id ?? `n${i++}-${Math.random().toString(36).slice(2, 7)}` }));
-    this.editor.setDoc({ ...doc, tracks: doc.tracks.map((t) => (t.id === this.editor.activeTrackId ? { ...t, notes: withIds } : t)) });
+    this.editor.setDoc({ ...doc, tracks: doc.tracks.map((t) => (t.id === this.editor.activeTrackId ? { ...t, chordRegions: undefined, notes: withIds } : t)) });
   }
 
   get output(): Output | null {
@@ -169,7 +186,7 @@ export class MaddieRoot extends LitElement {
 
   protected willUpdate(changed: PropertyValues) {
     if (changed.has('theme')) {
-      if (this.theme) this.dataset.theme = this.theme;
+      if (this.theme === 'dark' || this.theme === 'light') this.dataset.theme = this.theme;
       else delete this.dataset.theme;
     }
     const ed = this.editor;
@@ -256,9 +273,15 @@ export class MaddieRoot extends LitElement {
     const tag = target?.tagName;
     const textInput =
       (tag === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)) ||
-      tag === 'TEXTAREA' ||
+      tag === 'TEXTAREA' || tag === 'SELECT' ||
       target?.isContentEditable;
     if (textInput) return;
+    const isOctaveKey = !e.metaKey && !e.ctrlKey && !e.altKey && (e.code === 'Equal' || e.code === 'Minus');
+    if (isOctaveKey && computerKeyDown(this.editor, e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // Zest fields (selects, sliders, switches, number inputs) and open popovers keep their own keys.
     if (!e.metaKey && !e.ctrlKey && e.composedPath().some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
     if (computerKeyDown(this.editor, e)) {
@@ -266,8 +289,9 @@ export class MaddieRoot extends LitElement {
       e.stopPropagation();
       return;
     }
-    // Let buttons keep Enter; Space is play/pause everywhere.
-    if (tag === 'BUTTON' && e.key === 'Enter') return;
+    // Keep native activation for focused buttons.
+    const isButtonActivation = tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ');
+    if (isButtonActivation) return;
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       pickMidiFile(this.editor, this);
