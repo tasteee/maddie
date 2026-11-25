@@ -4,6 +4,12 @@ import { inScale } from './scale';
 
 export type FoldMode = 'none' | 'scale' | 'used';
 
+export const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
+  { value: 'none', label: 'Off' },
+  { value: 'used', label: 'Notes' },
+  { value: 'scale', label: 'In key' },
+];
+
 export interface Row {
   pitch: number;
   inScale: boolean;

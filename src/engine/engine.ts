@@ -55,7 +55,7 @@ export type GhostNoteT = {
 
 export interface Toast {
   message: string;
-  kind: 'info' | 'error' | 'capture';
+  kind: 'info' | 'error' | 'capture' | 'warning';
 }
 
 const engines = new WeakMap<Editor, Engine>();
@@ -297,7 +297,7 @@ export class Engine {
     const x = (position - view.scrollTick) * view.pxPerTick;
     const shouldJump = x >= this.viewport.width - 40 || x < 0;
     if (!shouldJump) return;
-    editor.setView({ scrollTick: Math.max(0, position - 40 / view.pxPerTick) });
+    editor.setView({ scrollTick: position - 40 / view.pxPerTick });
   };
 
   /** Scroll to the start and center the rows on the notes (or middle C). */
@@ -316,7 +316,7 @@ export class Engine {
     const rh = editor.view.rowHeight;
     const row = editor.rowMap.virtual[Math.round(pitch)] - h / rh / 2;
     editor.setView(
-      { scrollRow: Math.max(0, Math.min(this.maxScrollRow(rh), row)), ...(resetTime ? { scrollTick: 0 } : {}) },
+      { scrollRow: Math.max(0, Math.min(this.maxScrollRow(rh), row)), ...(resetTime ? { scrollTick: Number.NEGATIVE_INFINITY } : {}) },
       { animate },
     );
   }

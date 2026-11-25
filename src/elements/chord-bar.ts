@@ -1,14 +1,15 @@
 import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import type { ScaledT } from '@tasteee/scaled/types';
+import { keyed } from 'lit/directives/keyed.js';
 import { live } from 'lit/directives/live.js';
-import { CHORD_VOICINGS, formatBBT, loadScaled, type ChordRegion, type Editor } from '../core';
+import { CHORD_VOICINGS, formatBBT, loadScaled, offeredVoicings, type ChordRegion, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
 import { MaddieElement } from './base';
 import { formatPatternCategory } from './pattern-picker';
 import './pattern-picker';
 import { icons } from './icons';
-import { tokens } from './tokens';
+import { themeRegion, tokens } from './tokens';
 import './zest';
 
 /**
@@ -21,6 +22,7 @@ import './zest';
 export class MaddieChordBar extends MaddieElement {
   static styles = [
     tokens,
+    ...themeRegion,
     css`
       :host {
         display: none;
@@ -101,7 +103,10 @@ export class MaddieChordBar extends MaddieElement {
       if (!edit) return;
       const selectedIds = ed.selectedChordRegions.map((region) => region.id);
       ed.chordTrack.commit(edit, 'Style chords', selectedIds);
-      // Hear the new shape for half a second, without the pattern.
+      // A new shape (inversion, voicing) plays for half a second, without the pattern.
+      // A new pattern doesn't: holding it in the picker was the preview.
+      const isPatternChange = style.templateId !== undefined;
+      if (isPatternChange) return;
       const updatedFirst = ed.selectedChordRegions.slice(0, 1);
       ed.chordTrack.auditionPitches(updatedFirst);
     } catch (error) {
@@ -128,20 +133,46 @@ export class MaddieChordBar extends MaddieElement {
   private openPicker(ed: Editor, trigger: HTMLElement) {
     const isOpen = ed.view.patternPicker === 'selection';
     if (isOpen) return ed.setView({ patternPicker: null });
-    const bar = this.getBoundingClientRect();
-    const box = trigger.getBoundingClientRect();
+    // Center on the visible bar, not the host (which spans the whole roll).
+    const barElement = this.renderRoot.querySelector('.bar') ?? trigger;
+    const barBox = barElement.getBoundingClientRect();
     const width = Math.min(540, window.innerWidth - 16);
     const height = Math.min(470, window.innerHeight - 16);
-    const centered = box.left + box.width / 2 - width / 2;
+    const centered = barBox.left + barBox.width / 2 - width / 2;
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, centered));
-    const top = Math.max(8, bar.top - height - 8);
+    const top = Math.max(8, barBox.top - height - 8);
     this.pickerPosition = { left, top };
     ed.setView({ patternPicker: 'selection' });
   }
 
+  private capturePatternReset(ed: Editor) {
+    const trackId = ed.activeTrackId;
+    const originals = new Map(ed.selectedChordRegions.map(({ id, performance }) => [id, performance]));
+    const changed = () => {
+      if (ed.activeTrackId !== trackId) return [];
+      const selected = ed.selectedChordRegions;
+      if (selected.length !== originals.size || !selected.every(({ id }) => originals.has(id))) return [];
+      return selected.filter(({ id, performance }) => performance !== originals.get(id));
+    };
+    return {
+      originalIds: [...new Set([...originals.values()].map((performance) => performance?.templateId ?? ''))],
+      canRestore: () => changed().length > 0,
+      restore: () => {
+        this.chordError = '';
+        try {
+          const regions = changed().map((region) => ({ ...region, performance: originals.get(region.id) }));
+          ed.chordTrack.commitChanged(regions, 'Reset chord patterns');
+        } catch (error) {
+          this.engine?.toast((error as Error).message, 'error');
+        }
+      },
+    };
+  }
+
   private renderPicker(ed: Editor) {
     const isOpen = ed.view.patternPicker === 'selection';
-    const region = ed.selectedChordRegions[0];
+    const selected = ed.selectedChordRegions;
+    const region = selected[0];
     if (!isOpen || !region) return nothing;
     const bar = formatBBT(region.start, ed.meta.timeSignature, ed.ppq).split('.')[0];
     const preview = (templateId: string) => {
@@ -161,9 +192,10 @@ export class MaddieChordBar extends MaddieElement {
     const projectIds = ed.doc.tracks.flatMap((track) => track.chordRegions ?? []).flatMap((item) => item.performance?.templateId ?? []);
     const uniqueIds = [...new Set(projectIds)];
     const style = `left: ${this.pickerPosition.left}px; top: ${this.pickerPosition.top}px`;
-    return html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${region.performance?.templateId ?? ''}
+    const selectionKey = JSON.stringify([ed.activeTrackId, ...selected.map(({ id }) => id).sort()]);
+    return keyed(selectionKey, html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${region.performance?.templateId ?? ''}
       .targetPrefix=${'Changing'} .targetName=${`${region.symbol} · bar ${bar}`} .projectIds=${uniqueIds}
-      .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`;
+      .captureReset=${() => this.capturePatternReset(ed)} .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`);
   }
 
   private renderChordSettings(ed: Editor) {
@@ -184,7 +216,7 @@ export class MaddieChordBar extends MaddieElement {
     const patternText = !sharesTemplate ? 'Mixed patterns' : template ? `${template.name} · ${formatPatternCategory(template.category)}` : 'No pattern';
     const hasPattern = sharesTemplate && !!template;
     const isPickerOpen = ed.view.patternPicker === 'selection';
-    const voicings = scaled?.voicingNames ?? [];
+    const voicings = offeredVoicings(scaled?.voicingNames ?? []);
     const stepper = (label: string, value: string, canDown: boolean, canUp: boolean, down: () => void, up: () => void) => html`
       <span class="chord-prop"><span class="chord-prop-label">${label}</span>
         <span class="stepper" role="group" aria-label=${label}>
@@ -215,8 +247,7 @@ export class MaddieChordBar extends MaddieElement {
         <z-button size="sm" kind="ghost" tone="secondary" @click=${() => this.useInPanel(ed)}>Use in panel</z-button>
       </z-tooltip>
       ${this.chordError ? html`<span class="chord-error" role="alert">${this.chordError}</span>` : nothing}
-    </div>
-    ${this.renderPicker(ed)}`;
+    </div>`;
   }
 
   render() {
@@ -224,9 +255,12 @@ export class MaddieChordBar extends MaddieElement {
     if (!ed?.chordRegions) return nothing;
     const selected = ed.selectedChordRegions;
     if (!selected.length) return nothing;
-    return html`<div class="bar" role="toolbar" aria-label=${selected.length === 1 ? 'Selected chord' : 'Selected chords'}>
+    // The bar is always dark, so it reads clearly over the light grid. The pattern
+    // picker sits outside it and themes itself dark too.
+    return html`<div class="bar" data-theme="dark" role="toolbar" aria-label=${selected.length === 1 ? 'Selected chord' : 'Selected chords'}>
       ${this.renderChordSettings(ed)}
-    </div>`;
+    </div>
+    ${this.renderPicker(ed)}`;
   }
 }
 

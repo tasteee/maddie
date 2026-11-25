@@ -1,0 +1,2874 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Chords panel — interactive</title>
+<script>window.__resources = {
+  "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js": "./assets/react.production.min.js",
+  "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js": "./assets/react-dom.production.min.js"
+};</script>
+<script src="./assets/dc-runtime.js"></script>
+<style>/*
+ * Zest design tokens: custom properties only. No element selectors, so this
+ * file never changes the page it is loaded into. Custom properties cross
+ * shadow boundaries, so every z element reads these through var(--token).
+ * Import it once at the document level, not inside a shadow root.
+ *
+ * Page-level behaviour (body colours, scrollbars, selection, the theme fade)
+ * lives in document.css. `ink.css` is both files together.
+ * Fonts are not loaded here; see fonts.css.
+ *
+ * ---------------------------------------------------------------------------
+ * Vocabulary
+ * ---------------------------------------------------------------------------
+ * Colour has three tiers. Components read only the second.
+ *
+ *   Palette   --color-neutral-0..9. Private to the theme: step N plays a
+ *             different part in light and dark. Never read by a component.
+ *             --neutral-0..9 is its short name for app code and docs.
+ *             --{tone}-0..9 (primary, secondary, tertiary, success,
+ *             warning, danger) are reference ramps derived from each tone.
+ *   Roles     --{group}-{role}[-{variant}], noun first. One name per meaning,
+ *             named for the job, never for the hue or the lightness.
+ *   Local     --tone and the --z-* component properties.
+ *
+ *   surface-*   page, default, subtle, strong, overlay, inverse, selection, scrim
+ *   text-*      primary, secondary, tertiary, strong, inverse, selection
+ *   border-*    default, strong, focus
+ *   accent-*    primary, secondary, tertiary  (the three tones), on-accent
+ *   status-*    success, warning, danger
+ *   space-N     0 to 40, N x 4px          font-size-2xs..7xl  one type scale
+ *   radius-xs..xl, full                     line-height-none..relaxed
+ *   chart-1..5  series order is genuinely ordinal
+ *   syntax-*    code highlighting
+ *
+ * A surface always pairs with a text-* and a border-* token. Text on a solid
+ * fill uses on-accent; text on surface-inverse uses text-inverse.
+ *
+ * --tone is the one contextual variable: the colour the current component or
+ * region is painting with. It defaults to accent-primary, and a component
+ * overrides it for its own tone variants (primary, secondary, tertiary,
+ * success, warning, danger). Everything inside inherits it.
+ *
+ * ---------------------------------------------------------------------------
+ * Depth
+ * ---------------------------------------------------------------------------
+ * Zest is flat. Resting UI (cards, fields, buttons, switches) is a surface plus
+ * a 1px border, with no shadow. A shadow exists only for things that float
+ * above arbitrary content and must separate from it:
+ *
+ *   --shadow-overlay   menus, popovers, tooltips, toasts   (surface-overlay)
+ *   --shadow-modal     dialogs, sheets, drawers
+ *
+ * They are theme-specific: black shadows barely read on dark surfaces, so dark
+ * uses a higher alpha and leans on the border. Pressed and selected states
+ * change surface, never elevation. Focus is a ring (border-focus), not a shadow.
+ *
+ * ---------------------------------------------------------------------------
+ * Layers, in source order
+ * ---------------------------------------------------------------------------
+ *   1. Inputs     Scale and static values, declared once on :root. Nothing
+ *                 derives from them at a theme boundary, so a value set on
+ *                 :root survives inside every themed region.
+ *   2. Dark       The dark palette: the neutral ramp and every value that
+ *                 differs per theme (accents, status, selection, syntax,
+ *                 shadows).
+ *   3. Derived    Everything computed from layers 1 and 2: scales and roles.
+ *   4. Light      The light palette, authored by hand. It declares only what
+ *                 the dark palette declares, so it never ties with layer 3.
+ *
+ * Why derivation targets `:root, [data-theme], [data-zest-scope]`
+ * ---------------------------------------------------------------
+ * A custom property is substituted where it is declared, not where it is
+ * used. After `--text-primary: var(--color-neutral-8)` resolves on <html>,
+ * descendants inherit the resulting colour, not the expression. Changing
+ * `--color-neutral-8` further down the tree does nothing to them.
+ *
+ * So any element that changes an input (a theme's palette, --base-radius,
+ * --base-spacing, --base-font-size) must also re-run the derivations. Two
+ * kinds of element do that:
+ *
+ *   [data-theme]       a themed region. Sets a palette and re-derives.
+ *   [data-zest-scope]  a region that only changes the scale inputs. It keeps
+ *                      the inherited palette and re-derives against its own
+ *                      --base-* values.
+ *
+ * Without one of those attributes, a container that sets --base-radius
+ * changes the input but inherits the radius already computed on <html>.
+ *
+ * Contract for contributors:
+ *  - Components read roles, never the numbered neutrals.
+ *  - Values that differ per theme belong in a palette layer, never in the
+ *    derived layer. A scope element re-declares everything in the derived
+ *    layer, which would reset a theme's value back to the dark one.
+ *  - Palette overrides go on the theme: `[data-theme="light"] { ... }`.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. Inputs
+ * :where() keeps specificity at zero, so any rule a consumer writes wins
+ * regardless of stylesheet order.
+ * ------------------------------------------------------------------------- */
+:where(:root) {
+	/* Type families. Themes re-face by overriding these names; the fallback
+     stacks in --font-sans / --font-mono / --font-serif stay intact. */
+	--base-sans-font-family: "Google Sans";
+	--base-mono-font-family: "DM Mono";
+	--base-serif-font-family: "DM Serif Display";
+
+	/* Scale dials. Each one drives a whole scale below; set it on :root, or on a
+     [data-zest-scope] element to rescale that region only. */
+	--base-spacing: 0.25rem;
+	--base-radius: 0.625rem;
+	--base-font-size: 16px;
+
+	/* Tint of the neutral ramp, as plain numbers so every browser resolves the
+     ramp identically. */
+	--base-neutral-hue: 146.4;
+	--base-neutral-chroma: 0.0137;
+
+	/* Heading face: the one type tier a theme may re-face. Only z-display and
+     z-heading read these. */
+	--font-heading-weight: 700;
+	--font-heading-settings: normal;
+	/* Multiplies the heading scale's negative tracking. High-contrast serifs
+     need much less than a geometric sans. */
+	--font-heading-tracking-scale: 1;
+
+	--font-weight-regular: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+
+	/* Unitless, so they follow whatever font size an element ends up with.
+     none: icons and single-line chips. tight: headings. snug: dense UI text.
+     normal: body copy. relaxed: long-form reading. */
+	--line-height-none: 1;
+	--line-height-tight: 1.2;
+	--line-height-snug: 1.4;
+	--line-height-normal: 1.6;
+	--line-height-relaxed: 1.75;
+
+	/* Control metrics: one height scale for every interactive control, so an
+     input, select, button and toggle side by side agree. Padding stays
+     per-component. */
+	--control-height-sm: 2rem;
+	--control-height-md: 2.5rem;
+	--control-height-lg: 3rem;
+	--control-disabled-opacity: 0.5;
+
+	/* Field composition: label, gap, control. Fixing the first two makes every
+     labelled control in a row the same total height. */
+	--field-label-height: 1.25rem;
+	--field-gap: 0.25rem;
+
+	/* Motion. Durations step by surface size: micro feedback, floating panels,
+     edge-anchored sheets. Exits run at about 70% of their entrance. */
+	--motion-instant: 80ms;
+	--motion-fast: 140ms;
+	--motion-base: 200ms;
+	--motion-slow: 280ms;
+	--motion-exit-fast: 100ms;
+	--motion-exit-base: 140ms;
+	--motion-exit-slow: 200ms;
+	--ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-exit: cubic-bezier(0.3, 0, 0.7, 0.4);
+	--ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+	--motion-distance-sm: 4px;
+	--motion-distance-md: 8px;
+	--motion-scale-from: 0.97;
+	--motion-stagger: 30ms;
+	/* Components multiply their travel offsets by this. */
+	--motion-travel: 1;
+
+	/* Theme change: content fades out, the theme swaps, content fades back in.
+     Out is slow enough to confirm the click; in is brisk. shared/theme.ts reads
+     the fade-out value to time the swap. A zero fade-out applies the theme
+     immediately. */
+	--theme-fade-out-duration: 0.2s;
+	--theme-fade-in-duration: 0.35s;
+
+	/* Stacking for floating UI that escapes its parent. Local stacking inside a
+     component (button-group overlap, range thumbs) stays a plain integer.
+     Modals use the top layer and need no z-index. */
+	--z-toolbar: 40;
+	--z-menu: 50;
+	--z-overlay: 60;
+	--z-toast: 1000;
+}
+
+/* Reduced motion drops travel and scale. The theme fade is also retimed to
+   zero, which applies the theme immediately. Opacity is not movement, but a
+   full-page fade is the most visible animation zest runs, and a consumer who
+   wants it back sets the two durations. */
+@media (prefers-reduced-motion: reduce) {
+	:where(:root) {
+		--motion-travel: 0;
+		--motion-scale-from: 1;
+		--theme-fade-out-duration: 0s;
+		--theme-fade-in-duration: 0s;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Dark palette (the default)
+ * ------------------------------------------------------------------------- */
+:where(:root),
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Neutral ramp. Lightness climbs 0 to 9: 0 is the page floor, 1 and 2 are
+     surfaces above it, 3 and 4 are lines, 5 to 9 step up into ink. */
+	--color-neutral-0: oklch(0.1609 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-1: oklch(0.21 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-2: oklch(0.25 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-3: oklch(0.31 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-4: oklch(0.4 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-5: oklch(0.55 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-6: oklch(0.68 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-7: oklch(0.8 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-8: oklch(0.9 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-9: #fff;
+
+	/* The chrome is neutral on purpose: the user's content supplies the colour,
+     so secondary and tertiary are opt-in tones, never the default look. */
+	--accent-secondary: lab(60 40.17 -57.68);
+	--accent-tertiary: lch(62.44 70.29 0.86 / 1);
+	/* Spark tones: bright, decorative hues for shimmer and glow
+     effects (z-spinner). Not for text; too light to read on neutral-0. */
+	--accent-spark-1: oklch(0.74 0.17 288);
+	--accent-spark-2: oklch(0.74 0.2 350);
+	--accent-spark-3: oklch(0.82 0.17 70);
+	--accent-spark-4: oklch(0.8 0.19 155);
+	--accent-spark-5: oklch(0.8 0.15 220);
+	--status-success: lch(62 58 145 / 1);
+	--status-warning: lch(72 78 76 / 1);
+	--status-danger: lch(58 72 37 / 1);
+
+	/* Text on a solid accent or status fill, and the lightness/chroma used to
+     derive a readable label from a tone colour (z-button). */
+	--on-accent: var(--color-neutral-0);
+	--on-tone-lightness: 0.2;
+	--on-tone-chroma: 0.5;
+
+	/* Selection: a pale band with near-black ink instead of the browser blue. */
+	--surface-selection: var(--color-neutral-7);
+	--text-selection: var(--color-neutral-1);
+
+	/* Floating shadows, tinted with the neutral hue rather than pure black. */
+	--shadow-overlay: 0 8px 24px -8px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.7);
+	--shadow-modal: 0 24px 64px -16px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.85);
+
+	/* Syntax highlighting for z-code-block, tuned for the near-black code
+     surface (--color-neutral-1). Override any token to retheme code. */
+	--syntax-comment: var(--color-neutral-5);
+	--syntax-keyword: oklch(from var(--accent-secondary) 0.84 0.16 h);
+	--syntax-string: oklch(0.79 0.13 152);
+	--syntax-number: oklch(0.82 0.12 78);
+	--syntax-constant: oklch(0.76 0.16 48);
+	--syntax-function: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-class: oklch(0.83 0.11 200);
+	--syntax-property: oklch(0.86 0.07 222);
+	--syntax-operator: var(--color-neutral-6);
+	--syntax-tag: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-variable: var(--color-neutral-8);
+	--syntax-regex: oklch(0.79 0.13 168);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Derived tokens
+ * Re-run at every theme and scope boundary. Declares nothing that a palette
+ * layer sets per theme.
+ * ------------------------------------------------------------------------- */
+:root,
+[data-theme],
+[data-zest-scope] {
+	/* Type scale: one named scale, 2xs to 7xl. Every step follows
+     --base-font-size, so one dial rescales all text. rem keeps the user's
+     browser font-size setting in play. */
+	--font-size-2xs: calc(0.6875rem * (var(--base-font-size) / 16px));
+	--font-size-xs: calc(0.75rem * (var(--base-font-size) / 16px));
+	--font-size-sm: calc(0.875rem * (var(--base-font-size) / 16px));
+	--font-size-md: calc(1rem * (var(--base-font-size) / 16px));
+	--font-size-lg: calc(1.125rem * (var(--base-font-size) / 16px));
+	--font-size-xl: calc(1.25rem * (var(--base-font-size) / 16px));
+	--font-size-2xl: calc(1.5rem * (var(--base-font-size) / 16px));
+	--font-size-3xl: calc(2rem * (var(--base-font-size) / 16px));
+	--font-size-4xl: calc(2.5rem * (var(--base-font-size) / 16px));
+	--font-size-5xl: calc(3rem * (var(--base-font-size) / 16px));
+	--font-size-6xl: calc(3.5rem * (var(--base-font-size) / 16px));
+	--font-size-7xl: calc(4rem * (var(--base-font-size) / 16px));
+
+
+	--font-sans: var(--base-sans-font-family), "Google Sans Fallback", system-ui, sans-serif;
+	--font-mono: var(--base-mono-font-family), "Geist Mono", "Fira Code", monospace;
+	--font-serif:
+		var(--base-serif-font-family), "Iowan Old Style", Georgia, "Times New Roman", serif;
+	--font-heading: var(--font-sans);
+
+	/* Spacing: one numeric scale, --space-N = N x --base-spacing (4px), with -5 half steps. The
+     size keywords on layout elements (gap="md") resolve to steps of it. */
+	--space-0: 0;
+	--space-0-5: calc(var(--base-spacing) * 0.5);
+	--space-1: calc(var(--base-spacing) * 1);
+	--space-1-5: calc(var(--base-spacing) * 1.5);
+	--space-2: calc(var(--base-spacing) * 2);
+	--space-2-5: calc(var(--base-spacing) * 2.5);
+	--space-3: calc(var(--base-spacing) * 3);
+	--space-3-5: calc(var(--base-spacing) * 3.5);
+	--space-4: calc(var(--base-spacing) * 4);
+	--space-5: calc(var(--base-spacing) * 5);
+	--space-6: calc(var(--base-spacing) * 6);
+	--space-7: calc(var(--base-spacing) * 7);
+	--space-8: calc(var(--base-spacing) * 8);
+	--space-9: calc(var(--base-spacing) * 9);
+	--space-10: calc(var(--base-spacing) * 10);
+	--space-11: calc(var(--base-spacing) * 11);
+	--space-12: calc(var(--base-spacing) * 12);
+	--space-14: calc(var(--base-spacing) * 14);
+	--space-16: calc(var(--base-spacing) * 16);
+	--space-20: calc(var(--base-spacing) * 20);
+	--space-24: calc(var(--base-spacing) * 24);
+	--space-28: calc(var(--base-spacing) * 28);
+	--space-32: calc(var(--base-spacing) * 32);
+	--space-36: calc(var(--base-spacing) * 36);
+	--space-40: calc(var(--base-spacing) * 40);
+
+	/* Radius scale */
+	--radius: var(--base-radius);
+	--radius-xs: max(0px, calc(var(--radius) - 8px));
+	--radius-sm: max(0px, calc(var(--radius) - 4px));
+	--radius-md: max(0px, calc(var(--radius) - 2px));
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--radius-full: 9999px;
+
+	/* Surfaces */
+	--surface-page: var(--color-neutral-0);
+	--surface-default: var(--color-neutral-1);
+	--surface-subtle: var(--color-neutral-2);
+	--surface-strong: var(--color-neutral-3);
+	--surface-overlay: var(--color-neutral-1);
+	--surface-inverse: var(--color-neutral-8);
+	--surface-scrim: color-mix(in oklch, var(--surface-page) 55%, transparent);
+
+	/* Text. --text-strong (full white in dark) is reserved for the few elements
+     that opt into it, such as display type. */
+	--text-primary: var(--color-neutral-8);
+	--text-secondary: var(--color-neutral-6);
+	--text-tertiary: var(--color-neutral-5);
+	--text-strong: var(--color-neutral-9);
+	--text-inverse: var(--color-neutral-0);
+
+	/* Borders */
+	--border-default: var(--color-neutral-3);
+	--border-strong: var(--color-neutral-4);
+	--border-focus: color-mix(in oklab, var(--text-primary) 80%, transparent);
+
+	/* Tones. accent-primary is neutral; secondary and tertiary are opt-in. */
+	--accent-primary: var(--color-neutral-8);
+	--tone: var(--accent-primary);
+
+	/* z-chart series */
+	--chart-1: var(--accent-secondary);
+	--chart-2: var(--accent-tertiary);
+	--chart-3: var(--color-neutral-7);
+	--chart-4: var(--color-neutral-5);
+	--chart-5: var(--color-neutral-4);
+
+	/* Reference ramps, for app code and docs. Components still read
+     roles. --neutral-N is the short name for the palette; themes keep
+     setting --color-neutral-N, which also stays as a legacy name.
+     Tone ramps blend each tone toward black (0–4) and white (6–9);
+     step 5 is the tone itself. */
+	--neutral-0: var(--color-neutral-0);
+	--neutral-1: var(--color-neutral-1);
+	--neutral-2: var(--color-neutral-2);
+	--neutral-3: var(--color-neutral-3);
+	--neutral-4: var(--color-neutral-4);
+	--neutral-5: var(--color-neutral-5);
+	--neutral-6: var(--color-neutral-6);
+	--neutral-7: var(--color-neutral-7);
+	--neutral-8: var(--color-neutral-8);
+	--neutral-9: var(--color-neutral-9);
+
+	--primary-0: color-mix(in oklab, var(--accent-primary) 0%, black);
+	--primary-1: color-mix(in oklab, var(--accent-primary) 20%, black);
+	--primary-2: color-mix(in oklab, var(--accent-primary) 40%, black);
+	--primary-3: color-mix(in oklab, var(--accent-primary) 60%, black);
+	--primary-4: color-mix(in oklab, var(--accent-primary) 80%, black);
+	--primary-5: var(--accent-primary);
+	--primary-6: color-mix(in oklab, var(--accent-primary) 75%, white);
+	--primary-7: color-mix(in oklab, var(--accent-primary) 50%, white);
+	--primary-8: color-mix(in oklab, var(--accent-primary) 25%, white);
+	--primary-9: color-mix(in oklab, var(--accent-primary) 0%, white);
+
+	--secondary-0: color-mix(in oklab, var(--accent-secondary) 0%, black);
+	--secondary-1: color-mix(in oklab, var(--accent-secondary) 20%, black);
+	--secondary-2: color-mix(in oklab, var(--accent-secondary) 40%, black);
+	--secondary-3: color-mix(in oklab, var(--accent-secondary) 60%, black);
+	--secondary-4: color-mix(in oklab, var(--accent-secondary) 80%, black);
+	--secondary-5: var(--accent-secondary);
+	--secondary-6: color-mix(in oklab, var(--accent-secondary) 75%, white);
+	--secondary-7: color-mix(in oklab, var(--accent-secondary) 50%, white);
+	--secondary-8: color-mix(in oklab, var(--accent-secondary) 25%, white);
+	--secondary-9: color-mix(in oklab, var(--accent-secondary) 0%, white);
+
+	--tertiary-0: color-mix(in oklab, var(--accent-tertiary) 0%, black);
+	--tertiary-1: color-mix(in oklab, var(--accent-tertiary) 20%, black);
+	--tertiary-2: color-mix(in oklab, var(--accent-tertiary) 40%, black);
+	--tertiary-3: color-mix(in oklab, var(--accent-tertiary) 60%, black);
+	--tertiary-4: color-mix(in oklab, var(--accent-tertiary) 80%, black);
+	--tertiary-5: var(--accent-tertiary);
+	--tertiary-6: color-mix(in oklab, var(--accent-tertiary) 75%, white);
+	--tertiary-7: color-mix(in oklab, var(--accent-tertiary) 50%, white);
+	--tertiary-8: color-mix(in oklab, var(--accent-tertiary) 25%, white);
+	--tertiary-9: color-mix(in oklab, var(--accent-tertiary) 0%, white);
+
+	--success-0: color-mix(in oklab, var(--status-success) 0%, black);
+	--success-1: color-mix(in oklab, var(--status-success) 20%, black);
+	--success-2: color-mix(in oklab, var(--status-success) 40%, black);
+	--success-3: color-mix(in oklab, var(--status-success) 60%, black);
+	--success-4: color-mix(in oklab, var(--status-success) 80%, black);
+	--success-5: var(--status-success);
+	--success-6: color-mix(in oklab, var(--status-success) 75%, white);
+	--success-7: color-mix(in oklab, var(--status-success) 50%, white);
+	--success-8: color-mix(in oklab, var(--status-success) 25%, white);
+	--success-9: color-mix(in oklab, var(--status-success) 0%, white);
+
+	--warning-0: color-mix(in oklab, var(--status-warning) 0%, black);
+	--warning-1: color-mix(in oklab, var(--status-warning) 20%, black);
+	--warning-2: color-mix(in oklab, var(--status-warning) 40%, black);
+	--warning-3: color-mix(in oklab, var(--status-warning) 60%, black);
+	--warning-4: color-mix(in oklab, var(--status-warning) 80%, black);
+	--warning-5: var(--status-warning);
+	--warning-6: color-mix(in oklab, var(--status-warning) 75%, white);
+	--warning-7: color-mix(in oklab, var(--status-warning) 50%, white);
+	--warning-8: color-mix(in oklab, var(--status-warning) 25%, white);
+	--warning-9: color-mix(in oklab, var(--status-warning) 0%, white);
+
+	--danger-0: color-mix(in oklab, var(--status-danger) 0%, black);
+	--danger-1: color-mix(in oklab, var(--status-danger) 20%, black);
+	--danger-2: color-mix(in oklab, var(--status-danger) 40%, black);
+	--danger-3: color-mix(in oklab, var(--status-danger) 60%, black);
+	--danger-4: color-mix(in oklab, var(--status-danger) 80%, black);
+	--danger-5: var(--status-danger);
+	--danger-6: color-mix(in oklab, var(--status-danger) 75%, white);
+	--danger-7: color-mix(in oklab, var(--status-danger) 50%, white);
+	--danger-8: color-mix(in oklab, var(--status-danger) 25%, white);
+	--danger-9: color-mix(in oklab, var(--status-danger) 0%, white);
+}
+
+/* More contrast on request: hairlines step up so borders and dividers hold at
+   3:1 against the surface. Placed after the derived layer so it wins. */
+@media (prefers-contrast: more) {
+
+	:root,
+	[data-theme],
+	[data-zest-scope] {
+		--border-default: var(--color-neutral-5);
+		--border-strong: var(--color-neutral-6);
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. Light palette: "haze"
+ * A quiet paper canvas with opaque raised surfaces. Type and control geometry
+ * match dark, so switching schemes never reflows the interface.
+ *
+ * The ramp is authored by hand because its direction differs from dark. Its
+ * steps follow surface roles, not lightness: 0 is the page, 1 lifts above it
+ * (raised surfaces read lighter on paper), 2 recedes below it, 3 and 4 are
+ * lines, 5 to 9 descend into ink. That is why components read roles.
+ * Anything a palette leaves out is inherited from the surrounding theme, not
+ * from dark.
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+	color-scheme: light;
+
+	--color-neutral-0: oklch(0.966 0.006 146);
+	--color-neutral-1: oklch(0.988 0.004 146);
+	--color-neutral-2: oklch(0.951 0.008 146);
+	--color-neutral-3: oklch(0.876 0.011 146);
+	--color-neutral-4: oklch(0.818 0.014 146);
+	--color-neutral-5: oklch(0.628 0.017 146);
+	/* neutral-6 is --text-secondary. 0.528 measured 4.4:1 as small text on the
+     8%-tinted alert and toast surfaces; 0.5 clears 4.5:1 on all of them. */
+	--color-neutral-6: oklch(0.5 0.02 146);
+	--color-neutral-7: oklch(0.408 0.02 146);
+	--color-neutral-8: oklch(0.286 0.02 146);
+	--color-neutral-9: oklch(0.176 0.022 146);
+
+	/* Accents sit a few steps darker than in dark. On paper one colour has to be
+     legible as text and also carry white text as a solid fill, and only the
+     darker end of each hue clears both. Picked against measured contrast on
+     --color-neutral-0, not by eye. */
+	--accent-secondary: oklch(0.525 0.195 288);
+	--accent-tertiary: oklch(0.565 0.2 12);
+	--accent-spark-1: oklch(0.58 0.26 288);
+	--accent-spark-2: oklch(0.62 0.26 355);
+	--accent-spark-3: oklch(0.74 0.19 60);
+	--accent-spark-4: oklch(0.66 0.21 155);
+	--accent-spark-5: oklch(0.64 0.18 235);
+	--status-success: oklch(0.522 0.128 155);
+	--status-warning: oklch(0.55 0.125 70);
+	--status-danger: oklch(0.555 0.195 27);
+
+	--on-accent: #fff;
+	--on-tone-lightness: 1;
+	--on-tone-chroma: 0;
+
+	/* A pale highlighter band tinted with the neutral hue, with ink dark enough
+     to stay comfortable inside it. */
+	--surface-selection: oklch(0.87 0.072 146);
+	--text-selection: oklch(0.22 0.03 146);
+
+	--shadow-overlay:
+		0 8px 24px -8px oklch(0.25 0.02 146 / 0.22), 0 1px 2px oklch(0.25 0.02 146 / 0.06);
+	--shadow-modal: 0 24px 64px -16px oklch(0.25 0.02 146 / 0.32);
+
+	/* Code gets its own light palette rather than the dark one dimmed: held near
+     L 0.5 so every token clears text contrast on the pale code surface while
+     the hues stay recognisably the same language. */
+	--syntax-comment: oklch(0.578 0.019 146);
+	--syntax-keyword: oklch(0.5 0.18 288);
+	--syntax-string: oklch(0.475 0.125 152);
+	--syntax-number: oklch(0.52 0.125 62);
+	--syntax-constant: oklch(0.52 0.16 40);
+	--syntax-function: oklch(0.53 0.185 8);
+	--syntax-class: oklch(0.5 0.115 215);
+	--syntax-property: oklch(0.475 0.09 235);
+	--syntax-operator: oklch(0.55 0.018 146);
+	--syntax-tag: oklch(0.53 0.185 8);
+	--syntax-variable: oklch(0.3 0.02 146);
+	--syntax-regex: oklch(0.475 0.125 168);
+}</style>
+<style>body{margin:0;-webkit-font-smoothing:antialiased}
+/* Editor aliases onto Zest roles. Needs zest tokens.css, with data-theme on the same element. */
+.theme-light{--canvas:var(--surface-default);--surface:var(--surface-page);--surface-2:var(--surface-subtle);--surface-3:var(--surface-strong);--border:var(--border-default);--text:var(--text-primary);--text-muted:var(--text-secondary);--text-faint:var(--text-tertiary);--text-disabled:var(--color-neutral-4);--accent:var(--accent-secondary);--accent-hover:color-mix(in oklch,var(--accent-secondary) 88%,black);--accent-soft:color-mix(in oklch,var(--accent-secondary) 12%,transparent);--accent-text:var(--accent-secondary);--record:var(--status-danger);--record-soft:color-mix(in oklch,var(--status-danger) 12%,transparent);--mute:var(--status-warning);--mute-text:var(--on-accent);--success:var(--status-success);--radius-s:var(--radius-sm);--radius-m:var(--radius-md);--radius-l:var(--radius-lg);--line-faint:color-mix(in oklch,var(--border-default) 45%,transparent);--line-soft:color-mix(in oklch,var(--border-default) 75%,transparent);--hover-wash:color-mix(in oklch,var(--text-primary) 5%,transparent);--hairline-wash:color-mix(in oklch,var(--text-primary) 10%,transparent);--root-row:color-mix(in oklch,var(--accent-secondary) 7%,transparent);--black-key:var(--color-neutral-7);font-family:var(--font-sans);color:var(--text-primary);background:var(--surface-page)}
+button,select,input{font-family:inherit}
+
+/* spec sheet layout */
+.spec-board{display:flex;flex-direction:column;gap:32px;width:1440px;box-sizing:border-box;padding:56px;background:var(--surface)}
+.spec-board-header{display:flex;flex-direction:column;gap:8px;max-width:880px}
+.spec-eyebrow{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--accent-text)}
+.spec-board-title{margin:0;font-size:30px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
+.spec-board-lead{margin:0;font-size:14.5px;line-height:1.6;color:var(--text-muted)}
+.spec-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:start}
+.spec-grid.isCols2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.spec-grid.isCols4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.spec-card{display:flex;flex-direction:column;gap:18px;padding:24px;box-sizing:border-box;background:var(--canvas);border:1px solid var(--border);border-radius:12px;min-width:0}
+.spec-card.isSpan2{grid-column:span 2}
+.spec-card.isSpan3{grid-column:span 3}
+.spec-card-title{margin:0;font-size:15px;font-weight:600;color:var(--text)}
+.spec-card-lead{margin:4px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-muted)}
+.spec-stage{display:flex;flex-wrap:wrap;align-items:flex-start;gap:20px;padding:20px;border-radius:10px;background:var(--surface)}
+.spec-stage.isWhite{background:var(--canvas);border:1px solid var(--border)}
+.spec-stage.isColumn{flex-direction:column}
+.spec-state{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.spec-caption{font-size:11.5px;font-weight:500;color:var(--text-faint)}
+.spec-rules{display:flex;flex-direction:column;gap:7px;margin:0;padding-left:18px;font-size:12.5px;line-height:1.55;color:var(--text-muted)}
+.spec-rules strong{font-weight:600;color:var(--text)}
+.spec-subhead{margin:0;font-size:12px;font-weight:600;color:var(--text)}
+.spec-table{display:grid;grid-template-columns:auto 1fr;column-gap:16px;row-gap:8px;font-size:12.5px;line-height:1.5;color:var(--text-muted)}
+.spec-table-key{font-weight:600;color:var(--text);white-space:nowrap}
+.spec-pill{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:999px;background:var(--surface-2);color:var(--text-muted);font-size:11px;font-weight:600;white-space:nowrap}
+.spec-pill.isAccent{background:var(--accent-soft);color:var(--accent-text)}
+.kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border:1px solid var(--border-strong);border-radius:4px;background:var(--canvas);color:var(--text);font-size:11px;font-weight:600}
+.swatch-row{display:flex;flex-wrap:wrap;gap:12px}
+.swatch{display:flex;flex-direction:column;gap:6px;width:96px}
+.swatch-chip{height:40px;border-radius:8px;border:1px solid var(--border)}
+.swatch-name{font-size:11.5px;font-weight:600;color:var(--text)}
+.swatch-value{font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.measure{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted)}
+.measure-box{flex:none;border:1px dashed var(--accent);border-radius:4px;background:var(--accent-soft)}
+
+/* bars */
+.app-bar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:16px;height:52px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border)}
+.bar-row{display:flex;align-items:center;gap:6px}
+.tool-group{display:flex;align-items:center;gap:2px}
+.toolbar-divider{width:1px;height:20px;margin:0 6px;background:var(--border)}
+
+/* buttons */
+.icon-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);cursor:pointer}
+.icon-button.isHover{background:var(--surface-2);color:var(--text)}
+.icon-button.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.icon-button.isRecord{color:var(--record)}
+.icon-button.isRecord.isActive{background:var(--record-soft);color:var(--record)}
+.icon-button.isTiny{width:22px;height:22px;border-radius:var(--radius-s)}
+.icon-button:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.capture-button{position:relative}
+.capture-badge{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--record)}
+.ghost-button{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;font-weight:500;cursor:pointer}
+.ghost-button.isOpen,.ghost-button.isHover{background:var(--surface-2)}
+.outline-button{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.project-mark{width:18px;height:18px;border-radius:5px;background:var(--text)}
+.chevron{display:flex;color:var(--text-faint)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.status-dot.isOff{background:var(--border-strong)}
+
+/* transport */
+.transport{display:flex;align-items:center;gap:2px;height:38px;padding:0 5px;background:var(--canvas);border:1px solid var(--border);border-radius:var(--radius-l)}
+.play-button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:var(--accent);color:var(--on-accent);cursor:pointer}
+.transport-divider{width:1px;height:18px;margin:0 6px;background:var(--border)}
+.readout{display:flex;align-items:baseline;gap:10px;padding:0 6px;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.readout-primary{min-width:54px;font-size:14px;font-weight:600;color:var(--text)}
+.readout-sep{padding:0 1px;font-weight:500;color:var(--text-faint)}
+.readout-secondary{min-width:44px;font-size:12px;color:var(--text-faint)}
+.tempo-field{display:flex;align-items:center;gap:4px;height:28px;padding:0 6px;border-radius:var(--radius-m)}
+.tempo-field.isHover{background:var(--surface)}
+.tempo-field.isFocus{background:var(--surface);outline:2px solid var(--accent);outline-offset:1px}
+.tempo-input{width:3.2ch;padding:0;border:0;background:transparent;color:var(--text);font:500 14px var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.tempo-unit{font-size:11px;font-weight:500;color:var(--text-faint)}
+
+/* fields */
+.slider{position:relative;flex:1 1 auto;height:20px;min-width:120px}
+.slider-track{position:absolute;top:8px;left:0;right:0;height:4px;border-radius:2px;background:var(--surface-3)}
+.slider-fill{position:absolute;top:8px;left:0;height:4px;border-radius:2px;background:var(--text-muted)}
+.slider-thumb{position:absolute;top:4px;width:12px;height:12px;box-sizing:border-box;margin-left:-6px;border:1.5px solid var(--text-muted);border-radius:50%;background:var(--canvas)}
+.slider.isDimmed .slider-fill{background:var(--border-strong)}
+.slider.isDimmed .slider-thumb{border-color:var(--border-strong)}
+.slider-row{display:flex;align-items:center;gap:8px}
+.value-label{font-size:12px;font-weight:500;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.text-field{width:100%;height:30px;box-sizing:border-box;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:13px;font-weight:500}
+.text-field.isPlaceholder{color:var(--text-faint);font-weight:400}
+.select-field{position:relative;display:flex;align-items:center;width:100%;height:30px;box-sizing:border-box;padding:0 30px 0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500}
+.select-chevron{position:absolute;top:0;right:10px;bottom:0;display:flex;align-items:center;color:var(--text-faint)}
+.native-list{display:flex;flex-direction:column;width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);font-size:12.5px}
+.native-group{padding:6px 8px 2px;font-size:11px;font-weight:600;color:var(--text-faint)}
+.native-option{display:flex;align-items:center;justify-content:space-between;height:26px;padding:0 8px;border-radius:var(--radius-s);color:var(--text)}
+.native-option.isSelected{background:var(--surface-2);font-weight:500}
+
+/* popovers */
+.popover{display:flex;flex-direction:column;gap:14px;width:272px;box-sizing:border-box;padding:14px;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-md);box-shadow:var(--shadow-overlay);text-align:left}
+.popover.isWide{width:304px}
+.popover.isMenu{gap:0;width:232px;padding:4px}
+.popover.isMenu.isRoomy{width:288px}
+.popover-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.popover-title{font-size:13px;font-weight:600;color:var(--text)}
+.popover-section{display:flex;flex-direction:column;gap:8px}
+.popover-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--text-faint)}
+.section-label{font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.section-header{display:flex;align-items:center;justify-content:space-between}
+.popover-divider{height:1px;margin:0 -14px;background:var(--border)}
+.sub-settings{display:flex;flex-direction:column;gap:12px;padding:12px;border-radius:8px;background:var(--surface)}
+.menu-header{display:flex;flex-direction:column;gap:6px;padding:8px 8px 10px}
+.menu-header.isRow{flex-direction:row;align-items:center;gap:4px;padding:6px 6px 8px}
+.save-status{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-faint)}
+.save-status-icon{display:flex;color:var(--success)}
+.save-status-icon.isWarning{color:var(--record)}
+.menu-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;text-align:left;cursor:pointer}
+.menu-item.isHover{background:var(--surface)}
+.menu-item:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.menu-item-lead{display:flex;align-items:center;gap:10px}
+.menu-item-stack{display:flex;flex-direction:column;gap:1px;padding:6px 0}
+.menu-item-hint{font-size:11.5px;color:var(--text-faint)}
+.menu-item:disabled .menu-item-hint{color:var(--text-disabled)}
+.menu-item-icon{display:flex;color:var(--text-faint)}
+.menu-item-check{display:flex;color:var(--accent-text)}
+.menu-divider{height:1px;margin:4px 0;background:var(--border)}
+.menu-label{padding:8px 10px 4px;font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.project-search{padding:0 6px 6px}
+.tag{padding:2px 6px;border-radius:var(--radius-s);background:var(--surface-2);color:var(--text-muted);font-size:11px;font-weight:500}
+.empty-note{padding:12px 10px;font-size:12px;color:var(--text-faint)}
+.scale-list{max-height:132px;margin:0 -14px;padding:0 14px;overflow:hidden;position:relative}
+
+/* segmented + switch */
+.segmented{display:grid;gap:2px;padding:2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m)}
+.segmented.isCols2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.segmented.isCols3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.segmented.isCols5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.segmented.isCols6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.segmented-option{height:26px;padding:0 6px;border:1px solid transparent;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.segmented-option.isHover{background:var(--surface-2);color:var(--text)}
+.segmented-option.isSelected{background:var(--canvas);border-color:var(--border-strong);color:var(--text)}
+.segmented-option.isLeft{padding:0 8px;text-align:left}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.switch-copy{display:flex;flex-direction:column;gap:2px}
+.switch-label{font-size:13px;font-weight:500;color:var(--text)}
+.switch-hint{font-size:11.5px;color:var(--text-faint)}
+.switch{position:relative;flex-shrink:0;width:30px;height:18px;padding:0;border:0;border-radius:999px;background:var(--border-strong);cursor:pointer}
+.switch.isOn{background:var(--accent)}
+.switch:disabled{opacity:.45;cursor:default}
+.switch-thumb{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--on-accent)}
+.switch.isOn .switch-thumb{left:15px}
+.text-button{padding:0;border:0;background:transparent;color:var(--accent-text);font-size:12px;font-weight:500;cursor:pointer}
+.stepper{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas)}
+.stepper-value{min-width:44px;font-size:12px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums;text-align:center}
+.zoom-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* chips */
+.split-chip{display:inline-flex;align-items:stretch;height:30px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);overflow:hidden}
+.split-chip.isOpen,.split-chip.isHover{border-color:var(--border-strong)}
+.split-chip-toggle{display:inline-flex;align-items:center;justify-content:center;width:30px;padding:0;border:0;border-right:1px solid var(--border);background:transparent;color:var(--text-faint);cursor:pointer}
+.split-chip-toggle.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.split-chip-main{display:inline-flex;align-items:center;gap:6px;padding:0 8px 0 10px;border:0;background:transparent;color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.split-chip.isOpen .split-chip-main{background:var(--surface)}
+.chip{display:inline-flex;align-items:center;gap:7px;height:30px;box-sizing:border-box;padding:0 8px 0 10px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.chip.isHover{border-color:var(--border-strong)}
+.chip.isOpen{border-color:var(--border-strong);background:var(--surface)}
+.chip.isEmpty{color:var(--text-muted)}
+.chip-icon{display:flex;color:var(--text-faint)}
+.chip-value{white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip-suffix{margin-left:1px;color:var(--accent-text)}
+.chip-badge{display:flex;color:var(--accent-text)}
+.view-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);font-size:12.5px;font-weight:500;cursor:pointer}
+.view-chip.isOpen,.view-chip.isHover{background:var(--surface-2);color:var(--text)}
+.view-chip.isActive{background:var(--accent-soft);color:var(--accent-text)}
+
+/* tracks */
+.track-tab{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 5px 0 6px;border-radius:8px}
+.track-tab::after{content:'';position:absolute;inset:0;border-radius:inherit;background:transparent;pointer-events:none}
+.track-tab.isHover::after{background:var(--hover-wash)}
+.track-lead{position:relative;display:flex;align-items:center;justify-content:center;width:18px;height:18px}
+.track-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%}
+.track-dot.isChord{border-radius:2px}
+.track-tab.isSilent .track-dot{opacity:.35}
+.track-tab-close{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);opacity:0}
+.track-tab.isHover .track-tab-close{opacity:1}
+.track-tab.isHover .track-dot{opacity:0}
+.track-tab-name{position:relative;z-index:1;padding:0 2px;border:0;background:transparent;color:var(--text-muted);font-size:13px;font-weight:500;white-space:nowrap}
+.track-tab.isActive .track-tab-name{color:var(--text)}
+.track-tab.isSilent .track-tab-name{color:var(--text-faint)}
+.track-toggles{position:relative;z-index:1;display:flex;align-items:center;gap:4px;height:20px;margin-left:4px;padding-left:8px;border-left:1px solid var(--hairline-wash)}
+.ms-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--radius-s);background:color-mix(in oklch,var(--surface-default) 80%,transparent);color:var(--text-muted);font-size:10.5px;font-weight:600}
+.track-tab .ms-toggle.isMuteOn{background:color-mix(in oklab,var(--status-warning) 38%,var(--surface-default));color:color-mix(in oklab,var(--status-warning) 70%,black);font-weight:700}
+.track-tab .ms-toggle.isSoloOn{background:color-mix(in oklab,var(--accent-secondary) 34%,var(--surface-default));color:color-mix(in oklab,var(--accent-secondary) 75%,black);font-weight:700}
+
+/* roll illustrations */
+.mini-roll{display:flex;width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--canvas)}
+.mini-keys{flex:none;width:44px;border-right:1px solid var(--border)}
+.mini-key{position:relative;display:flex;align-items:center;justify-content:flex-end;height:16px;box-sizing:border-box;padding-right:5px;border-bottom:1px solid var(--line-soft);color:var(--text-faint);font-size:9.5px;font-weight:500}
+.mini-key-black{position:absolute;top:0;bottom:0;left:0;width:24px;border-radius:0 2px 2px 0;background:var(--black-key)}
+.mini-key-label{position:relative}
+.mini-grid{position:relative;flex:1 1 auto}
+.mini-row{height:16px;box-sizing:border-box;border-bottom:1px solid var(--line-faint)}
+.mini-row.isTinted{background:var(--surface)}
+.mini-row.isRoot{background:var(--root-row)}
+.mini-note{position:absolute;height:12px;border-radius:3px;box-sizing:border-box}
+.mini-note.isGhost{background:transparent;border:1px solid;opacity:.45}
+.mini-ruler{position:relative;height:24px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border)}
+.mini-ruler-bar{position:absolute;top:0;bottom:0;padding:5px 0 0 5px;border-left:1px solid var(--border-strong);color:var(--text-muted);font-size:10.5px;font-weight:500}
+.mini-playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent)}
+.mini-playhead-head{position:absolute;bottom:0;width:9px;height:9px;margin-left:-4px;background:var(--accent);clip-path:polygon(0 0,100% 0,50% 100%)}
+.loop-band{position:absolute;top:0;bottom:0;left:0;width:50%;box-sizing:border-box;background:var(--accent-soft);border-top:2px solid var(--accent)}
+.zoom-pad{display:grid;grid-template-columns:24px 28px 24px;grid-template-rows:repeat(3,24px);gap:2px;padding:3px;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-lg);box-shadow:var(--shadow-overlay)}
+.zoom-pad.isIdle{opacity:.8}
+.zoom-pad-button{display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:6px;background:transparent;color:var(--text-muted)}
+.zoom-pad-button.isHover{background:var(--surface-2);color:var(--text)}
+.zoom-pad-button.isStart{grid-column:1;grid-row:1 / span 3}
+.zoom-pad-button.isEnd{grid-column:3;grid-row:1 / span 3}
+.zoom-pad-button.isMiddle{grid-column:2}
+.toast{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:var(--radius-md);background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);color:var(--text-primary);font-size:12.5px;font-weight:500;white-space:nowrap}
+.toast-dot{width:6px;height:6px;border-radius:50%;background:var(--record)}
+.cursor-tag{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:6px;background:var(--text);color:var(--on-accent);font-size:11px;font-weight:500}
+</style>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTU7PB1QTsUX8KYthSQBLyM.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/dm-mono-400.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTR7PB1QTsUX8KYvumzEY2tbZX9.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/dm-mono-500.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+body{margin:0}
+.cp-app{position:relative;display:flex;flex-direction:column;width:100%;height:820px;overflow:hidden;background:var(--surface-default)}
+.cp-editor-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:48px;flex:none;padding:0 12px;box-sizing:border-box;background:var(--canvas);border-bottom:1px solid var(--border)}
+.cp-body{display:flex;flex:1 1 auto;min-height:0}
+.cp-roll{position:relative;display:flex;flex:1 1 auto;min-width:0;background:var(--canvas)}
+.cp-keys{flex:none;width:56px;border-right:1px solid var(--border);background:var(--canvas)}
+.cp-keys-ruler{height:28px;box-sizing:border-box;border-bottom:1px solid var(--border);background:var(--surface)}
+.cp-key{position:relative;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;padding-right:6px;border-bottom:1px solid var(--line-soft);color:var(--text-faint);font-size:10px;font-weight:500}
+.cp-key-black{position:absolute;top:0;bottom:0;left:0;width:30px;border-radius:0 3px 3px 0;background:var(--black-key)}
+.cp-key-label{position:relative}
+.cp-grid-wrap{position:relative;flex:1 1 auto;min-width:0;overflow:hidden}
+.cp-ruler{position:relative;height:28px;box-sizing:border-box;border-bottom:1px solid var(--border);background:var(--surface)}
+.cp-ruler-bar{position:absolute;top:0;bottom:0;padding:6px 0 0 6px;border-left:1px solid var(--border-strong);color:var(--text-muted);font-size:11px;font-weight:500}
+.cp-grid{position:absolute;top:28px;left:0;right:14px;bottom:14px;overflow:hidden}
+.cp-row{box-sizing:border-box;border-bottom:1px solid var(--line-faint)}
+.cp-row.isOutOfKey{background:var(--surface)}
+.cp-row.isRoot{background:var(--root-row)}
+.cp-bar-line{position:absolute;top:0;bottom:0;width:1px;background:var(--border-strong)}
+.cp-beat-line{position:absolute;top:0;bottom:0;width:1px;background:var(--line-soft)}
+.cp-playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent)}
+.cp-chord{position:absolute;box-sizing:border-box;padding:0;border:0;border-radius:6px;background:color-mix(in oklch,var(--accent-spark-1) 10%,transparent);cursor:pointer;text-align:left}
+.cp-chord::before{content:'';position:absolute;inset:0;border:1px solid color-mix(in oklch,var(--accent-spark-1) 35%,transparent);border-radius:inherit}
+.cp-chord.isSelected::before{border:2px solid var(--accent-spark-1)}
+.cp-chord:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+.cp-chord-name{position:absolute;top:-19px;left:0;padding:0 2px;color:var(--text-muted);font-size:11.5px;font-weight:600;white-space:nowrap}
+.cp-chord.isSelected .cp-chord-name{top:-22px;left:-1px;padding:1px 7px;border-radius:var(--radius-s);background:var(--accent-spark-1);color:var(--on-accent)}
+.cp-chord-note{position:absolute;left:3px;right:3px;border-radius:3px;background:var(--accent-spark-1)}
+
+/* chord bar: edits the selected chord, lives on the selection */
+.chord-bar{position:absolute;bottom:26px;left:50%;z-index:6;transform:translateX(-50%);display:flex;align-items:center;gap:6px;height:40px;padding:0 6px 0 10px;box-sizing:border-box;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-l);box-shadow:var(--shadow-overlay);white-space:nowrap}
+.chord-bar-name{display:flex;align-items:baseline;gap:6px;padding-right:4px}
+.chord-bar-title{font-size:13px;font-weight:600;color:var(--text)}
+.chord-bar-sub{font-size:11.5px;color:var(--text-faint)}
+.chord-bar-divider{width:1px;height:20px;margin:0 2px;background:var(--border)}
+.mini-stepper{display:flex;align-items:center;gap:2px;height:28px;padding:0 2px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas)}
+.mini-stepper-value{min-width:28px;font-size:12px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums;text-align:center}
+.mini-stepper-value.isWide{min-width:56px}
+.mini-stepper-button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);cursor:pointer}
+.mini-stepper-button:hover{background:var(--surface-2);color:var(--text)}
+.mini-stepper-button:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.mini-seg{display:flex;gap:2px;height:28px;padding:2px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface)}
+.mini-seg-option{min-width:34px;padding:0 6px;border:1px solid transparent;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);font-size:12px;font-weight:500;cursor:pointer}
+.mini-seg-option:hover{color:var(--text)}
+.mini-seg-option.isSelected{background:var(--canvas);border-color:var(--border-strong);color:var(--text)}
+.mini-select{height:28px;padding:0 24px 0 8px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font:inherit;font-size:12px;font-weight:500;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--text-faint) 50%),linear-gradient(135deg,var(--text-faint) 50%,transparent 50%);background-position:calc(100% - 12px) 12px,calc(100% - 8px) 12px;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
+.pattern-field{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:100%;padding:0 4px 0 8px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12px;font-weight:500;cursor:pointer}
+.pattern-field:hover,.pattern-field.isOpen{border-color:var(--border-strong)}
+.pattern-field.isEmpty{color:var(--text-muted)}
+.pattern-field-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pattern-field-icon{display:flex;color:var(--text-faint)}
+.pattern-clear{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--text-faint);cursor:pointer}
+.pattern-clear:hover{background:var(--surface-2);color:var(--text)}
+.use-in-panel{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--accent-text);font-size:12px;font-weight:600;cursor:pointer}
+.use-in-panel:hover{background:var(--accent-soft)}
+
+/* zoom on the scrollbars */
+.scroll-x{position:absolute;left:0;right:14px;bottom:0;display:flex;align-items:center;gap:2px;height:14px;padding:0 2px 0 4px;box-sizing:border-box;background:var(--canvas);border-top:1px solid var(--border)}
+.scroll-y{position:absolute;top:28px;right:0;bottom:14px;display:flex;flex-direction:column;align-items:center;gap:2px;width:14px;padding:4px 0 2px;box-sizing:border-box;background:var(--canvas);border-left:1px solid var(--border)}
+.scroll-track{position:relative;flex:1 1 auto;align-self:stretch}
+.scroll-thumb{position:absolute;border-radius:999px;background:var(--border-strong)}
+.scroll-x .scroll-thumb{top:4px;height:5px}
+.scroll-y .scroll-thumb{left:4px;width:5px}
+.zoom-step{display:inline-flex;align-items:center;justify-content:center;flex:none;width:14px;height:12px;padding:0;border:0;border-radius:3px;background:transparent;color:var(--text-muted);cursor:pointer}
+.scroll-y .zoom-step{width:12px;height:14px}
+.zoom-step:hover{background:var(--surface-2);color:var(--text)}
+.zoom-step:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.zoom-corner{position:absolute;right:0;bottom:0;display:flex;align-items:center;justify-content:center;width:14px;height:14px;padding:0;border:0;border-top:1px solid var(--border);border-left:1px solid var(--border);background:var(--canvas);color:var(--text-muted);cursor:pointer}
+.zoom-corner:hover{background:var(--surface-2);color:var(--text)}
+.zoom-readout{position:absolute;right:24px;bottom:22px;z-index:4;padding:3px 7px;border-radius:var(--radius-s);background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);color:var(--text-muted);font-size:11px;font-weight:500;font-variant-numeric:tabular-nums}
+
+/* panel */
+.cp-panel{position:relative;display:flex;flex-direction:row;flex:none;border-left:1px solid var(--border);background:var(--canvas)}
+.cp-resize{position:absolute;top:0;bottom:0;left:-3px;z-index:3;width:6px;cursor:ew-resize}
+.cp-resize:hover{background:color-mix(in oklch,var(--accent) 30%,transparent)}
+.cp-header{display:flex;align-items:center;justify-content:space-between;gap:8px;height:48px;flex:none;padding:0 8px 0 14px;border-bottom:1px solid var(--border)}
+.cp-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--text)}
+.cp-key-pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;background:var(--surface-2);color:var(--text-muted);font-size:11.5px;font-weight:600}
+.rail{display:flex;flex-direction:column;flex:none;width:148px;border-right:1px solid var(--border);background:var(--surface);transition:width 180ms var(--ease-move)}
+.rail.isCollapsed{width:40px}
+.rail-head{display:flex;align-items:center;gap:4px;height:48px;flex:none;padding:0 8px 0 6px;box-sizing:border-box;border-bottom:1px solid var(--border)}
+.rail.isCollapsed .rail-head{flex-direction:column;align-items:center;gap:10px;height:auto;padding:10px 0;border-bottom:0}
+.rail.isCollapsed .rail-title{writing-mode:vertical-rl;transform:rotate(180deg)}
+.rail-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;padding:0;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);cursor:pointer}
+.rail-toggle:hover{background:var(--surface-2);color:var(--text)}
+.rail-toggle:focus-visible{outline:2px solid var(--border-focus);outline-offset:1px}
+.rail-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;background:var(--accent-soft);color:var(--accent-text);font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.rail-anchor-wrap{padding:10px 10px 4px}
+.rail-title{flex:1 1 auto;font-size:12.5px;font-weight:600;color:var(--text);white-space:nowrap}
+.rail-anchor{display:flex;flex-direction:column;gap:1px;padding:6px 8px;border-radius:var(--radius-m);background:var(--canvas);border:1px solid var(--border)}
+.rail-anchor-eyebrow{font-size:10.5px;font-weight:500;color:var(--text-faint)}
+.rail-anchor-name{font-size:13px;font-weight:600;color:var(--text)}
+.rail-anchor-hint{font-size:11px;color:var(--text-faint)}
+.rail-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 8px 12px}
+.rail-group{padding:10px 2px 6px;font-size:11px;font-weight:600;color:var(--text-muted)}
+.rail-group-hint{font-weight:400;color:var(--text-faint)}
+.rail-empty{display:flex;flex-direction:column;gap:8px;padding:16px 12px;font-size:12px;line-height:1.5;color:var(--text-faint)}
+.rail-empty-icon{display:flex;color:var(--border-strong)}
+.rail .chord-tile{margin-bottom:4px}
+.cp-main{display:flex;flex-direction:column;flex:1 1 auto;min-width:0}
+.cp-main.isCollapsed{flex:none;width:40px;align-items:center;gap:10px;padding:10px 0;box-sizing:border-box;background:var(--surface)}
+.cp-strip-title{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12.5px;font-weight:600;color:var(--text)}
+.cp-strip-key{writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;font-weight:500;color:var(--text-faint)}
+.cp-title-group{display:flex;align-items:center;gap:4px}
+.cp-tabs{display:flex;gap:2px;margin:10px 12px 0;padding:2px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--surface)}
+.cp-tab{flex:1 1 0;height:26px;border:1px solid transparent;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);font-size:12.5px;font-weight:500;cursor:pointer}
+.cp-tab:hover{color:var(--text)}
+.cp-tab.isSelected{background:var(--canvas);border-color:var(--border-strong);color:var(--text)}
+.cp-tab-count{margin-left:4px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.cp-search{margin:10px 12px 0}
+.cp-chips{display:flex;gap:4px;margin:10px 0 0;padding:0 12px 10px;overflow-x:auto;border-bottom:1px solid var(--border);scrollbar-width:none}
+.cp-chip{flex:none;height:24px;padding:0 9px;border:1px solid var(--border);border-radius:999px;background:var(--canvas);color:var(--text-muted);font-size:11.5px;font-weight:500;cursor:pointer}
+.cp-chip:hover{border-color:var(--border-strong);color:var(--text)}
+.cp-chip.isSelected{background:var(--accent-soft);border-color:transparent;color:var(--accent-text);font-weight:600}
+.cp-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 12px 12px}
+.cp-group-head{position:sticky;top:0;z-index:1;display:flex;align-items:baseline;justify-content:space-between;padding:14px 2px 8px;background:var(--canvas)}
+.cp-group-name{font-size:13px;font-weight:600;color:var(--text)}
+.cp-group-count{font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.cp-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
+.chord-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-height:46px;padding:6px 10px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);text-align:left;cursor:grab;user-select:none}
+.chord-tile:hover{border-color:var(--border-strong);background:var(--surface)}
+.chord-tile:focus-visible{outline:2px solid var(--border-focus);outline-offset:1px}
+.chord-tile.isSelected{border-color:var(--accent);background:var(--accent-soft)}
+.chord-tile.isPlaying{background:color-mix(in oklch,var(--accent) 20%,transparent);border-color:var(--accent)}
+.chord-tile.isBorrowed{border:1px dashed color-mix(in oklch,var(--accent-tertiary) 55%,transparent);background:color-mix(in oklch,var(--accent-tertiary) 6%,transparent)}
+.chord-tile.isBorrowed:hover{background:color-mix(in oklch,var(--accent-tertiary) 11%,transparent)}
+.chord-tile.isBorrowed .chord-tile-kind{color:var(--accent-tertiary)}
+.chord-tile.isBorrowed.isSelected,.chord-tile.isBorrowed.isPlaying{border-style:solid;border-color:var(--accent-tertiary);background:color-mix(in oklch,var(--accent-tertiary) 16%,transparent)}
+.borrowed-mark{position:absolute;top:7px;right:8px;display:flex;color:var(--accent-tertiary)}
+.rail-group.isBorrowed{color:var(--accent-tertiary)}
+.chord-tile-name{font-size:13px;font-weight:600;color:var(--text)}
+.chord-tile-kind{font-size:11px;color:var(--text-faint);white-space:nowrap}
+.chord-tile-wave{position:absolute;top:8px;right:8px;display:flex;align-items:flex-end;gap:2px;height:10px}
+.chord-tile-wave span{width:2px;border-radius:1px;background:var(--accent);animation:cp-wave .6s ease-in-out infinite alternate}
+.chord-tile-wave span:nth-child(2){animation-delay:.15s}
+.chord-tile-wave span:nth-child(3){animation-delay:.3s}
+@keyframes cp-wave{from{height:3px}to{height:10px}}
+.project-row{display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;box-sizing:border-box;margin-bottom:4px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);text-align:left;cursor:pointer}
+.project-row:hover{border-color:var(--border-strong);background:var(--surface)}
+.project-row.isSelected{border-color:var(--accent);background:var(--accent-soft)}
+.project-row-pos{font-family:var(--font-mono);font-size:11.5px;color:var(--text-faint)}
+.project-row-name{font-size:13px;font-weight:600;color:var(--text)}
+.project-row-track{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted)}
+.project-row-dot{width:6px;height:6px;border-radius:50%}
+
+/* crafting area: three layouts behind one Tweak. Every
+   control has a fixed width, so nothing jumps. */
+/* inverted region: data-theme flips Zest's palette, and the
+   editor aliases are re-declared so they resolve here */
+.craft{--canvas:var(--surface-default);--surface:var(--surface-page);--surface-2:var(--surface-subtle);--surface-3:var(--surface-strong);--border:var(--border-default);--text:var(--text-primary);--text-muted:var(--text-secondary);--text-faint:var(--text-tertiary);--text-disabled:var(--color-neutral-4);--accent:var(--accent-secondary);--accent-soft:color-mix(in oklch,var(--accent-secondary) 18%,transparent);--accent-text:var(--accent-secondary);--line-soft:color-mix(in oklch,var(--border-default) 75%,transparent);color:var(--text-primary);flex:none;padding:14px;border-top:1px solid var(--border);background:var(--surface-page)}
+.prop{display:flex;flex-direction:column;gap:5px;min-width:0}
+.prop-label{font-size:11px;font-weight:500;color:var(--text-faint)}
+.prop-stepper{display:grid;grid-template-columns:26px minmax(0,1fr) 26px;align-items:center;width:100%;height:30px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas)}
+.prop-stepper-button{display:inline-flex;align-items:center;justify-content:center;height:100%;padding:0;border:0;background:transparent;color:var(--text-muted);cursor:pointer}
+.prop-stepper-button:first-child{border-radius:var(--radius-m) 0 0 var(--radius-m)}
+.prop-stepper-button:last-child{border-radius:0 var(--radius-m) var(--radius-m) 0}
+.prop-stepper-button:hover{background:var(--surface-2);color:var(--text)}
+.prop-stepper-button:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.prop-value{font-size:12.5px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums;text-align:center;white-space:nowrap}
+.prop-select{width:100%;height:30px;padding:0 24px 0 10px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font:inherit;font-size:12.5px;font-weight:500;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--text-faint) 50%),linear-gradient(135deg,var(--text-faint) 50%,transparent 50%);background-position:calc(100% - 13px) 13px,calc(100% - 9px) 13px;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
+.prop-select:hover{border-color:var(--border-strong)}
+.prop-pattern{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;height:30px;padding:0 4px 0 10px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);text-align:left;cursor:pointer}
+.prop-pattern:hover,.prop-pattern.isOpen{border-color:var(--border-strong)}
+.prop-pattern-text{overflow:hidden;font-size:12.5px;font-weight:500;color:var(--text);text-overflow:ellipsis;white-space:nowrap}
+.prop-pattern-text.isEmpty{color:var(--text-faint);font-weight:400}
+.prop-pattern-category{color:var(--text-faint);font-weight:400}
+.prop-pattern-wrap{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px}
+.reset-button{height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);font-size:12px;font-weight:500;cursor:pointer}
+.reset-button:hover{background:var(--surface-2);color:var(--text)}
+
+/* the chord card: same anatomy as a tile, one size up */
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;height:68px;padding:0 14px;box-sizing:border-box;border:1px solid var(--accent);border-radius:var(--radius-l);background:var(--canvas);text-align:left;cursor:grab;user-select:none}
+.hero:hover{background:color-mix(in oklab,var(--accent) 5%,var(--canvas))}
+.hero:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+.hero.isPlaying{background:color-mix(in oklab,var(--accent) 15%,var(--canvas))}
+.hero.isEmpty{border:1px dashed var(--border-strong);background:transparent;cursor:default}
+.hero-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+.hero-name{font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--text);white-space:nowrap}
+.hero-kind{font-size:12px;font-weight:500;color:var(--text-muted)}
+.hero-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.hero-notes{font-family:var(--font-mono);font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+.hero-hint{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-faint)}
+.hero-empty{font-size:12px;color:var(--text-faint)}
+.hero .chord-tile-wave{position:static;height:10px}
+
+/* A · Inspector */
+.craft-a{display:flex;flex-direction:column;gap:12px}
+.craft-a-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+
+/* B · Corners */
+.craft-b{display:grid;grid-template-columns:112px minmax(0,1fr) 112px;grid-template-areas:"tl . tr" "card card card" "bl . br" "pattern pattern pattern";row-gap:10px;column-gap:8px;align-items:end}
+.craft-b-tl{grid-area:tl}
+.craft-b-tr{grid-area:tr}
+.craft-b-bl{grid-area:bl}
+.craft-b-br{grid-area:br;justify-self:end}
+.craft-b-card{grid-area:card}
+.craft-b-pattern{grid-area:pattern;padding-top:2px}
+
+/* C · One card */
+.craft-c{display:flex;flex-direction:column;border:1px solid var(--accent);border-radius:var(--radius-l);background:var(--surface-default);overflow:hidden}
+.craft-c .hero{height:64px;border:0;border-radius:0;background:transparent}
+.craft-c .hero:hover{background:color-mix(in oklab,var(--accent) 5%,var(--canvas))}
+.craft-c .hero.isPlaying{background:color-mix(in oklab,var(--accent) 15%,var(--canvas))}
+.craft-c.isEmpty{border:1px dashed var(--border-strong);background:transparent}
+.craft-c-props{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--border)}
+.craft-c-cell{display:flex;flex-direction:column;gap:2px;padding:8px 6px 8px 12px;border-left:1px solid var(--border)}
+.craft-c-cell:first-child{border-left:0}
+.craft-c-cell .prop-stepper{height:24px;border:0;background:transparent;grid-template-columns:20px minmax(0,1fr) 20px;margin-left:-6px}
+.craft-c-cell .prop-select{height:24px;padding-left:0;border:0;background-color:transparent;background-position:calc(100% - 13px) 10px,calc(100% - 9px) 10px}
+.craft-c-pattern{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;width:100%;height:44px;padding:0 6px 0 12px;box-sizing:border-box;border:0;border-top:1px solid var(--border);background:var(--surface);text-align:left;cursor:pointer}
+.craft-c-pattern:hover,.craft-c-pattern.isOpen{background:var(--surface-2)}
+.craft-c-pattern-copy{display:flex;flex-direction:column;min-width:0}
+.craft-c-pattern-label{font-size:10.5px;font-weight:500;color:var(--text-faint)}
+.craft-c-pattern .rhythm-cell.isHit{background:var(--accent)}
+
+/* pattern picker */
+.pattern-picker{position:absolute;z-index:8;display:flex;flex-direction:column;width:540px;height:470px;box-sizing:border-box;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-l);box-shadow:var(--shadow-overlay);overflow:hidden}
+.pp-head{display:flex;flex-direction:column;gap:10px;padding:12px 12px 10px;border-bottom:1px solid var(--border)}
+.pp-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pp-title{font-size:13px;font-weight:600;color:var(--text)}
+.pp-target{font-size:12px;color:var(--text-muted)}
+.pp-target strong{font-weight:600;color:var(--text)}
+.pp-notice{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius-m);background:color-mix(in oklch,var(--status-warning) 12%,transparent);color:color-mix(in oklab,var(--status-warning) 70%,black);font-size:12px;font-weight:500}
+.pp-notice.isFlash{animation:pp-flash .5s ease-out 2}
+@keyframes pp-flash{50%{background:color-mix(in oklch,var(--status-warning) 30%,transparent)}}
+.pp-body{display:flex;flex:1 1 auto;min-height:0}
+.pp-cats{flex:none;width:176px;padding:6px;overflow-y:auto;border-right:1px solid var(--border)}
+.pp-cat{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:30px;padding:0 8px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:12.5px;font-weight:500;text-align:left;cursor:pointer}
+.pp-cat:hover{background:var(--surface)}
+.pp-cat.isSelected{background:var(--surface-2);font-weight:600}
+.pp-cat-count{font-size:11px;font-weight:500;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.pp-cat-divider{height:1px;margin:6px 4px;background:var(--border)}
+.pp-list{flex:1 1 auto;min-width:0;padding:6px;overflow-y:auto}
+.pp-list-head{padding:6px 8px 6px;font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.pp-row{display:grid;grid-template-columns:minmax(0,1fr) 24px;align-items:center;gap:4px;height:38px;padding:0 4px 0 0;border-radius:var(--radius-m)}
+.pp-row:hover{background:var(--surface)}
+.pp-row-main{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:8px;height:100%;padding:0 4px 0 8px;border:0;border-radius:var(--radius-m);background:transparent;font:inherit;text-align:left;cursor:pointer;user-select:none}
+.pp-row-main:focus-visible{outline:2px solid var(--border-focus);outline-offset:-2px}
+.pp-row.isApplied{background:var(--accent-soft)}
+.pp-row.isPlaying{background:color-mix(in oklch,var(--accent) 20%,transparent)}
+.pp-check{display:flex;color:var(--accent-text)}
+.pp-name{display:flex;flex-direction:column;min-width:0}
+.pp-name-main{overflow:hidden;font-size:12.5px;font-weight:500;color:var(--text);text-overflow:ellipsis;white-space:nowrap}
+.pp-name-sub{font-size:11px;color:var(--text-faint)}
+.rhythm{display:grid;grid-template-columns:repeat(16,4px);gap:2px}
+.rhythm-cell{height:12px;border-radius:1px;background:var(--line-soft)}
+.rhythm-cell.isHit{background:var(--text-muted)}
+.pp-row.isApplied .rhythm-cell.isHit,.pp-row.isPlaying .rhythm-cell.isHit{background:var(--accent)}
+.pp-star{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--border-strong);cursor:pointer}
+.pp-star:hover{background:var(--surface-2);color:var(--text-muted)}
+.pp-star.isOn{color:var(--status-warning)}
+.pp-empty{padding:24px 12px;font-size:12px;line-height:1.5;color:var(--text-faint);text-align:center}
+.pp-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-faint)}
+.pp-scrim{position:absolute;inset:0;z-index:7;padding:0;border:0;background:transparent;cursor:default}
+.cp-toast{position:absolute;top:92px;z-index:9;display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:var(--radius-m);background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);color:var(--text-primary);font-size:12.5px;font-weight:500;transform:translateX(-50%);white-space:nowrap}
+</style>
+</helmet>
+<div class="theme-light cp-app" data-theme="light">
+
+<div class="cp-editor-bar">
+<div class="bar-row">
+<div class="track-tab isActive" style="background: color-mix(in oklch, var(--accent-spark-1) 17%, transparent)"><span class="track-lead"><span class="track-dot isChord" style="background: var(--accent-spark-1)" aria-hidden="true"></span></span><span class="track-tab-name">Chords</span><div class="track-toggles"><button class="ms-toggle" aria-label="Mute Chords">M</button><button class="ms-toggle" aria-label="Solo Chords">S</button></div></div>
+<div class="track-tab" style="background: color-mix(in oklch, var(--accent-spark-2) 9%, transparent)"><span class="track-lead"><span class="track-dot" style="background: var(--accent-spark-2)" aria-hidden="true"></span></span><span class="track-tab-name">Keys</span><div class="track-toggles"><button class="ms-toggle" aria-label="Mute Keys">M</button><button class="ms-toggle" aria-label="Solo Keys">S</button></div></div>
+</div>
+<div class="bar-row">
+<button class="chip"><span class="chip-icon"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12.5V3.5l7-1.5v9"></path><circle cx="4.5" cy="12.5" r="1.5"></circle><circle cx="11.5" cy="11" r="1.5"></circle></svg></span><span class="chip-value">B minor</span></button>
+
+</div>
+</div>
+
+<div class="cp-body">
+
+<div class="cp-roll">
+<div class="cp-keys">
+<div class="cp-keys-ruler"></div>
+<sc-for list="{{keyRows}}" as="key" hint-placeholder-count="20">
+<div class="cp-key" style="{{key.style}}">
+<sc-if value="{{key.isBlack}}" hint-placeholder-val="{{false}}"><span class="cp-key-black" aria-hidden="true"></span></sc-if>
+<span class="cp-key-label">{{key.label}}</span>
+</div>
+</sc-for>
+</div>
+
+<div class="cp-grid-wrap">
+<div class="cp-ruler" title="Click to move the playhead, drag up or down to zoom">
+<sc-for list="{{bars}}" as="bar" hint-placeholder-count="6">
+<span class="cp-ruler-bar" style="{{bar.style}}">{{bar.label}}</span>
+</sc-for>
+</div>
+<div class="cp-grid" sc-camel-on-click="{{clearSelection}}">
+<sc-for list="{{gridRows}}" as="row" hint-placeholder-count="20">
+<div class="{{row.className}}" style="{{row.style}}"></div>
+</sc-for>
+<sc-for list="{{beatLines}}" as="line" hint-placeholder-count="12">
+<span class="{{line.className}}" style="{{line.style}}"></span>
+</sc-for>
+<sc-for list="{{chordBlocks}}" as="chord" hint-placeholder-count="4">
+<button class="{{chord.className}}" style="{{chord.style}}" sc-camel-on-click="{{chord.select}}" aria-pressed="{{chord.isSelected}}" aria-label="{{chord.label}}">
+<span class="cp-chord-name">{{chord.name}}</span>
+<sc-for list="{{chord.notes}}" as="note" hint-placeholder-count="3">
+<span class="cp-chord-note" style="{{note.style}}"></span>
+</sc-for>
+</button>
+</sc-for>
+<span class="cp-playhead" style="{{playheadStyle}}"></span>
+</div>
+
+<sc-if value="{{hasChordBar}}" hint-placeholder-val="{{true}}">
+<div class="chord-bar" role="toolbar" aria-label="{{chordBarLabel}}">
+<div class="chord-bar-name"><span class="chord-bar-title">{{editChordName}}</span><span class="chord-bar-sub">{{editChordKind}}</span></div>
+<span class="chord-bar-divider"></span>
+<div class="mini-stepper" aria-label="Octave">
+<button class="mini-stepper-button" sc-camel-on-click="{{editOctaveDown}}" disabled="{{isEditOctaveMin}}" aria-label="Octave down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9"></path></svg></button>
+<span class="mini-stepper-value">Oct {{editOctave}}</span>
+<button class="mini-stepper-button" sc-camel-on-click="{{editOctaveUp}}" disabled="{{isEditOctaveMax}}" aria-label="Octave up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"></path></svg></button>
+</div>
+<div class="mini-seg" role="radiogroup" aria-label="Inversion">
+<sc-for list="{{editInversions}}" as="option" hint-placeholder-count="3">
+<button class="{{option.className}}" role="radio" aria-checked="{{option.isSelected}}" sc-camel-on-click="{{option.pick}}">{{option.label}}</button>
+</sc-for>
+</div>
+<sc-raw-select class="mini-select" aria-label="Voicing" sc-camel-on-change="{{setEditVoicing}}" value="{{editVoicing}}">
+<option value="Close">Close</option><option value="Spread">Spread</option><option value="Open">Open</option><option value="Drop 2">Drop 2</option><option value="Wide">Wide</option>
+</sc-raw-select>
+<button class="{{editPatternClass}}" sc-camel-on-click="{{openEditPatterns}}" aria-haspopup="dialog">
+<span class="pattern-field-icon"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5v-3M5.5 11.5v-6M8.5 11.5v-4M11.5 11.5v-7M14 11.5v-2"></path></svg></span>
+<span class="pattern-field-label">{{editPatternLabel}}</span>
+</button>
+<span class="chord-bar-divider"></span>
+<button class="use-in-panel" sc-camel-on-click="{{useInPanel}}" title="Copy this chord's shape and pattern to the panel"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8h9M8.5 4.5L12 8l-3.5 3.5"></path><path d="M14 2.5v11"></path></svg>Use in panel</button>
+</div>
+</sc-if>
+
+<div data-dc-group="" style="box-sizing: border-box; position: absolute; left: 0px; top: 28px; width: 882px; height: 744px" data-om-label="scroll and zoom controls"><div class="scroll-x" style="left: 0px; top: 730px">
+<div class="scroll-track"><span class="scroll-thumb" style="{{thumbXStyle}}"></span></div>
+<button class="zoom-step" sc-camel-on-click="{{zoomTimeOut}}" disabled="{{isTimeMin}}" aria-label="Zoom out in time" title="Zoom out in time · Ctrl + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+<button class="zoom-step" sc-camel-on-click="{{zoomTimeIn}}" disabled="{{isTimeMax}}" aria-label="Zoom in on time" title="Zoom in on time · Ctrl + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+</div><div class="scroll-y" style="left: 868px; top: 0px">
+<div class="scroll-track"><span class="scroll-thumb" style="top: 18%; height: 34%"></span></div>
+<button class="zoom-step" sc-camel-on-click="{{rowsShorter}}" disabled="{{isRowsMin}}" aria-label="Shorter rows" title="Shorter rows · Alt + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+<button class="zoom-step" sc-camel-on-click="{{rowsTaller}}" disabled="{{isRowsMax}}" aria-label="Taller rows" title="Taller rows · Alt + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+</div></div><div data-dc-group="" style="box-sizing: border-box; position: absolute; left: 0px; top: 28px; width: 882px; height: 744px" data-om-label="scroll and zoom controls"><div class="scroll-x" style="left: 0px; top: 730px">
+<div class="scroll-track"><span class="scroll-thumb" style="{{thumbXStyle}}"></span></div>
+<button class="zoom-step" sc-camel-on-click="{{zoomTimeOut}}" disabled="{{isTimeMin}}" aria-label="Zoom out in time" title="Zoom out in time · Ctrl + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+<button class="zoom-step" sc-camel-on-click="{{zoomTimeIn}}" disabled="{{isTimeMax}}" aria-label="Zoom in on time" title="Zoom in on time · Ctrl + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+</div><div class="scroll-y" style="left: 868px; top: 0px">
+<div class="scroll-track"><span class="scroll-thumb" style="top: 18%; height: 34%"></span></div>
+<button class="zoom-step" sc-camel-on-click="{{rowsShorter}}" disabled="{{isRowsMin}}" aria-label="Shorter rows" title="Shorter rows · Alt + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+<button class="zoom-step" sc-camel-on-click="{{rowsTaller}}" disabled="{{isRowsMax}}" aria-label="Taller rows" title="Taller rows · Alt + scroll"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+</div></div>
+
+<button class="zoom-corner" sc-camel-on-click="{{zoomFit}}" aria-label="Zoom to fit" title="Zoom to fit"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"></path></svg></button>
+<sc-if value="{{hasZoomReadout}}" hint-placeholder-val="{{false}}">
+<span class="zoom-readout">{{zoomReadout}}</span>
+</sc-if>
+</div>
+</div>
+
+<aside class="cp-panel" aria-label="Chords" style="{{panelStyle}}">
+<span class="cp-resize" title="Drag to resize · double-click to reset" aria-hidden="true"></span>
+
+<div class="{{railClass}}" aria-label="Suggestions">
+<div class="rail-head">
+<button class="rail-toggle" sc-camel-on-click="{{toggleRail}}" aria-expanded="{{isRailOpen}}" aria-label="{{railToggleLabel}}" title="{{railToggleLabel}}"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="{{railCaretStyle}}"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button>
+<span class="rail-title">Suggestions</span>
+<sc-if value="{{hasRailCount}}" hint-placeholder-val="{{false}}"><span class="rail-count">{{railCount}}</span></sc-if>
+</div>
+<sc-if value="{{isRailOpen}}" hint-placeholder-val="{{true}}">
+<sc-if value="{{hasAnchor}}" hint-placeholder-val="{{true}}">
+<div class="rail-anchor-wrap"><div class="rail-anchor"><span class="rail-anchor-eyebrow">After</span><span class="rail-anchor-name">{{anchorName}}</span><span class="rail-anchor-hint">{{anchorHint}}</span></div></div>
+</sc-if>
+<sc-if value="{{hasAnchor}}" hint-placeholder-val="{{true}}">
+<div class="rail-list">
+<div class="rail-group">In key <span class="rail-group-hint">· {{inKeyCount}}</span></div>
+<sc-for list="{{suggestedInKey}}" as="tile" hint-placeholder-count="6">
+<button class="{{tile.className}}" sc-camel-on-mouse-down="{{tile.press}}" sc-camel-on-mouse-up="{{tile.release}}" sc-camel-on-mouse-leave="{{tile.release}}" sc-camel-on-key-down="{{tile.handleKey}}" title="{{tile.notes}}">
+<span class="chord-tile-name">{{tile.name}}</span><span class="chord-tile-kind">{{tile.kind}}</span>
+<sc-if value="{{tile.isPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>
+</button>
+</sc-for>
+<div class="rail-group isBorrowed">Borrowed <span class="rail-group-hint">· outside the key</span></div>
+<sc-for list="{{suggestedBorrowed}}" as="tile" hint-placeholder-count="4">
+<button class="{{tile.className}}" sc-camel-on-mouse-down="{{tile.press}}" sc-camel-on-mouse-up="{{tile.release}}" sc-camel-on-mouse-leave="{{tile.release}}" sc-camel-on-key-down="{{tile.handleKey}}" title="{{tile.notes}}">
+<span class="borrowed-mark" aria-label="Borrowed"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3L6.5 9.5M6.5 4.5v5h5"></path><path d="M3 7v6h6" opacity=".55"></path></svg></span>
+<span class="chord-tile-name">{{tile.name}}</span><span class="chord-tile-kind">{{tile.kind}}</span>
+<sc-if value="{{tile.isPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>
+</button>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{hasNoAnchor}}" hint-placeholder-val="{{false}}">
+<div class="rail-empty">
+<span class="rail-empty-icon"><svg width="22" height="22" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="5" height="8" rx="1.2"></rect><path d="M9.5 8h4.5M11.5 5.5L14 8l-2.5 2.5" stroke-linecap="round"></path></svg></span>
+Select a chord in the editor to see what fits next.
+</div>
+</sc-if>
+</sc-if>
+</div>
+
+<sc-if value="{{isChordsClosed}}" hint-placeholder-val="{{false}}">
+<div class="cp-main isCollapsed">
+<button class="rail-toggle" sc-camel-on-click="{{toggleChords}}" aria-expanded="false" aria-label="Open chords" title="Open chords"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button>
+<span class="cp-strip-title">Chords</span>
+<span class="cp-strip-key">B minor</span>
+</div>
+</sc-if>
+<sc-if value="{{isChordsOpen}}" hint-placeholder-val="{{true}}">
+<div class="cp-main">
+<div class="cp-header">
+<div class="cp-title-group">
+<button class="rail-toggle" sc-camel-on-click="{{toggleChords}}" aria-expanded="true" aria-label="Fold chords" title="Fold chords"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button>
+<div class="cp-title">Chords <span class="cp-key-pill">B minor</span></div>
+</div>
+</div>
+<div class="cp-tabs" role="tablist" aria-label="Chord lists">
+<button class="{{tabAllClass}}" role="tab" aria-selected="{{isAllTab}}" sc-camel-on-click="{{showAll}}">All<span class="cp-tab-count">{{allCount}}</span></button>
+<button class="{{tabProjectClass}}" role="tab" aria-selected="{{isProjectTab}}" sc-camel-on-click="{{showProject}}">Project<span class="cp-tab-count">{{projectCount}}</span></button>
+</div>
+
+<sc-if value="{{isAllTab}}" hint-placeholder-val="{{true}}">
+<div class="cp-search"><input class="text-field" type="search" placeholder="Search chords" value="{{query}}" sc-camel-on-change="{{setQuery}}" aria-label="Search chords"></div>
+<div class="cp-chips" role="radiogroup" aria-label="Chord type">
+<sc-for list="{{filters}}" as="filter" hint-placeholder-count="7">
+<button class="{{filter.className}}" role="radio" aria-checked="{{filter.isSelected}}" sc-camel-on-click="{{filter.pick}}">{{filter.label}}</button>
+</sc-for>
+</div>
+<div class="cp-scroll">
+<sc-for list="{{groups}}" as="group" hint-placeholder-count="3">
+<div class="cp-group-head"><span class="cp-group-name">{{group.root}}</span><span class="cp-group-count">{{group.count}}</span></div>
+<div class="cp-tiles">
+<sc-for list="{{group.tiles}}" as="tile" hint-placeholder-count="6">
+<button class="{{tile.className}}" sc-camel-on-mouse-down="{{tile.press}}" sc-camel-on-mouse-up="{{tile.release}}" sc-camel-on-mouse-leave="{{tile.release}}" sc-camel-on-key-down="{{tile.handleKey}}" title="{{tile.notes}}">
+<span class="chord-tile-name">{{tile.name}}</span><span class="chord-tile-kind">{{tile.kind}}</span>
+<sc-if value="{{tile.isPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>
+</button>
+</sc-for>
+</div>
+</sc-for>
+<sc-if value="{{hasNoMatches}}" hint-placeholder-val="{{false}}"><p class="empty-note">No chords match.</p></sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{isProjectTab}}" hint-placeholder-val="{{false}}">
+<div class="cp-scroll" style="padding-top: 12px">
+<p class="popover-hint" style="margin: 0 2px 10px">Chords found in this project. Click one to select it in the editor.</p>
+<sc-for list="{{projectRows}}" as="row" hint-placeholder-count="6">
+<button class="{{row.className}}" sc-camel-on-click="{{row.pick}}">
+<span class="project-row-pos">{{row.position}}</span>
+<span class="project-row-name">{{row.name}}</span>
+<span class="project-row-track"><span class="project-row-dot" style="{{row.dotStyle}}"></span>{{row.track}}</span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+
+<div class="craft" data-theme="dark" aria-label="Chord you're shaping">
+<sc-if value="{{isLayoutInspector}}" hint-placeholder-val="{{false}}">
+<div class="craft-a">
+<sc-if value="{{hasCraftChord}}" hint-placeholder-val="{{true}}">
+<button class="{{heroClass}}" sc-camel-on-mouse-down="{{craftPress}}" sc-camel-on-mouse-up="{{craftRelease}}" sc-camel-on-mouse-leave="{{craftRelease}}" sc-camel-on-key-down="{{craftKey}}" aria-label="{{craftLabel}}">
+<span class="hero-title"><span class="hero-name">{{craftName}}</span><span class="hero-kind">{{craftKind}}</span></span>
+<span class="hero-side"><span class="hero-notes">{{craftNotes}}</span><span class="hero-hint"><sc-if value="{{isCraftPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>Hold to hear · drag to place</span></span>
+</button>
+</sc-if>
+<sc-if value="{{hasNoCraftChord}}" hint-placeholder-val="{{false}}"><div class="hero isEmpty"><span class="hero-empty">Click any chord to start shaping it here.</span></div></sc-if>
+<div class="craft-a-row">
+<div class="prop"><span class="prop-label">Octave</span><div class="prop-stepper" role="group" aria-label="Octave"><button class="prop-stepper-button" sc-camel-on-click="{{octaveDown}}" disabled="{{isOctaveMin}}" aria-label="Octave down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{octaveLabel}}</span><button class="prop-stepper-button" sc-camel-on-click="{{octaveUp}}" disabled="{{isOctaveMax}}" aria-label="Octave up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="prop"><span class="prop-label">Inversion</span><div class="prop-stepper" role="group" aria-label="Inversion"><button class="prop-stepper-button" sc-camel-on-click="{{inversionDown}}" disabled="{{isInversionMin}}" aria-label="Inversion down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{inversion}}</span><button class="prop-stepper-button" sc-camel-on-click="{{inversionUp}}" disabled="{{isInversionMax}}" aria-label="Inversion up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="prop"><span class="prop-label">Voicing</span><sc-raw-select class="prop-select" aria-label="Voicing" sc-camel-on-change="{{setVoicing}}" value="{{voicing}}"><option value="Close">Close</option><option value="Spread">Spread</option><option value="Open">Open</option><option value="Drop 2">Drop 2</option><option value="Wide">Wide</option></sc-raw-select></div>
+</div>
+<div class="prop"><span class="prop-label">Pattern</span><div class="prop-pattern-wrap"><button class="{{patternFieldClass}}" sc-camel-on-click="{{togglePanelPatterns}}" aria-haspopup="dialog" aria-expanded="{{isPanelPickerOpen}}"><span class="pattern-field-icon"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5v-3M5.5 11.5v-6M8.5 11.5v-4M11.5 11.5v-7M14 11.5v-2"></path></svg></span><span class="{{patternTextClass}}">{{patternLabel}} <span class="prop-pattern-category">{{patternCategory}}</span></span><span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span></button><sc-if value="{{hasPattern}}" hint-placeholder-val="{{true}}"><button class="pattern-clear" sc-camel-on-click="{{clearPattern}}" aria-label="Remove pattern" title="Remove pattern"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg></button></sc-if></div></div>
+</div>
+</sc-if>
+<sc-if value="{{isLayoutCorners}}" hint-placeholder-val="{{false}}">
+<div class="craft-b">
+<div class="prop craft-b-tl"><span class="prop-label">Octave</span><div class="prop-stepper" role="group" aria-label="Octave"><button class="prop-stepper-button" sc-camel-on-click="{{octaveDown}}" disabled="{{isOctaveMin}}" aria-label="Octave down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{octaveLabel}}</span><button class="prop-stepper-button" sc-camel-on-click="{{octaveUp}}" disabled="{{isOctaveMax}}" aria-label="Octave up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="prop craft-b-tr"><span class="prop-label">Inversion</span><div class="prop-stepper" role="group" aria-label="Inversion"><button class="prop-stepper-button" sc-camel-on-click="{{inversionDown}}" disabled="{{isInversionMin}}" aria-label="Inversion down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{inversion}}</span><button class="prop-stepper-button" sc-camel-on-click="{{inversionUp}}" disabled="{{isInversionMax}}" aria-label="Inversion up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="craft-b-card"><sc-if value="{{hasCraftChord}}" hint-placeholder-val="{{true}}">
+<button class="{{heroClass}}" sc-camel-on-mouse-down="{{craftPress}}" sc-camel-on-mouse-up="{{craftRelease}}" sc-camel-on-mouse-leave="{{craftRelease}}" sc-camel-on-key-down="{{craftKey}}" aria-label="{{craftLabel}}">
+<span class="hero-title"><span class="hero-name">{{craftName}}</span><span class="hero-kind">{{craftKind}}</span></span>
+<span class="hero-side"><span class="hero-notes">{{craftNotes}}</span><span class="hero-hint"><sc-if value="{{isCraftPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>Hold to hear · drag to place</span></span>
+</button>
+</sc-if>
+<sc-if value="{{hasNoCraftChord}}" hint-placeholder-val="{{false}}"><div class="hero isEmpty"><span class="hero-empty">Click any chord to start shaping it here.</span></div></sc-if></div>
+<div class="prop craft-b-bl"><span class="prop-label">Voicing</span><sc-raw-select class="prop-select" aria-label="Voicing" sc-camel-on-change="{{setVoicing}}" value="{{voicing}}"><option value="Close">Close</option><option value="Spread">Spread</option><option value="Open">Open</option><option value="Drop 2">Drop 2</option><option value="Wide">Wide</option></sc-raw-select></div>
+<button class="reset-button craft-b-br" sc-camel-on-click="{{resetShape}}">Reset</button>
+<div class="prop craft-b-pattern"><span class="prop-label">Pattern</span><div class="prop-pattern-wrap"><button class="{{patternFieldClass}}" sc-camel-on-click="{{togglePanelPatterns}}" aria-haspopup="dialog" aria-expanded="{{isPanelPickerOpen}}"><span class="pattern-field-icon"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 11.5v-3M5.5 11.5v-6M8.5 11.5v-4M11.5 11.5v-7M14 11.5v-2"></path></svg></span><span class="{{patternTextClass}}">{{patternLabel}} <span class="prop-pattern-category">{{patternCategory}}</span></span><span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span></button><sc-if value="{{hasPattern}}" hint-placeholder-val="{{true}}"><button class="pattern-clear" sc-camel-on-click="{{clearPattern}}" aria-label="Remove pattern" title="Remove pattern"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg></button></sc-if></div></div>
+</div>
+</sc-if>
+<sc-if value="{{isLayoutCard}}" hint-placeholder-val="{{true}}">
+<div class="{{craftCClass}}">
+<sc-if value="{{hasCraftChord}}" hint-placeholder-val="{{true}}">
+<button class="{{heroClass}}" sc-camel-on-mouse-down="{{craftPress}}" sc-camel-on-mouse-up="{{craftRelease}}" sc-camel-on-mouse-leave="{{craftRelease}}" sc-camel-on-key-down="{{craftKey}}" aria-label="{{craftLabel}}">
+<span class="hero-title"><span class="hero-name">{{craftName}}</span><span class="hero-kind">{{craftKind}}</span></span>
+<span class="hero-side"><span class="hero-notes">{{craftNotes}}</span><span class="hero-hint"><sc-if value="{{isCraftPlaying}}" hint-placeholder-val="{{false}}"><span class="chord-tile-wave" aria-hidden="true"><span></span><span></span><span></span></span></sc-if>Hold to hear · drag to place</span></span>
+</button>
+</sc-if>
+<sc-if value="{{hasNoCraftChord}}" hint-placeholder-val="{{false}}"><div class="hero isEmpty"><span class="hero-empty">Click any chord to start shaping it here.</span></div></sc-if>
+<div class="craft-c-props">
+<div class="craft-c-cell"><span class="prop-label">Octave</span><div class="prop-stepper" role="group" aria-label="Octave"><button class="prop-stepper-button" sc-camel-on-click="{{octaveDown}}" disabled="{{isOctaveMin}}" aria-label="Octave down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{octaveLabel}}</span><button class="prop-stepper-button" sc-camel-on-click="{{octaveUp}}" disabled="{{isOctaveMax}}" aria-label="Octave up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="craft-c-cell"><span class="prop-label">Inversion</span><div class="prop-stepper" role="group" aria-label="Inversion"><button class="prop-stepper-button" sc-camel-on-click="{{inversionDown}}" disabled="{{isInversionMin}}" aria-label="Inversion down"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg></button><span class="prop-value">{{inversion}}</span><button class="prop-stepper-button" sc-camel-on-click="{{inversionUp}}" disabled="{{isInversionMax}}" aria-label="Inversion up"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></button></div></div>
+<div class="craft-c-cell"><span class="prop-label">Voicing</span><sc-raw-select class="prop-select" aria-label="Voicing" sc-camel-on-change="{{setVoicing}}" value="{{voicing}}"><option value="Close">Close</option><option value="Spread">Spread</option><option value="Open">Open</option><option value="Drop 2">Drop 2</option><option value="Wide">Wide</option></sc-raw-select></div>
+</div>
+<div class="prop-pattern-wrap" style="border-top: 1px solid var(--border); background: var(--surface); padding-right: 6px">
+<button class="{{patternStripClass}}" sc-camel-on-click="{{togglePanelPatterns}}" aria-haspopup="dialog" aria-expanded="{{isPanelPickerOpen}}" style="border-top: 0; background: transparent">
+<span class="craft-c-pattern-copy"><span class="craft-c-pattern-label">Pattern</span><span class="{{patternTextClass}}">{{patternLabel}} <span class="prop-pattern-category">{{patternCategory}}</span></span></span>
+<span class="rhythm" aria-hidden="true"><sc-for list="{{patternCells}}" as="cell" hint-placeholder-count="16"><span class="{{cell.className}}"></span></sc-for></span>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+<sc-if value="{{hasPattern}}" hint-placeholder-val="{{true}}"><button class="pattern-clear" sc-camel-on-click="{{clearPattern}}" aria-label="Remove pattern" title="Remove pattern"><svg width="10" height="10" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg></button></sc-if>
+</div>
+</div>
+</sc-if>
+</div>
+</div>
+</sc-if>
+</aside>
+
+</div>
+
+<sc-if value="{{isPickerOpen}}" hint-placeholder-val="{{false}}">
+<button class="pp-scrim" aria-label="Close patterns" sc-camel-on-click="{{closePicker}}"></button>
+<div class="pattern-picker" role="dialog" aria-label="Patterns" style="{{pickerStyle}}">
+<div class="pp-head">
+<div class="pp-title-row">
+<span class="pp-title">Patterns</span>
+<span class="pp-target">{{pickerTargetPrefix}} <strong>{{pickerTargetName}}</strong></span>
+</div>
+<input class="text-field" type="search" placeholder="Search 1,024 patterns" value="{{patternQuery}}" sc-camel-on-change="{{setPatternQuery}}" aria-label="Search patterns">
+<sc-if value="{{hasPickerNotice}}" hint-placeholder-val="{{false}}">
+<div class="{{noticeClass}}"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 11h.01"></path></svg>Pick a chord tile to hear patterns.</div>
+</sc-if>
+</div>
+<div class="pp-body">
+<div class="pp-cats" role="listbox" aria-label="Pattern lists">
+<sc-for list="{{scopeCats}}" as="cat" hint-placeholder-count="2">
+<button class="{{cat.className}}" role="option" aria-selected="{{cat.isSelected}}" sc-camel-on-click="{{cat.pick}}"><span>{{cat.label}}</span><span class="pp-cat-count">{{cat.count}}</span></button>
+</sc-for>
+<div class="pp-cat-divider"></div>
+<sc-for list="{{categoryCats}}" as="cat" hint-placeholder-count="10">
+<button class="{{cat.className}}" role="option" aria-selected="{{cat.isSelected}}" sc-camel-on-click="{{cat.pick}}"><span>{{cat.label}}</span><span class="pp-cat-count">{{cat.count}}</span></button>
+</sc-for>
+</div>
+<div class="pp-list">
+<div class="pp-list-head">{{listHeading}}</div>
+<sc-for list="{{patternRows}}" as="row" hint-placeholder-count="8">
+<div class="{{row.className}}">
+<button class="pp-row-main" sc-camel-on-mouse-down="{{row.press}}" sc-camel-on-mouse-up="{{row.release}}" sc-camel-on-mouse-leave="{{row.cancel}}" aria-pressed="{{row.isApplied}}">
+<span class="pp-check"><sc-if value="{{row.isApplied}}" hint-placeholder-val="{{false}}"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3 3 7-7"></path></svg></sc-if></span>
+<span class="pp-name"><span class="pp-name-main">{{row.name}}</span><span class="pp-name-sub">{{row.sub}}</span></span>
+<span class="rhythm" aria-hidden="true"><sc-for list="{{row.cells}}" as="cell" hint-placeholder-count="16"><span class="{{cell.className}}"></span></sc-for></span>
+</button>
+<button class="{{row.starClass}}" sc-camel-on-click="{{row.toggleStar}}" aria-pressed="{{row.isFavorite}}" aria-label="{{row.starLabel}}"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"></path></svg></button>
+</div>
+</sc-for>
+<sc-if value="{{hasNoPatterns}}" hint-placeholder-val="{{false}}"><p class="pp-empty">{{noPatternsText}}</p></sc-if>
+</div>
+</div>
+<div class="pp-foot"><span>Hold a pattern to hear it. Let go to use it.</span><span>Esc to close</span></div>
+</div>
+</sc-if>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
+<div class="cp-toast" data-theme="dark" role="status" style="{{toastStyle}}">{{toastText}}</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;craftLayout&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;One card&quot;,&quot;Inspector&quot;,&quot;Corners&quot;],&quot;default&quot;:&quot;One card&quot;,&quot;section&quot;:&quot;Crafting area&quot;},&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:820}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      selectedChordId: 'c1',
+      tab: 'all',
+      filter: 'all',
+      query: '',
+      selectedTileId: 'B|Bm',
+      playingTileId: null,
+      octave: 3,
+      isRailOpen: true,
+      isChordsOpen: true,
+      inversion: 'Root',
+      voicing: 'Spread',
+      pattern: null,
+      picker: null,
+      pickerList: 'All patterns',
+      patternQuery: '',
+      playingPattern: null,
+      favorites: ['Bounce 8ths', 'Lazy strum'],
+      isNoticeFlashing: false,
+      barWidth: 200,
+      rowHeight: 18,
+      chordEdits: {
+        c1: { octave: 3, inversion: 'Root', voicing: 'Spread', pattern: 'Bounce 8ths' },
+        c2: { octave: 3, inversion: '1st', voicing: 'Close', pattern: null },
+        c3: { octave: 3, inversion: 'Root', voicing: 'Spread', pattern: null },
+        c4: { octave: 3, inversion: '2nd', voicing: 'Spread', pattern: 'Bounce 8ths' }
+      },
+      toastText: ''
+    };
+    this.toastTimer = null;
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.toastTimer);
+  }
+
+  showToast(text) {
+    clearTimeout(this.toastTimer);
+    this.setState({ toastText: text });
+    this.toastTimer = setTimeout(() => this.setState({ toastText: '' }), 2400);
+  }
+
+  getLibrary() {
+    return [
+      { root: 'B', chords: [['Bm', 'Minor', 'basic', 'B D F♯'], ['B5', 'Power', 'power', 'B F♯'], ['Bsus2', 'Sus 2', 'sus', 'B C♯ F♯'], ['Bsus4', 'Sus 4', 'sus', 'B E F♯'], ['Bm7', 'Minor 7', 'sevenths', 'B D F♯ A'], ['Bm add9', 'Minor add 9', 'add', 'B D F♯ C♯'], ['Bm add11', 'Minor add 11', 'add', 'B D F♯ E'], ['B7sus4', '7 sus 4', 'sevenths', 'B E F♯ A'], ['Bm9', 'Minor 9', 'rich', 'B D F♯ A C♯'], ['Bm11', 'Minor 11', 'rich', 'B D F♯ A E']] },
+      { root: 'C♯', chords: [['C♯dim', 'Diminished', 'basic', 'C♯ E G'], ['C♯m7♭5', 'Half-diminished 7', 'sevenths', 'C♯ E G B'], ['C♯sus♭2', 'Dark sus', 'sus', 'C♯ D G']] },
+      { root: 'D', chords: [['D', 'Major', 'basic', 'D F♯ A'], ['D5', 'Power', 'power', 'D A'], ['Dsus2', 'Sus 2', 'sus', 'D E A'], ['Dsus4', 'Sus 4', 'sus', 'D G A'], ['Dmaj7', 'Major 7', 'sevenths', 'D F♯ A C♯'], ['D6', '6', 'add', 'D F♯ A B'], ['Dadd9', 'Add 9', 'add', 'D F♯ A E'], ['Dmaj9', 'Major 9', 'rich', 'D F♯ A C♯ E'], ['D6/9', '6 add 9', 'rich', 'D F♯ A B E']] },
+      { root: 'E', chords: [['Em', 'Minor', 'basic', 'E G B'], ['E5', 'Power', 'power', 'E B'], ['Esus2', 'Sus 2', 'sus', 'E F♯ B'], ['Esus4', 'Sus 4', 'sus', 'E A B'], ['Em7', 'Minor 7', 'sevenths', 'E G B D'], ['Em add9', 'Minor add 9', 'add', 'E G B F♯'], ['E7sus4', '7 sus 4', 'sevenths', 'E A B D'], ['Em9', 'Minor 9', 'rich', 'E G B D F♯'], ['Em11', 'Minor 11', 'rich', 'E G B D A']] },
+      { root: 'F♯', chords: [['F♯m', 'Minor', 'basic', 'F♯ A C♯'], ['F♯5', 'Power', 'power', 'F♯ C♯'], ['F♯sus4', 'Sus 4', 'sus', 'F♯ B C♯'], ['F♯m7', 'Minor 7', 'sevenths', 'F♯ A C♯ E'], ['F♯m add11', 'Minor add 11', 'add', 'F♯ A C♯ B'], ['F♯7sus4', '7 sus 4', 'sevenths', 'F♯ B C♯ E'], ['F♯m11', 'Minor 11', 'rich', 'F♯ A C♯ E B']] },
+      { root: 'G', chords: [['G', 'Major', 'basic', 'G B D'], ['G5', 'Power', 'power', 'G D'], ['Gsus2', 'Sus 2', 'sus', 'G A D'], ['Gmaj7', 'Major 7', 'sevenths', 'G B D F♯'], ['G6', '6', 'add', 'G B D E'], ['Gadd9', 'Add 9', 'add', 'G B D A'], ['Gmaj9', 'Major 9', 'rich', 'G B D F♯ A'], ['Gmaj7♯11', 'Major 7 ♯11', 'rich', 'G B D F♯ C♯']] },
+      { root: 'A', chords: [['A', 'Major', 'basic', 'A C♯ E'], ['A5', 'Power', 'power', 'A E'], ['Asus2', 'Sus 2', 'sus', 'A B E'], ['Asus4', 'Sus 4', 'sus', 'A D E'], ['A7', '7', 'sevenths', 'A C♯ E G'], ['Aadd9', 'Add 9', 'add', 'A C♯ E B'], ['A6', '6', 'add', 'A C♯ E F♯'], ['A7sus4', '7 sus 4', 'sevenths', 'A D E G'], ['A9', '9', 'rich', 'A C♯ E G B'], ['A13', '13', 'rich', 'A C♯ E G F♯']] }
+    ];
+  }
+
+  getEditorChords() {
+    return [
+      { id: 'c1', name: 'Bm', kind: 'Minor', root: 'B', bar: 0, rows: [11, 14, 19, 26] },
+      { id: 'c2', name: 'G', kind: 'Major', root: 'G', bar: 1, rows: [11, 14, 18] },
+      { id: 'c3', name: 'D', kind: 'Major', root: 'D', bar: 2, rows: [7, 11, 16, 23] },
+      { id: 'c4', name: 'A', kind: 'Major', root: 'A', bar: 3, rows: [4, 9, 12, 16] }
+    ];
+  }
+
+  getNextRoots(root) {
+    const table = {
+      B: ['G', 'D', 'A', 'E', 'F♯', 'B', 'C♯'],
+      G: ['D', 'A', 'B', 'E', 'F♯', 'G', 'C♯'],
+      D: ['A', 'B', 'G', 'E', 'F♯', 'D', 'C♯'],
+      A: ['B', 'F♯', 'D', 'G', 'E', 'A', 'C♯'],
+      E: ['A', 'F♯', 'G', 'B', 'D', 'E', 'C♯'],
+      'F♯': ['B', 'G', 'E', 'D', 'A', 'F♯', 'C♯']
+    };
+    return table[root] || table.B;
+  }
+
+  getPatternCategories() {
+    const rhythms = ['x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'x..x..x.x..x..x.', 'x...x.x...x.x...', 'xxxxxxxxxxxxxxxx', 'x......x..x.....', 'x.xx.x.xx.x.xx.x', 'x.......x.......', '..x...x...x...x.', 'x..x.x...x..x.x.', 'x...xx..x...xx..', 'xx..x.x.xx..x.x.'];
+    const names = {
+      Bass: ['Root pulse', 'Root + fifth', 'Octave bounce', 'Walking up', 'Syncopated root', 'Pedal 8ths', 'Bass drop', 'Fifth skip'],
+      'Block chords': ['Whole notes', 'Quarter stabs', 'Half notes', 'Pushed half', 'Charleston', 'Dotted quarters', 'Anticipation', 'Pulse 8ths'],
+      Arpeggios: ['Rolled up', 'Rolled down', 'Up and down', 'Broken 8ths', 'Spread 16ths', 'Alberti', 'Cascade', 'Pinky climb'],
+      Strums: ['Lazy strum', 'Folk strum', 'Island strum', 'Down-up 8ths', 'Muted chuck', 'Ballad strum'],
+      Stabs: ['Off-beat stabs', 'House stabs', 'Skank', 'Tight 16ths', 'Gated'],
+      Piano: ['Ballad left hand', 'Gospel walk', 'Stride', 'Broken ballad', 'Pop piano'],
+      Rhythmic: ['Bounce 8ths', 'Tresillo', 'Dembow', 'Clave 3-2', 'Shuffle', 'Swing 8ths'],
+      Pads: ['Swell', 'Slow bloom', 'Breathing', 'Long fade'],
+      'Lo-fi': ['Lazy keys', 'Dusty roll', 'Behind the beat'],
+      Trap: ['Triplet roll', 'Hi-hat chord', 'Half-time stab']
+    };
+    const counts = { Bass: 142, 'Block chords': 96, Arpeggios: 188, Strums: 74, Stabs: 63, Piano: 121, Rhythmic: 110, Pads: 48, 'Lo-fi': 92, Trap: 90 };
+    const categories = [];
+    let rhythmIndex = 0;
+    for (const category of Object.keys(names)) {
+      const patterns = names[category].map((name) => {
+        const rhythm = rhythms[rhythmIndex % rhythms.length];
+        rhythmIndex = rhythmIndex + 1;
+        return { name: name, category: category, rhythm: rhythm };
+      });
+      categories.push({ name: category, count: counts[category], patterns: patterns });
+    }
+    return categories;
+  }
+
+  getProjectPatterns() {
+    return [{ name: 'Bounce 8ths', uses: 2 }, { name: 'Root + fifth', uses: 3 }, { name: 'Rolled up', uses: 1 }];
+  }
+
+  buildTile(root, chord, options) {
+    const tileId = root + '|' + chord[0];
+    const isSelected = this.state.selectedTileId === tileId;
+    const isPlaying = this.state.playingTileId === tileId;
+    const classes = ['chord-tile'];
+    if (isSelected) classes.push('isSelected');
+    if (isPlaying) classes.push('isPlaying');
+    if (options.isBorrowed) classes.push('isBorrowed');
+    return {
+      name: chord[0],
+      kind: chord[1],
+      notes: chord[3],
+      isPlaying: isPlaying,
+      className: classes.join(' '),
+      press: () => this.setState({ selectedTileId: tileId, playingTileId: tileId }),
+      release: () => {
+        const isThisPlaying = this.state.playingTileId === tileId;
+        if (isThisPlaying) this.setState({ playingTileId: null });
+      },
+      handleKey: (event) => {
+        const isEnter = event.key === 'Enter';
+        if (!isEnter) return;
+        this.setState({ selectedTileId: tileId });
+        this.showToast('Placed ' + chord[0] + ' at 5.1.1');
+      }
+    };
+  }
+
+  renderVals() {
+    const state = this.state;
+    const library = this.getLibrary();
+    const editorChords = this.getEditorChords();
+    const selectedChord = editorChords.find((chord) => chord.id === state.selectedChordId) || null;
+    const hasAnchor = selectedChord !== null;
+
+    // grid
+    const pitchNames = ['C♯5', 'C5', 'B4', 'A♯4', 'A4', 'G♯4', 'G4', 'F♯4', 'F4', 'E4', 'D♯4', 'D4', 'C♯4', 'C4', 'B3', 'A♯3', 'A3', 'G♯3', 'G3', 'F♯3', 'F3', 'E3', 'D♯3', 'D3', 'C♯3', 'C3', 'B2', 'A♯2', 'A2', 'G♯2', 'G2', 'F♯2', 'F2', 'E2', 'D♯2', 'D2', 'C♯2', 'C2', 'B1', 'A♯1'];
+    const rowHeight = state.rowHeight;
+    const inKeyNames = ['B', 'C♯', 'D', 'E', 'F♯', 'G', 'A'];
+    const keyRows = pitchNames.map((pitch) => {
+      const noteName = pitch.replace(/[0-9]/g, '');
+      const isBlack = noteName.includes('♯');
+      const isLabeled = noteName === 'C' || noteName === 'B';
+      return { label: isLabeled ? pitch : '', isBlack: isBlack, style: 'height: ' + rowHeight + 'px' };
+    });
+    const gridRows = pitchNames.map((pitch) => {
+      const noteName = pitch.replace(/[0-9]/g, '');
+      const isRoot = noteName === 'B';
+      const isInKey = inKeyNames.includes(noteName);
+      const classes = ['cp-row'];
+      if (isRoot) classes.push('isRoot');
+      if (!isInKey) classes.push('isOutOfKey');
+      return { className: classes.join(' '), style: 'height: ' + rowHeight + 'px' };
+    });
+    const barWidth = state.barWidth;
+    const barCount = 8;
+    const bars = [];
+    const beatLines = [];
+    for (const barIndex of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      const left = barIndex * barWidth;
+      bars.push({ label: String(barIndex + 1), style: 'left: ' + left + 'px' });
+      beatLines.push({ className: 'cp-bar-line', style: 'left: ' + left + 'px' });
+      for (const beat of [1, 2, 3]) {
+        beatLines.push({ className: 'cp-beat-line', style: 'left: ' + (left + (beat * barWidth) / 4) + 'px' });
+      }
+    }
+    const chordBlocks = editorChords.map((chord) => {
+      const topRow = Math.min.apply(null, chord.rows);
+      const bottomRow = Math.max.apply(null, chord.rows);
+      const isSelected = chord.id === state.selectedChordId;
+      const top = topRow * rowHeight - 3;
+      const height = (bottomRow - topRow + 1) * rowHeight + 6;
+      const left = chord.bar * barWidth + 1;
+      const notes = chord.rows.map((row) => ({ style: 'top: ' + ((row - topRow) * rowHeight + 4) + 'px; height: ' + (rowHeight - 2) + 'px' }));
+      return {
+        name: chord.name,
+        label: chord.name + ', bar ' + (chord.bar + 1),
+        isSelected: isSelected,
+        notes: notes,
+        className: isSelected ? 'cp-chord isSelected' : 'cp-chord',
+        style: 'top: ' + top + 'px; left: ' + left + 'px; width: ' + (barWidth - 2) + 'px; height: ' + height + 'px',
+        select: (event) => {
+          event.stopPropagation();
+          this.setState({ selectedChordId: chord.id, picker: state.picker === 'edit' ? null : state.picker });
+        }
+      };
+    });
+
+    // chord bar
+    const edit = hasAnchor ? state.chordEdits[selectedChord.id] : null;
+    const updateEdit = (patch) => {
+      const merged = Object.assign({}, state.chordEdits[selectedChord.id], patch);
+      const nextEdits = Object.assign({}, state.chordEdits);
+      nextEdits[selectedChord.id] = merged;
+      this.setState({ chordEdits: nextEdits });
+    };
+    const inversionLabels = ['Root', '1st', '2nd', '3rd'];
+    const editInversions = hasAnchor ? inversionLabels.slice(0, 3).map((label) => {
+      const isSelected = edit.inversion === label;
+      return { label: label, isSelected: isSelected, className: isSelected ? 'mini-seg-option isSelected' : 'mini-seg-option', pick: () => updateEdit({ inversion: label }) };
+    }) : [];
+    const hasEditPattern = hasAnchor && edit.pattern !== null;
+
+    // suggestions rail
+    const anchorRoot = hasAnchor ? selectedChord.root : 'B';
+    const nextRoots = this.getNextRoots(anchorRoot);
+    const suggestedInKey = [];
+    for (const root of nextRoots) {
+      const group = library.find((item) => item.root === root);
+      if (!group) continue;
+      for (const chord of group.chords) {
+        const isAnchor = hasAnchor && chord[0] === selectedChord.name;
+        if (isAnchor) continue;
+        suggestedInKey.push(this.buildTile(root, chord, { isBorrowed: false }));
+      }
+    }
+    const borrowed = [['F♯', ['F♯', 'Major', 'basic', 'F♯ A♯ C♯']], ['F♯', ['F♯7', '7', 'sevenths', 'F♯ A♯ C♯ E']], ['E', ['E', 'Major', 'basic', 'E G♯ B']], ['C', ['C', 'Major', 'basic', 'C E G']], ['G', ['Gm', 'Minor', 'basic', 'G B♭ D']], ['B', ['B', 'Major', 'basic', 'B D♯ F♯']]];
+    const suggestedBorrowed = borrowed.map((entry) => this.buildTile('borrowed-' + entry[0], entry[1], { isBorrowed: true }));
+
+    // library
+    const normalizedQuery = state.query.trim().toLowerCase();
+    const groups = [];
+    for (const group of library) {
+      const matching = group.chords.filter((chord) => {
+        const matchesFilter = state.filter === 'all' || chord[2] === state.filter;
+        const matchesQuery = normalizedQuery === '' || chord[0].toLowerCase().includes(normalizedQuery) || chord[1].toLowerCase().includes(normalizedQuery);
+        return matchesFilter && matchesQuery;
+      });
+      if (matching.length === 0) continue;
+      groups.push({ root: group.root, count: matching.length + (matching.length === 1 ? ' chord' : ' chords'), tiles: matching.map((chord) => this.buildTile(group.root, chord, { isBorrowed: false })) });
+    }
+    const allCount = library.map((group) => group.chords.length).reduce((sum, count) => sum + count, 0);
+    const filterDefs = [['all', 'All'], ['basic', 'Basic'], ['power', 'Power'], ['sus', 'Sus'], ['sevenths', '7ths'], ['add', 'Add'], ['rich', 'Rich']];
+    const filters = filterDefs.map((def) => {
+      const isSelected = state.filter === def[0];
+      return { label: def[1], isSelected: isSelected, className: isSelected ? 'cp-chip isSelected' : 'cp-chip', pick: () => this.setState({ filter: def[0] }) };
+    });
+
+    // project tab
+    const projectDefs = [['1.1.1', 'Bm', 'Chords', 'c1'], ['2.1.1', 'G', 'Chords', 'c2'], ['3.1.1', 'D', 'Chords', 'c3'], ['4.1.1', 'A', 'Chords', 'c4'], ['9.1.1', 'Em7', 'Keys', null], ['10.1.1', 'F♯m', 'Keys', null], ['11.3.1', 'Gmaj7', 'Keys', null]];
+    const projectRows = projectDefs.map((def) => {
+      const isSelected = def[3] !== null && def[3] === state.selectedChordId;
+      const dotColor = def[2] === 'Chords' ? 'var(--accent-spark-1)' : 'var(--accent-spark-2)';
+      return {
+        position: def[0],
+        name: def[1],
+        track: def[2],
+        dotStyle: 'background: ' + dotColor,
+        className: isSelected ? 'project-row isSelected' : 'project-row',
+        pick: () => {
+          const isChordTrack = def[3] !== null;
+          if (isChordTrack) return this.setState({ selectedChordId: def[3] });
+          this.showToast('Selected ' + def[1] + ' in Keys · bar ' + def[0].split('.')[0]);
+        }
+      };
+    });
+
+    // crafting area
+    const allPatternsForCraft = this.getPatternCategories().map((category) => category.patterns).flat();
+    const selectedTileName = state.selectedTileId ? state.selectedTileId.split('|')[1] : null;
+    const hasSelectedTile = selectedTileName !== null;
+    const allLibraryChords = library.map((group) => group.chords).flat().concat(borrowed.map((entry) => entry[1]));
+    const craftChord = hasSelectedTile ? allLibraryChords.find((chord) => chord[0] === selectedTileName) : null;
+    const isCraftPlaying = state.playingTileId === 'craft';
+    const inversionIndex = inversionLabels.indexOf(state.inversion);
+    const layout = this.props.craftLayout ?? 'One card';
+    const appliedPatternInfo = state.pattern ? allPatternsForCraft.find((pattern) => pattern.name === state.pattern) : null;
+    const patternCells = (appliedPatternInfo ? appliedPatternInfo.rhythm : '................').split('').map((step) => ({ className: step === 'x' ? 'rhythm-cell isHit' : 'rhythm-cell' }));
+    const hasPattern = state.pattern !== null;
+    const isPanelPickerOpenNow = state.picker === 'panel';
+    const patternFieldClass = isPanelPickerOpenNow ? 'prop-pattern isOpen' : 'prop-pattern';
+    const patternStripClass = isPanelPickerOpenNow ? 'craft-c-pattern isOpen' : 'craft-c-pattern';
+
+    // pattern picker
+    const isPanelPicker = state.picker === 'panel';
+    const isEditPicker = state.picker === 'edit';
+    const categories = this.getPatternCategories();
+    const allPatterns = categories.map((category) => category.patterns).flat();
+    const projectPatterns = this.getProjectPatterns();
+    const pickerTargetName = isEditPicker ? (selectedChord ? selectedChord.name + ' · bar ' + (selectedChord.bar + 1) : '') : (selectedTileName || 'no chord');
+    const pickerTargetPrefix = isEditPicker ? 'Changing' : 'Playing on';
+    const hasPickerNotice = isPanelPicker && !hasSelectedTile;
+    const appliedPattern = isEditPicker ? (edit ? edit.pattern : null) : state.pattern;
+    const scopeDefs = [['All patterns', 1024], ['In this project', projectPatterns.length], ['Favorites', state.favorites.length]];
+    const scopeCats = scopeDefs.map((def) => {
+      const isSelected = state.pickerList === def[0];
+      return { label: def[0], count: def[1], isSelected: isSelected, className: isSelected ? 'pp-cat isSelected' : 'pp-cat', pick: () => this.setState({ pickerList: def[0] }) };
+    });
+    const categoryCats = categories.map((category) => {
+      const isSelected = state.pickerList === category.name;
+      return { label: category.name, count: category.count, isSelected: isSelected, className: isSelected ? 'pp-cat isSelected' : 'pp-cat', pick: () => this.setState({ pickerList: category.name }) };
+    });
+    let listed = allPatterns;
+    let listHeading = 'All patterns';
+    const isProjectList = state.pickerList === 'In this project';
+    const isFavoritesList = state.pickerList === 'Favorites';
+    const listedCategory = categories.find((category) => category.name === state.pickerList);
+    if (isProjectList) {
+      listed = projectPatterns.map((used) => Object.assign({ uses: used.uses }, allPatterns.find((pattern) => pattern.name === used.name)));
+      listHeading = 'Used in this project · most recent first';
+    }
+    if (isFavoritesList) {
+      listed = allPatterns.filter((pattern) => state.favorites.includes(pattern.name));
+      listHeading = 'Starred · saved across all your projects';
+    }
+    if (listedCategory) {
+      listed = listedCategory.patterns;
+      listHeading = listedCategory.name + ' · ' + listedCategory.count + ' patterns';
+    }
+    const normalizedPatternQuery = state.patternQuery.trim().toLowerCase();
+    const hasPatternQuery = normalizedPatternQuery !== '';
+    if (hasPatternQuery) {
+      listed = allPatterns.filter((pattern) => pattern.name.toLowerCase().includes(normalizedPatternQuery));
+      listHeading = 'Results in all patterns';
+    }
+    const applyPattern = (name) => {
+      if (isEditPicker) return updateEdit({ pattern: name });
+      this.setState({ pattern: name });
+    };
+    const patternRows = listed.map((pattern) => {
+      const isApplied = appliedPattern === pattern.name;
+      const isPlaying = state.playingPattern === pattern.name;
+      const isFavorite = state.favorites.includes(pattern.name);
+      const classes = ['pp-row'];
+      if (isApplied) classes.push('isApplied');
+      if (isPlaying) classes.push('isPlaying');
+      const usesText = pattern.uses ? ' · used ' + pattern.uses + '×' : '';
+      const cells = pattern.rhythm.split('').map((step) => ({ className: step === 'x' ? 'rhythm-cell isHit' : 'rhythm-cell' }));
+      return {
+        name: pattern.name,
+        sub: pattern.category + usesText,
+        cells: cells,
+        isApplied: isApplied,
+        isFavorite: isFavorite,
+        className: classes.join(' '),
+        starClass: isFavorite ? 'pp-star isOn' : 'pp-star',
+        starLabel: isFavorite ? 'Remove from favorites' : 'Add to favorites',
+        press: () => {
+          const canPreview = isEditPicker || hasSelectedTile;
+          if (!canPreview) {
+            this.setState({ isNoticeFlashing: false });
+            setTimeout(() => this.setState({ isNoticeFlashing: true }), 10);
+            return;
+          }
+          this.setState({ playingPattern: pattern.name });
+        },
+        release: () => {
+          this.setState({ playingPattern: null });
+          applyPattern(pattern.name);
+        },
+        cancel: () => {
+          const isThisPlaying = state.playingPattern === pattern.name;
+          if (isThisPlaying) this.setState({ playingPattern: null });
+        },
+        toggleStar: (event) => {
+          event.stopPropagation();
+          const nextFavorites = isFavorite ? state.favorites.filter((name) => name !== pattern.name) : state.favorites.concat([pattern.name]);
+          this.setState({ favorites: nextFavorites });
+        }
+      };
+    });
+    const hasNoPatterns = patternRows.length === 0;
+    const noPatternsText = isFavoritesList ? 'Star a pattern to keep it here, in every project.' : 'No patterns match.';
+
+    // panel geometry
+    const railWidth = state.isRailOpen ? 148 : 40;
+    const panelWidth = state.isChordsOpen ? 500 : railWidth + 40;
+    const gridCenter = 'calc((100% - ' + panelWidth + 'px) / 2)';
+    const pickerStyle = isEditPicker ? 'left: ' + gridCenter + '; bottom: 74px; transform: translateX(-50%)' : 'right: ' + (panelWidth + 8) + 'px; bottom: 14px';
+    const toastStyle = 'left: ' + gridCenter + '; transform: translateX(-50%)';
+
+    // zoom
+    const timePercent = Math.round((state.barWidth / 200) * 100);
+    const isZoomed = state.barWidth !== 200 || state.rowHeight !== 18;
+    const thumbWidth = Math.min(100, Math.round((100 * 4.6) / (barCount * (state.barWidth / 200))));
+
+    return {
+      keyRows: keyRows,
+      gridRows: gridRows,
+      bars: bars,
+      beatLines: beatLines,
+      chordBlocks: chordBlocks,
+      playheadStyle: 'left: ' + (4 * barWidth) + 'px',
+      clearSelection: () => this.setState({ selectedChordId: null }),
+      hasChordBar: hasAnchor,
+      chordBarLabel: hasAnchor ? 'Edit ' + selectedChord.name : '',
+      editChordName: hasAnchor ? selectedChord.name : '',
+      editChordKind: hasAnchor ? selectedChord.kind + ' · bar ' + (selectedChord.bar + 1) : '',
+      editOctave: hasAnchor ? edit.octave : 0,
+      isEditOctaveMin: hasAnchor && edit.octave <= 0,
+      isEditOctaveMax: hasAnchor && edit.octave >= 7,
+      editOctaveDown: () => updateEdit({ octave: edit.octave - 1 }),
+      editOctaveUp: () => updateEdit({ octave: edit.octave + 1 }),
+      editInversions: editInversions,
+      editVoicing: hasAnchor ? edit.voicing : 'Spread',
+      setEditVoicing: (event) => updateEdit({ voicing: event.target.value }),
+      editPatternLabel: hasEditPattern ? edit.pattern : 'No pattern',
+      editPatternClass: isEditPicker ? 'pattern-field isOpen' : (hasEditPattern ? 'pattern-field' : 'pattern-field isEmpty'),
+      openEditPatterns: () => this.setState({ picker: 'edit', pickerList: 'All patterns', patternQuery: '' }),
+      useInPanel: () => {
+        this.setState({ octave: edit.octave, inversion: edit.inversion, voicing: edit.voicing, pattern: edit.pattern });
+        this.showToast('The panel now uses ' + selectedChord.name + '’s shape and pattern');
+      },
+      thumbXStyle: 'left: 2%; width: ' + thumbWidth + '%',
+      zoomTimeOut: () => this.setState({ barWidth: Math.max(100, state.barWidth - 50) }),
+      zoomTimeIn: () => this.setState({ barWidth: Math.min(800, state.barWidth + 50) }),
+      isTimeMin: state.barWidth <= 100,
+      isTimeMax: state.barWidth >= 800,
+      rowsShorter: () => this.setState({ rowHeight: Math.max(10, state.rowHeight - 2) }),
+      rowsTaller: () => this.setState({ rowHeight: Math.min(32, state.rowHeight + 2) }),
+      isRowsMin: state.rowHeight <= 10,
+      isRowsMax: state.rowHeight >= 32,
+      zoomFit: () => this.setState({ barWidth: 200, rowHeight: 18 }),
+      hasZoomReadout: isZoomed,
+      zoomReadout: 'Time ' + timePercent + '% · Rows ' + state.rowHeight + 'px',
+      hasAnchor: hasAnchor,
+      hasNoAnchor: !hasAnchor,
+      anchorName: hasAnchor ? selectedChord.name : '',
+      anchorHint: 'Chords track · bar ' + (hasAnchor ? selectedChord.bar + 1 : ''),
+      suggestedInKey: suggestedInKey,
+      suggestedBorrowed: suggestedBorrowed,
+      inKeyCount: suggestedInKey.length,
+      isAllTab: state.tab === 'all',
+      isProjectTab: state.tab === 'project',
+      tabAllClass: state.tab === 'all' ? 'cp-tab isSelected' : 'cp-tab',
+      tabProjectClass: state.tab === 'project' ? 'cp-tab isSelected' : 'cp-tab',
+      showAll: () => this.setState({ tab: 'all' }),
+      showProject: () => this.setState({ tab: 'project' }),
+      allCount: allCount,
+      projectCount: projectDefs.length,
+      query: state.query,
+      setQuery: (event) => this.setState({ query: event.target.value }),
+      filters: filters,
+      groups: groups,
+      hasNoMatches: groups.length === 0,
+      projectRows: projectRows,
+      hasCraftChord: hasSelectedTile,
+      hasNoCraftChord: !hasSelectedTile,
+      isCraftPlaying: isCraftPlaying,
+      craftName: craftChord ? craftChord[0] : '',
+      craftKind: craftChord ? craftChord[1] : '',
+      craftNotes: craftChord ? craftChord[3] : '',
+      craftLabel: craftChord ? craftChord[0] + ', ' + craftChord[1] + '. Hold to hear, drag to place, Enter to place at the playhead.' : '',
+      craftPress: () => this.setState({ playingTileId: 'craft' }),
+      craftRelease: () => {
+        const isCraftNowPlaying = this.state.playingTileId === 'craft';
+        if (isCraftNowPlaying) this.setState({ playingTileId: null });
+      },
+      craftKey: (event) => {
+        const isEnter = event.key === 'Enter';
+        if (!isEnter) return;
+        this.showToast('Placed ' + selectedTileName + ' at 5.1.1');
+      },
+      octave: state.octave,
+      isOctaveMin: state.octave <= 0,
+      isOctaveMax: state.octave >= 7,
+      octaveDown: () => this.setState({ octave: state.octave - 1 }),
+      octaveUp: () => this.setState({ octave: state.octave + 1 }),
+      octaveLabel: 'Oct ' + state.octave,
+      inversionDown: () => this.setState({ inversion: inversionLabels[inversionIndex - 1] }),
+      inversionUp: () => this.setState({ inversion: inversionLabels[inversionIndex + 1] }),
+      isInversionMin: inversionIndex <= 0,
+      isInversionMax: inversionIndex >= inversionLabels.length - 1,
+      inversion: state.inversion,
+      resetShape: () => this.setState({ octave: 3, inversion: 'Root', voicing: 'Close', pattern: null }),
+      isLayoutInspector: layout === 'Inspector',
+      isLayoutCorners: layout === 'Corners',
+      isLayoutCard: layout === 'One card',
+      craftCClass: hasSelectedTile ? 'craft-c' : 'craft-c isEmpty',
+      heroClass: isCraftPlaying ? 'hero isPlaying' : 'hero',
+      patternCells: patternCells,
+      patternStripClass: patternStripClass,
+      patternTextClass: hasPattern ? 'prop-pattern-text' : 'prop-pattern-text isEmpty',
+      patternCategory: appliedPatternInfo ? '· ' + appliedPatternInfo.category : '',
+      railClass: state.isRailOpen ? 'rail' : 'rail isCollapsed',
+      isRailOpen: state.isRailOpen,
+      toggleRail: () => this.setState({ isRailOpen: !state.isRailOpen }),
+      railToggleLabel: state.isRailOpen ? 'Fold suggestions' : 'Show suggestions',
+      railCaretStyle: state.isRailOpen ? '' : 'transform: rotate(180deg)',
+      hasRailCount: !state.isRailOpen && hasAnchor,
+      panelStyle: 'width: ' + panelWidth + 'px',
+      pickerStyle: pickerStyle,
+      toastStyle: toastStyle,
+      isChordsOpen: state.isChordsOpen,
+      isChordsClosed: !state.isChordsOpen,
+      toggleChords: () => this.setState({ isChordsOpen: !state.isChordsOpen, picker: state.picker === 'panel' ? null : state.picker }),
+      railCount: suggestedInKey.length + suggestedBorrowed.length,
+      voicing: state.voicing,
+      setVoicing: (event) => this.setState({ voicing: event.target.value }),
+      hasPattern: hasPattern,
+      patternLabel: hasPattern ? state.pattern : 'None. Pick a pattern',
+      patternFieldClass: patternFieldClass,
+      isPanelPickerOpen: isPanelPicker,
+      togglePanelPatterns: () => this.setState({ picker: isPanelPicker ? null : 'panel', pickerList: 'All patterns', patternQuery: '' }),
+      clearPattern: () => this.setState({ pattern: null }),
+      isPickerOpen: state.picker !== null,
+      closePicker: () => this.setState({ picker: null, playingPattern: null }),
+      pickerTargetPrefix: pickerTargetPrefix,
+      pickerTargetName: pickerTargetName,
+      patternQuery: state.patternQuery,
+      setPatternQuery: (event) => this.setState({ patternQuery: event.target.value }),
+      hasPickerNotice: hasPickerNotice,
+      noticeClass: state.isNoticeFlashing ? 'pp-notice isFlash' : 'pp-notice',
+      scopeCats: scopeCats,
+      categoryCats: categoryCats,
+      listHeading: listHeading,
+      patternRows: patternRows,
+      hasNoPatterns: hasNoPatterns,
+      noPatternsText: noPatternsText,
+      hasToast: state.toastText !== '',
+      toastText: state.toastText
+    };
+  }
+}
+</script>
+
+
+</body></html>

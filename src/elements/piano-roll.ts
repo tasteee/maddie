@@ -199,7 +199,7 @@ export class MaddiePianoRoll extends CanvasElement {
   };
 
   private showToast = (toast: Toast) => {
-    showEditorToast(toast.message, toast.kind === 'capture');
+    showEditorToast(toast.message, toast.kind);
   };
 
   protected firstUpdated() {
@@ -524,7 +524,7 @@ export class MaddiePianoRoll extends CanvasElement {
       if (!dx) return;
       const v = ed.view;
       ed.setView({
-        scrollTick: clamp(v.scrollTick + dx / v.pxPerTick, 0, maxScrollTick(ed)),
+        scrollTick: Math.min(v.scrollTick + dx / v.pxPerTick, maxScrollTick(ed)),
       });
       this.gesture.move(e);
       this.autoScrollRaf = requestAnimationFrame(step);
@@ -562,6 +562,9 @@ export class MaddiePianoRoll extends CanvasElement {
     const wasSelected = ed.selection.has(region.id);
     if (!wasSelected) ed.select([region.id], add ? 'add' : 'replace');
     const selected = ed.selectedChordRegions;
+    // Holding a chord's body plays it on a loop, pattern and all, until the mouse comes up.
+    const isBody = edge === 'body';
+    const stopLoop = isBody ? ed.chordTrack.auditionLoop(region) : undefined;
     let dragging = false;
     let edit: ChordTrackEdit | undefined;
     let lastPosition = '';
@@ -570,6 +573,8 @@ export class MaddiePianoRoll extends CanvasElement {
       if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
       const p = this.local(event);
       if (!dragging && Math.hypot(p.x - origin.x, p.y - origin.y) < DRAG_THRESHOLD) return;
+      // The held-chord preview is for listening; once the chord moves, it stops.
+      if (!dragging) stopLoop?.();
       dragging = true;
       const raw = this.tickAt(p.x) - this.tickAt(origin.x) + (edge === 'end' ? region.start + region.duration : region.start);
       const tick = this.snap(raw, event);
@@ -594,17 +599,19 @@ export class MaddiePianoRoll extends CanvasElement {
     return {
       move,
       up: (event) => {
+        stopLoop?.();
         if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
         if (!dragging) {
           if (wasSelected) ed.select([region.id], add ? 'toggle' : 'replace');
-          ed.chordTrack.auditionPitches([region]);
           return;
         }
         move(event);
         if (edit) ed.chordTrack.commit(edit, edge === 'body' ? 'Move chords' : 'Resize chord');
         else if (error) engine.toast(error, 'error');
       },
-      cancel() {},
+      cancel() {
+        stopLoop?.();
+      },
     };
   }
 
@@ -815,7 +822,7 @@ export class MaddiePianoRoll extends CanvasElement {
       move: (e) => {
         const v = ed.view;
         ed.setView({
-          scrollTick: clamp(start.tick - (e.clientX - start.x) / v.pxPerTick, 0, maxScrollTick(ed)),
+          scrollTick: Math.min(start.tick - (e.clientX - start.x) / v.pxPerTick, maxScrollTick(ed)),
           scrollRow: clampScrollRow(ed, start.row - (e.clientY - start.y) / v.rowHeight),
         });
       },

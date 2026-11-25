@@ -182,6 +182,37 @@ describe('Chord Tracks', () => {
     expect(guitar(2)).toEqual(guitar(3).map((pitch) => pitch - 12));
   });
 
+  it('trims a patterned chord from the left without moving the hits that remain', async () => {
+    const scaled = await loadScaled();
+    const editor = createEditor({ doc: { ppq: 480, key: { root: 0, scale: 'major' } } });
+    editor.chordTrack.enable();
+    editor.chordTrack.add(chord(0, 1920));
+    editor.commands.selectAll();
+    const templateId = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ templateId })!, 'Apply rhythm');
+    const region = editor.chordRegions![0];
+    const hitsAfter = (tick: number) => editor.notes()
+      .filter((note) => note.start >= tick)
+      .map((note) => [note.pitch, note.start, note.start + note.duration])
+      .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+    const before = hitsAfter(960);
+    expect(before.length).toBeGreaterThan(0);
+    const trimmed = editor.chordTrack.planResize(region.id, 'start', 960)!;
+    editor.chordTrack.commit(editor.chordTrack.prepare(trimmed)!, 'Resize chord');
+    expect(editor.chordRegions![0].start).toBe(960);
+    expect(hitsAfter(960)).toEqual(before);
+  });
+
+  it('trims a plain chord from the left by moving its start', () => {
+    const editor = createEditor({ doc: { ppq: 480 } });
+    editor.chordTrack.enable();
+    editor.chordTrack.add(chord(0, 1920));
+    const region = editor.chordRegions![0];
+    const trimmed = editor.chordTrack.planResize(region.id, 'start', 480)!;
+    editor.chordTrack.commit(editor.chordTrack.prepare(trimmed)!, 'Resize chord');
+    expect(editor.notes().every((note) => note.start === 480 && note.duration === 1440)).toBe(true);
+  });
+
   it('pastes and duplicates independent regions with a copied performance phase', async () => {
     const scaled = await loadScaled();
     const editor = createEditor({ doc: { ppq: 480, key: { root: 0, scale: 'major' } } });

@@ -1,5 +1,8 @@
 import { getTrackName } from '../core/tracks';
-import { downloadMidi, loadScaled, stepGrid, type ChordRegion, type Editor } from '../core';
+import {
+  canHaveModifier, downloadMidi, FOLD_CHOICES, getGridModifier, getStraightGrid, GRID_DIVISIONS, GRID_FEELS,
+  loadScaled, setGridModifier, stepGrid, timeSigAt, visibleLineTicks, type ChordRegion, type Editor,
+} from '../core';
 import { Engine } from './engine';
 
 export type Action = (editor: Editor) => void;
@@ -9,7 +12,7 @@ const zoomBy = (editor: Editor, factor: number) => {
   const width = Engine.for(editor).viewport.width || 800;
   const center = v.scrollTick + width / 2 / v.pxPerTick;
   const px = v.pxPerTick * factor;
-  editor.setView({ pxPerTick: px, scrollTick: Math.max(0, center - width / 2 / px) }, { animate: true });
+  editor.setView({ pxPerTick: px, scrollTick: center - width / 2 / px }, { animate: true });
 };
 
 /** Taller / shorter rows, keeping the row at the center in place. */
@@ -25,16 +28,17 @@ export const rowZoomBy = (editor: Editor, factor: number) => {
 };
 
 /** Step the play marker to the previous / next grid line, scrolling to keep it in view. */
-const stepMarker = (editor: Editor, dir: -1 | 1) => {
+const stepMarker = (editor: Editor, dir: -1 | 1, gridOverride?: number) => {
   const { transport } = editor;
   const from = transport.playing ? transport.position : transport.marker;
-  const tick = stepGrid(from, editor.commands.gridTicks(from), editor.meta.timeSignature, dir);
+  const grid = gridOverride ?? editor.commands.gridTicks(from);
+  const tick = stepGrid(from, grid, editor.meta.timeSignature, dir);
   transport.seek(tick);
   editor.setView({ cursor: tick });
   const v = editor.view;
   const span = (Engine.for(editor).viewport.width || 800) / v.pxPerTick;
   const margin = span * 0.1;
-  if (tick < v.scrollTick + margin) editor.setView({ scrollTick: Math.max(0, tick - margin) }, { animate: true });
+  if (tick < v.scrollTick + margin) editor.setView({ scrollTick: tick - margin }, { animate: true });
   else if (tick > v.scrollTick + span - margin) editor.setView({ scrollTick: tick - span + margin }, { animate: true });
 };
 
@@ -53,12 +57,35 @@ const editChords = async (editor: Editor, label: string, plan: () => readonly Ch
   }
 };
 
-/** Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step. */
-const nudge = (editor: Editor, dir: -1 | 1) => {
-  if (!editor.selection.size) return stepMarker(editor, dir);
+/** The finest a precise nudge goes: 1/64. */
+const FINEST_NUDGE_DIVISION = 64;
+
+/**
+ * Precise nudge steps, relative to what you see: each level halves the spacing of the
+ * finest drawn lines. Level 1 (Ctrl) lands halfway between visible lines, level 2
+ * (Ctrl+Shift) a quarter of the way. Never finer than 1/64.
+ */
+const preciseStep = (editor: Editor, at: number, level: 1 | 2): number => {
+  const sig = timeSigAt(Math.max(0, at), editor.meta.timeSignature);
+  const visible = visibleLineTicks(editor.view.grid, editor.ppq, editor.view.pxPerTick, sig);
+  const finest = (editor.ppq * 4) / FINEST_NUDGE_DIVISION;
+  return Math.max(finest, visible / 2 ** level);
+};
+
+/**
+ * Move the selection so its first note lands on the previous / next grid line. Snap off: one grid step.
+ * `level` 1 or 2 steps by finer lines than the zoom shows (see `preciseStep`).
+ */
+const nudge = (editor: Editor, dir: -1 | 1, level: 0 | 1 | 2 = 0) => {
+  const isPrecise = level > 0;
+  if (!editor.selection.size) {
+    const markerFrom = editor.transport.playing ? editor.transport.position : editor.transport.marker;
+    const markerGrid = isPrecise ? preciseStep(editor, markerFrom, level as 1 | 2) : undefined;
+    return stepMarker(editor, dir, markerGrid);
+  }
   const chords = editor.selectedChordRegions;
   const from = chords[0]?.start ?? Math.min(...editor.selectedNotes.map((n) => n.start));
-  const grid = editor.commands.gridTicks(from);
+  const grid = isPrecise ? preciseStep(editor, from, level as 1 | 2) : editor.commands.gridTicks(from);
   const to = editor.view.snap ? stepGrid(from, grid, editor.meta.timeSignature, dir) : from + dir * grid;
   if (chords.length) return void editChords(editor, 'Move chords', () => editor.chordTrack.planNudge(dir, to));
   editor.commands.move(undefined, { ticks: to - from });
@@ -113,6 +140,9 @@ const chordShortcut = (editor: Editor, operation: Promise<unknown> | undefined) 
   void operation?.catch((error: Error) => Engine.for(editor).toast(error.message, 'error'));
 };
 
+const nextChoice = <T extends { value: string }>(choices: readonly T[], current: string): T =>
+  choices[(choices.findIndex(({ value }) => value === current) + 1) % choices.length];
+
 /** Built-in actions, by name. Keymaps point at these (or at functions). */
 export const actions: Record<string, Action> = {
   undo: (e) => e.undo(),
@@ -134,9 +164,18 @@ export const actions: Record<string, Action> = {
   paste: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.paste()) : e.commands.paste(),
   quantize: (e) => e.selection.size && e.commands.quantize(),
   mute: (e) => e.selection.size && e.commands.toggleMute(),
+  toggleTrackMute: (e) => {
+    const track = e.trackList.find((track) => track.id === e.activeTrackId);
+    if (track) e.commands.setTrackMuted(track.id, !track.muted);
+  },
+  toggleTrackSolo: (e) => e.commands.soloTrack(e.activeTrackId, false),
   legato: (e) => e.selection.size && e.commands.legato(),
   nudgeLeft: (e) => nudge(e, -1),
   nudgeRight: (e) => nudge(e, 1),
+  nudgeFinerLeft: (e) => nudge(e, -1, 1),
+  nudgeFinerRight: (e) => nudge(e, 1, 1),
+  nudgeFinestLeft: (e) => nudge(e, -1, 2),
+  nudgeFinestRight: (e) => nudge(e, 1, 2),
   pitchUp: (e) => pitchNudge(e, 1),
   pitchDown: (e) => pitchNudge(e, -1),
   octaveUp: (e) => pitchNudge(e, 12),
@@ -165,10 +204,34 @@ export const actions: Record<string, Action> = {
     if (e.transport.position !== 0) e.transport.stop();
   },
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
+  cycleGridDivision: (e) => {
+    const grid = e.view.grid;
+    const division = nextChoice(GRID_DIVISIONS, getStraightGrid(grid));
+    e.setView({ grid: setGridModifier(division.value, getGridModifier(grid)) });
+    Engine.for(e).toast(`Grid Division · ${division.label}`);
+  },
+  cycleGridFeel: (e) => {
+    const grid = e.view.grid;
+    if (!canHaveModifier(grid)) {
+      Engine.for(e).toast('Grid Feel · Select a note division to change the feel');
+      return;
+    }
+    const feel = nextChoice(GRID_FEELS, getGridModifier(grid));
+    e.setView({ grid: setGridModifier(grid, feel.value) });
+    Engine.for(e).toast(`Grid Feel · ${feel.label}`);
+  },
+  cycleFold: (e) => {
+    const choices = e.key ? FOLD_CHOICES : FOLD_CHOICES.filter(({ value }) => value !== 'scale');
+    const fold = nextChoice(choices, e.view.fold);
+    e.setView({ fold: fold.value }, { animate: true });
+    Engine.for(e).toast(`Fold · ${fold.label}`);
+  },
   toggleMetronome: (e) => e.transport.setMetronome({ enabled: !e.transport.metronome.enabled }),
   toggleMasterMute: (e) => e.setVolume({ muted: !e.volume.muted }),
   toggleFollow: (e) => e.setView({ follow: !e.view.follow }),
-  toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel }),
+  toggleChords: (e) => e.setView({ chordsPanel: !e.view.chordsPanel, patternPicker: null }),
+  toggleSuggestions: (e) => e.setView({ suggestionsOpen: !e.view.suggestionsOpen }),
+  toggleVelocityLane: (e) => e.setView({ velocityLaneOpen: !e.view.velocityLaneOpen }),
   record: (e) => e.recorder.toggle(),
   captureMidi: (e) => captureMidi(e),
   toggleLoop: (e) => {
@@ -201,11 +264,19 @@ export const defaultKeymap: Keymap = {
   'mod+x': 'cut',
   'mod+v': 'paste',
   q: 'quantize',
-  m: 'mute',
+  m: 'toggleTrackMute',
   '0': 'mute',
   l: 'legato',
   arrowleft: 'nudgeLeft',
   arrowright: 'nudgeRight',
+  'mod+arrowleft': 'nudgeFinerLeft',
+  'mod+arrowright': 'nudgeFinerRight',
+  'ctrl+arrowleft': 'nudgeFinerLeft',
+  'ctrl+arrowright': 'nudgeFinerRight',
+  'mod+shift+arrowleft': 'nudgeFinestLeft',
+  'mod+shift+arrowright': 'nudgeFinestRight',
+  'ctrl+shift+arrowleft': 'nudgeFinestLeft',
+  'ctrl+shift+arrowright': 'nudgeFinestRight',
   arrowup: 'pitchUp',
   arrowdown: 'pitchDown',
   'shift+arrowup': 'octaveUp',
@@ -225,7 +296,14 @@ export const defaultKeymap: Keymap = {
   'mod+space': 'playSelection',
   'ctrl+space': 'playSelection',
   enter: 'stop',
-  s: 'toggleSnap',
+  s: 'toggleTrackSolo',
+  's+t+g': 'toggleSnap',
+  'g+d': 'cycleGridDivision',
+  'g+f': 'cycleGridFeel',
+  'f+k': 'cycleFold',
+  '/+c': 'toggleChords',
+  '/+s': 'toggleSuggestions',
+  '/+v': 'toggleVelocityLane',
   'mod+l': 'toggleLoop',
   r: 'record',
   'shift+r': 'captureMidi',
@@ -243,27 +321,94 @@ export function comboOf(e: KeyboardEvent): string {
   if (isMac ? e.metaKey : e.ctrlKey) parts.push('mod');
   if (isMac && e.ctrlKey) parts.push('ctrl');
   if (e.altKey) parts.push('alt');
-  const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
+  const key = keyName(e);
   if (e.shiftKey && key.length > 1) parts.push('shift');
   else if (e.shiftKey && /^[a-z]$/.test(key)) parts.push('shift');
   parts.push(key);
   return parts.join('+');
 }
 
-/** Runs the matching action. Returns true if handled. */
-export function handleKey(editor: Editor, e: KeyboardEvent, keymap: Keymap = defaultKeymap): boolean {
-  // Use the physical key for letters when Alt changes e.key (macOS: ⌥A = å).
-  let combo = comboOf(e);
-  if (!keymap[combo]) {
-    const physical = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.code === 'Equal' ? '=' : e.code === 'Minus' ? '-' : null;
-    if (physical) combo = combo.replace(/[^+]+$/, physical);
-  }
+const keyName = (e: KeyboardEvent) => e.key === ' ' ? 'space' : e.key.toLowerCase();
+
+function resolveCombo(e: KeyboardEvent, keymap: Keymap): string {
+  const combo = comboOf(e);
+  if (keymap[combo]) return combo;
+  // Alt can change e.key (macOS: ⌥A = å).
+  const physical = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.code === 'Equal' ? '=' : e.code === 'Minus' ? '-' : null;
+  return physical ? combo.replace(/[^+]+$/, physical) : combo;
+}
+
+function getAction(keymap: Keymap, combo: string): Action | undefined {
   const entry = keymap[combo];
-  if (!entry) return false;
-  const action = typeof entry === 'function' ? entry : actions[entry];
+  return typeof entry === 'function' ? entry : actions[entry];
+}
+
+/** Dispatches a binding directly. The editor uses HeldShortcuts for event timing. */
+export function handleKey(editor: Editor, e: KeyboardEvent, keymap: Keymap = defaultKeymap): boolean {
+  const action = getAction(keymap, resolveCombo(e, keymap));
   if (!action) return false;
   action(editor);
   return true;
+}
+
+const modifiers = new Set(['mod', 'ctrl', 'alt', 'shift', 'meta']);
+type PressedKey = { name: string; onRelease?: Action };
+
+/** Dispatch singles on release and held combinations when their final key goes down. */
+export class HeldShortcuts {
+  private readonly pressed = new Map<string, PressedKey>();
+
+  constructor(private readonly editor: Editor, private readonly getKeymap: () => Keymap) {}
+
+  keyDown(e: KeyboardEvent, fallback?: () => boolean): boolean {
+    const name = keyName(e);
+    const code = e.code || name;
+    if (this.pressed.has(code)) return true;
+    const keymap = this.getKeymap();
+    const isUnmodified = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+    const chords = isUnmodified ? Object.keys(keymap)
+      .map((binding) => ({ binding, keys: binding.split('+') }))
+      .filter(({ keys }) => keys.length > 1 && keys.includes(name) && keys.every((key) => key && !modifiers.has(key))) : [];
+
+    if (!e.repeat && chords.length) {
+      const held = [...this.pressed.values()];
+      const match = chords
+        .filter(({ keys }) => keys.every((key) => key === name || held.some((press) => press.name === key)))
+        .sort((a, b) => b.keys.length - a.keys.length)
+        .find(({ binding }) => getAction(keymap, binding));
+      if (match) {
+        for (const press of held) {
+          if (match.keys.includes(press.name)) press.onRelease = undefined;
+        }
+        this.pressed.set(code, { name });
+        getAction(keymap, match.binding)?.(this.editor);
+        return true;
+      }
+    }
+
+    // MIDI note input and its mode controls keep their existing keydown behavior.
+    if (fallback?.()) return true;
+    const combo = resolveCombo(e, keymap);
+    const action = getAction(keymap, combo);
+    if (action && combo !== '+' && combo.includes('+')) {
+      if (!e.repeat) action(this.editor);
+      return true;
+    }
+    if (!action && !chords.length) return false;
+    if (!e.repeat) this.pressed.set(code, { name, onRelease: action });
+    return true;
+  }
+
+  keyUp(e: KeyboardEvent) {
+    const code = e.code || keyName(e);
+    const press = this.pressed.get(code);
+    this.pressed.delete(code);
+    if (!e.defaultPrevented) press?.onRelease?.(this.editor);
+  }
+
+  clear() {
+    this.pressed.clear();
+  }
 }
 
 export const modKeyLabel = isMac ? '⌘' : 'Ctrl';

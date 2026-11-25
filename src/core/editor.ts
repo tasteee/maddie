@@ -12,7 +12,7 @@ import { Recorder } from './recorder';
 import { Transport } from './transport';
 import { getAudibleTrackIds, getTrackColor } from './tracks';
 import type { ChordRegion, MaddieDoc, Note, NoteId, Tick, Track, TrackChangesT, TrackMetaT, TrackNoteT } from './types';
-import { DEFAULT_VIEW, ZOOM_LIMITS, type ViewState } from './view';
+import { DEFAULT_VIEW, minScrollTick, ZOOM_LIMITS, type ViewState } from './view';
 import { clampVelocity } from './music/velocity';
 
 export const DEFAULT_VOLUME = { level: 0.8, muted: false };
@@ -390,7 +390,7 @@ export class Editor extends Emitter<EditorEvents> {
     const next = { ...prev, ...partial };
     next.pxPerTick = Math.min(ZOOM_LIMITS.pxPerTick[1], Math.max(ZOOM_LIMITS.pxPerTick[0], next.pxPerTick));
     next.rowHeight = Math.min(ZOOM_LIMITS.rowHeight[1], Math.max(ZOOM_LIMITS.rowHeight[0], next.rowHeight));
-    next.scrollTick = Math.max(0, next.scrollTick);
+    next.scrollTick = Math.max(minScrollTick(next.pxPerTick), next.scrollTick);
     next.noteVelocity = clampVelocity(next.noteVelocity);
     let changed = false;
     for (const k in next) if (next[k as keyof ViewState] !== prev[k as keyof ViewState]) changed = true;

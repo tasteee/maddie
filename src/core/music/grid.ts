@@ -23,13 +23,24 @@ export const GRID_OPTIONS: { value: GridValue; label: string }[] = [
   { value: '1/16.', label: '1/16 ·' },
 ];
 
+/** Fixed divisions shown by the grid control, in display order. */
+export const GRID_DIVISIONS = GRID_OPTIONS.filter(({ value }) =>
+  ['1/4', '1/8', '1/16', '1/32', '1/64'].includes(value),
+);
+
 /**
  * How a division is bent: `straight` (`'1/8'`), `triplet` (`'1/8T'`, two thirds as long)
  * or `dotted` (`'1/8.'`, half again as long).
  */
 export type GridModifier = 'straight' | 'triplet' | 'dotted';
 
-export const GRID_MODIFIERS: readonly GridModifier[] = ['straight', 'triplet', 'dotted'];
+export const GRID_FEELS: readonly { value: GridModifier; label: string }[] = [
+  { label: 'Straight', value: 'straight' },
+  { label: 'Triplet', value: 'triplet' },
+  { label: 'Dotted', value: 'dotted' },
+];
+
+export const GRID_MODIFIERS: readonly GridModifier[] = GRID_FEELS.map(({ value }) => value);
 
 const MODIFIER_SUFFIX: Record<GridModifier, string> = { straight: '', triplet: 'T', dotted: '.' };
 
@@ -85,6 +96,28 @@ export function autoGridTicks(ppq: number, pxPerTick: number, minPx = 14): numbe
 
 export function resolveGrid(grid: GridValue, ppq: number, pxPerTick: number, sig?: TimeSigEvent): number {
   return gridTicks(grid, ppq, sig) ?? autoGridTicks(ppq, pxPerTick);
+}
+
+/** Grid lines closer than this many pixels aren't drawn. */
+export const MIN_LINE_PX = 4;
+/** Bar lines closer than this are thinned to every 2nd, 4th, ... bar. */
+export const MIN_BAR_PX = 12;
+
+/**
+ * Spacing of the finest lines the grid draws at this zoom: subdivisions, beats,
+ * or (thinned) bars, whichever is finest while still drawn.
+ */
+export function visibleLineTicks(grid: GridValue, ppq: number, pxPerTick: number, sig?: TimeSigEvent): number {
+  const barTicks = sig ? (ppq * 4 * sig.numerator) / sig.denominator : ppq * 4;
+  const barPx = barTicks * pxPerTick;
+  const barEvery = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
+  let finest = barTicks * barEvery;
+  const areBeatsDrawn = ppq * pxPerTick >= MIN_LINE_PX;
+  if (areBeatsDrawn) finest = Math.min(finest, ppq);
+  const gridSize = resolveGrid(grid, ppq, pxPerTick, sig);
+  const areSubdivisionsDrawn = gridSize * pxPerTick >= MIN_LINE_PX;
+  if (areSubdivisionsDrawn) finest = Math.min(finest, gridSize);
+  return finest;
 }
 
 export type SnapMode = 'round' | 'floor' | 'ceil';

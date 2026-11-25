@@ -14,6 +14,16 @@ export const CHORD_VOICINGS: Record<ScaledT.VoicingNameT, string> = {
   drop4: 'Drop 4', drop2and3: 'Drop 2 and 3', drop2and4: 'Drop 2 and 4', spread: 'Spread', shell: 'Shell',
 };
 
+/**
+ * Voicings hidden for now. Dynamic voicings depend on the chord before them, so editing one
+ * chord would re-voice the chords after it and change sounds the user already chose.
+ */
+export const DISABLED_VOICINGS: readonly ScaledT.VoicingNameT[] = ['dynamic', 'dynamicBass'];
+
+/** The voicings the pickers offer. */
+export const offeredVoicings = (names: readonly ScaledT.VoicingNameT[]): ScaledT.VoicingNameT[] =>
+  names.filter((name) => !DISABLED_VOICINGS.includes(name));
+
 /** Everything about how the doc is looked at. Never undoable. */
 export interface ViewState {
   /** Horizontal zoom. */
@@ -55,6 +65,8 @@ export interface ViewState {
   chordsTab: 'all' | 'project';
   /** The Suggestions rail beside the chords panel, open or folded. It shows either way. */
   suggestionsOpen: boolean;
+  /** The velocity lane under the grid, open or folded to its label strip. */
+  velocityLaneOpen: boolean;
   /** Which pattern picker is open: for the chord being crafted, or for the selected chords. */
   patternPicker: 'craft' | 'selection' | null;
   /** Experimental app settings: force parts of the chords panel to the dark theme. */
@@ -81,10 +93,20 @@ export interface ViewState {
   ghostNotes: boolean;
 }
 
+/**
+ * Pixels of empty grid before tick 0, so a note at the very start isn't flush against the
+ * keyboard: its velocity handle and edges stay whole and grabbable. Scrolled fully left,
+ * `scrollTick` is `minScrollTick(pxPerTick)`, a little below 0.
+ */
+export const TIME_LEAD_IN_PX = 12;
+
+/** The furthest left the view scrolls at this zoom: tick 0 sits `TIME_LEAD_IN_PX` in. */
+export const minScrollTick = (pxPerTick: number): number => -TIME_LEAD_IN_PX / pxPerTick;
+
 export const DEFAULT_VIEW: ViewState = {
   pxPerTick: 0.09,
   rowHeight: 20,
-  scrollTick: 0,
+  scrollTick: -TIME_LEAD_IN_PX / 0.09,
   scrollRow: null,
   grid: '1/16',
   snap: true,
@@ -104,6 +126,7 @@ export const DEFAULT_VIEW: ViewState = {
   chordsPanel: false,
   chordsTab: 'all',
   suggestionsOpen: true,
+  velocityLaneOpen: true,
   patternPicker: null,
   chordsPanelDark: false,
   chordCraftDark: false,

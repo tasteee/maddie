@@ -1,4 +1,5 @@
 import type { ScaledT } from '@tasteee/scaled/types';
+import type { ChordDynamicsT } from './chord-dynamics';
 
 /** Time in ticks. Integer. `ppq` ticks per quarter note. */
 export type Tick = number;
@@ -46,6 +47,8 @@ export interface ChordRegion {
   inversion?: number;
   rootMidi?: number;
   performance?: { templateId: string; groupId: string; key: string; scale: string; phaseTicks?: Tick };
+  /** Velocity shaping: ramp, humanize, accent. Applied every time the chord's notes are built. */
+  dynamics?: ChordDynamicsT;
 }
 
 /**

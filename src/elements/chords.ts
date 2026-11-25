@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import type { ScaledT } from '@tasteee/scaled/types';
 import {
-  analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_TYPES, CHORD_VOICINGS, chordsInKey,
+  analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_TYPES, CHORD_VOICINGS, chordsInKey, DISABLED_VOICINGS, offeredVoicings,
   formatBBT, loadScaled, pitchClassName, scaledKey, snapTick,
   type Chord, type ChordDraft, type DetectedChordT, type Editor, type Key, type NoteId,
 } from '../core';
@@ -307,6 +307,9 @@ export class MaddieChords extends MaddieElement {
   private cancelDrag?: () => void;
 
   protected attach(ed: Editor, _engine: Engine) {
+    // A saved project may still pick a voicing that's hidden for now.
+    const isVoicingDisabled = DISABLED_VOICINGS.includes(ed.view.chordVoicing);
+    if (isVoicingDisabled) ed.setView({ chordVoicing: 'rootPosition' });
     this.ensureScaled();
     this.analyzeProject();
     this.track(
@@ -643,7 +646,7 @@ export class MaddieChords extends MaddieElement {
     const view = ed.view;
     const leftEdge = view.scrollTick;
     const isOffscreen = row.start < leftEdge || row.start > leftEdge + (this.engine?.viewport.width ?? 0) / view.pxPerTick;
-    if (isOffscreen) ed.setView({ scrollTick: Math.max(0, row.start - 40 / view.pxPerTick) }, { animate: true });
+    if (isOffscreen) ed.setView({ scrollTick: row.start - 40 / view.pxPerTick }, { animate: true });
   }
 
   /** The row's own notes, as they are in the song: its voicing and pattern included. */
@@ -772,7 +775,7 @@ export class MaddieChords extends MaddieElement {
     const hasCount = !isOpen && total > 0;
 
     const head = html`<div class="rail-head">
-      <button type="button" class="fold" aria-expanded=${isOpen} aria-label=${toggleLabel} title=${toggleLabel} @click=${toggle}>${caret}</button>
+      <button type="button" class="fold" aria-expanded=${isOpen} aria-label=${toggleLabel} title=${toggleLabel + '   / + S'} @click=${toggle}>${caret}</button>
       <span class=${isOpen ? 'rail-title' : 'rail-title vertical'}>Suggestions</span>
       ${hasCount ? html`<span class="count-badge">${total}</span>` : nothing}
     </div>`;
@@ -871,7 +874,7 @@ export class MaddieChords extends MaddieElement {
     const steps = template ? patternRhythm(template) : Array.from({ length: 16 }, () => false);
     const isPickerOpen = view.patternPicker === 'craft';
     const isPlaying = this.playingId === 'craft';
-    const voicings = scaled?.voicingNames ?? [view.chordVoicing];
+    const voicings = offeredVoicings(scaled?.voicingNames ?? [view.chordVoicing]);
     const setOctave = (octave: number) => this.changeShape({ chordOctave: octave });
     const setInversion = (value: number) => this.changeShape({ chordInversion: value });
 
@@ -921,7 +924,7 @@ export class MaddieChords extends MaddieElement {
     const keyName = ed.key && ed.key.scale !== 'chromatic' ? `${pitchClassName(ed.key.root)} ${ed.key.scale}` : 'No key';
     if (!isOpen) {
       return html`<section class="strip" data-theme=${theme ?? nothing} aria-label="Chords">
-        <button type="button" class="fold" aria-expanded="false" aria-label="Open chords" title="Open chords   H" @click=${toggle}>${icons.back}</button>
+        <button type="button" class="fold" aria-expanded="false" aria-label="Open chords" title="Open chords   / + C" @click=${toggle}>${icons.back}</button>
         <span class="strip-title vertical">Chords</span>
         <span class="strip-sub vertical">${keyName}</span>
       </section>`;
@@ -930,7 +933,7 @@ export class MaddieChords extends MaddieElement {
     const libraryCount = this.browseGroups(ed.key).reduce((sum, group) => sum + group.chords.length, 0);
     return html`<section class="main" data-theme=${theme ?? nothing} aria-label="Chords">
       <div class="main-head">
-        <button type="button" class="fold" aria-expanded="true" aria-label="Fold chords" title="Fold chords   H" @click=${toggle}>${forwardIcon}</button>
+        <button type="button" class="fold" aria-expanded="true" aria-label="Fold chords" title="Fold chords   / + C" @click=${toggle}>${forwardIcon}</button>
         <span class="main-title">Chords</span><span class="key-pill">${keyName}</span>
       </div>
       <div class="tabs" role="tablist" aria-label="Chord lists">

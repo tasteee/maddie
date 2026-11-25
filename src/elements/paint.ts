@@ -1,4 +1,4 @@
-import { barsInRange, pitchClass, resolveGrid, snapTick, timeSigAt, type Editor, type Note, type NoteColorMode } from '../core';
+import { barsInRange, MIN_BAR_PX, MIN_LINE_PX, pitchClass, resolveGrid, snapTick, timeSigAt, type Editor, type Note, type NoteColorMode } from '../core';
 import type { NoteDisplay } from '../engine/animation';
 import { clamp, easeOut } from '../engine/ease';
 import type { DisplayView, Engine } from '../engine/engine';
@@ -189,10 +189,6 @@ export function drawTimeGrid(
   }
   ctx.stroke();
 }
-
-// The grid's drawing thresholds, shared with snapping so nothing snaps to a hidden line.
-const MIN_LINE_PX = 4;
-const MIN_BAR_PX = 12;
 
 /**
  * The drawn grid line nearest `tick`: bar lines (thinned when zoomed out), beat lines,

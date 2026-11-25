@@ -1,7 +1,10 @@
 import { css, html, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
-import { formatBBT, GRID_OPTIONS, gridTicks, pitchName, toMidiVelocity, type Editor } from '../core';
+import {
+  accentChords, CHORD_ACCENTS, chordLevelAt, clearChordDynamics, formatBBT, GRID_OPTIONS, gridTicks, humanizeChords, levelChords,
+  pitchName, rampChords, toMidiVelocity, type ChordAccentT, type ChordRegion, type Editor,
+} from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
 import { MaddieElement } from './base';
@@ -100,7 +103,7 @@ export class MaddieInspector extends MaddieElement {
     this.ed?.commands.setVelocityRange(undefined, this.fromVel(Math.min(lo, hi)), this.fromVel(Math.max(lo, hi)));
   }
 
-  private velocityField(label: string, value: number, onValue: (v: number) => void) {
+  private velocityField(label: string, value: number, onValue: (v: number) => void, isDisabled = this.notes.length === 0) {
     const max = this.velocityDisplay === 'midi' ? 127 : 100;
     return html`<z-number-input
       size="sm"
@@ -108,7 +111,7 @@ export class MaddieInspector extends MaddieElement {
       min="0"
       max=${max}
       step="1"
-      ?is-disabled=${this.notes.length === 0}
+      ?is-disabled=${isDisabled}
       .value=${live(value)}
       @change=${(e: CustomEvent<{ value: number }>) => onValue(e.detail.value)}
       @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && (e.composedPath()[0] as HTMLElement).blur()}
@@ -185,15 +188,93 @@ export class MaddieInspector extends MaddieElement {
     >`;
   }
 
-  /** Chord tracks: a summary and Render to MIDI. Editing lives in the floating chord bar. */
+  /** Ramp the selected chords as one line from the first to the last, or each on its own. */
+  @state() private isRampOneLine = true;
+  @state() private chordAccent: ChordAccentT = 'downbeats';
+
+  private shapeChords(label: string, shape: (selected: readonly ChordRegion[]) => ChordRegion[]) {
+    const ed = this.ed;
+    if (!ed) return;
+    const selected = ed.selectedChordRegions;
+    if (!selected.length) return;
+    try {
+      ed.chordTrack.commitChanged(shape(selected), label);
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+    }
+  }
+
+  /**
+   * Chord velocity: level, humanize, ramp and accent. The shaping is stored on each chord,
+   * so it survives every later edit (move, resize, inversion, a new pattern).
+   */
+  private renderChordVelocity(ed: Editor, selected: readonly ChordRegion[]) {
+    const levels = selected.map((region) => this.vel(chordLevelAt(region, region.start)));
+    const lowest = Math.min(...levels);
+    const highest = Math.max(...levels);
+    const isShaped = selected.some((region) => !!region.dynamics);
+    const setLevel = (value: number) => this.shapeChords('Chord velocity', (regions) => levelChords(regions, this.fromVel(value)));
+    const humanize = () => {
+      const amount = ed.view.humanizeVelocity / 100 / 2;
+      const seed = Math.floor(Math.random() * 0x7fffffff);
+      this.shapeChords('Humanize chords', (regions) => humanizeChords(regions, amount, seed));
+    };
+    const ramp = () => {
+      const from = ed.view.rampFrom / 100;
+      const to = ed.view.rampTo / 100;
+      this.shapeChords('Ramp chords', (regions) => rampChords(regions, from, to, this.isRampOneLine));
+    };
+    const accent = () => this.shapeChords('Accent chords', (regions) => accentChords(regions, this.chordAccent));
+    const reset = () => this.shapeChords('Reset chord velocity', (regions) => clearChordDynamics(regions));
+    const levelLabel = lowest === highest ? 'Velocity' : 'Velocity (sets every chord)';
+
+    return html`<z-separator is-vertical></z-separator>
+      <div class="group" part="group velocity">
+        <span class="label">Velocity</span>
+        ${this.velocityField(levelLabel, highest, setLevel, false)}
+      </div>
+      <z-separator is-vertical></z-separator>
+      <div class="group" part="group shaping">
+        ${this.settings(
+          'Humanize',
+          'Random velocity spread, the same take until you apply again',
+          html`${this.percent('Velocity', ed.view.humanizeVelocity, 0, 50, 1, (v) => ed.setView({ humanizeVelocity: v }))}`,
+          humanize,
+        )}
+        ${this.settings(
+          'Ramp',
+          'Velocity in a straight line from start to end',
+          html`${this.percent('Start', ed.view.rampFrom, 0, 100, 1, (v) => ed.setView({ rampFrom: v }))}
+            ${this.percent('End', ed.view.rampTo, 0, 100, 1, (v) => ed.setView({ rampTo: v }))}
+            <z-switch label="One line across the chords" ?is-checked=${this.isRampOneLine}
+              @change=${(event: CustomEvent<{ checked: boolean }>) => { this.isRampOneLine = event.detail.checked; }}></z-switch>`,
+          ramp,
+        )}
+        ${this.settings(
+          'Accent',
+          'Louder hits on the chosen beats, softer elsewhere',
+          html`<div class="field">
+            <z-text class="field-label" size="xs" color="muted">Accent</z-text>
+            <z-select size="sm" label="Accent" .options=${CHORD_ACCENTS} .value=${live(this.chordAccent)}
+              @change=${(event: CustomEvent<{ value: ChordAccentT }>) => { this.chordAccent = event.detail.value; }}></z-select>
+          </div>`,
+          accent,
+        )}
+        ${isShaped ? this.textButton('Reset velocity', 'Reset', 'Back to one velocity: no ramp, humanize or accent', reset) : nothing}
+      </div>`;
+  }
+
+  /** Chord tracks: a summary, velocity shaping, and Render to MIDI. Shape editing lives in the floating chord bar. */
   private renderChordInspector(ed: Editor) {
     const selected = ed.selectedChordRegions;
     const hasChords = !!ed.chordRegions?.length;
+    const hasSelection = selected.length > 0;
     return html`<div class="summary" role="status">
-      ${selected.length
+      ${hasSelection
         ? html`<z-text size="sm" weight="600">${selected.length === 1 ? `${selected[0].symbol} · bar ${formatBBT(selected[0].start, ed.meta.timeSignature, ed.ppq).split('.')[0]}` : selected.length + ' chords selected'}</z-text>`
         : html`<z-text size="sm" color="muted">${hasChords ? 'Select chords to edit' : 'Add chords from the Chords panel'}</z-text>`}
     </div>
+    ${hasSelection ? this.renderChordVelocity(ed, selected) : nothing}
     ${hasChords ? html`<div class="group" part="actions">
       <z-button size="sm" kind="outline"
         title="Convert this track to editable MIDI notes" @click=${() => ed.chordTrack.renderToMidi()}>Render to MIDI</z-button>

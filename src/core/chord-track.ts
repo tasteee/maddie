@@ -1,5 +1,7 @@
 import type { ScaledT } from '@tasteee/scaled/types';
 import { createId, type Editor } from './editor';
+import { shapeChordVelocity } from './chord-dynamics';
+import { ticksToSeconds } from './music/timeline';
 import { pitchClass } from './music/pitch';
 import type { ChordRegion, Key, Note, Tick } from './types';
 
@@ -85,7 +87,7 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
       pitch,
       start: region.start,
       duration: region.duration,
-      velocity: region.velocity,
+      velocity: shapeChordVelocity(region, { id: region.id + ':voice:' + i, start: region.start }, ppq),
     }));
   }
   for (const [groupId, group] of groups) {
@@ -107,7 +109,8 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
       // Render the local window at the phase it has in the group. Whole cycles
       // before this region contain no useful hits, including across silent gaps.
       const elapsed = (region.start - origin + phaseTicks) / ppq;
-      const phase = elapsed % performance.durationBeats;
+      // Positive modulo: a start pulled earlier than the pattern's start reads the pattern's previous cycle.
+      const phase = ((elapsed % performance.durationBeats) + performance.durationBeats) % performance.durationBeats;
       const startBeat = Math.max(0, phase - 1e-10);
       const progression = [{ id: region.id, chord: chordOf(region), startBeat, durationBeats: region.duration / ppq + phase - startBeat }];
       const clip = engine.applyPerformance({ progression, performance, key, scale, octave });
@@ -115,13 +118,14 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
         const start = Math.max(region.start, region.start + Math.round((hit.startBeat - phase) * ppq));
         if (start >= end(region)) continue;
         const stop = Math.min(end(region), Math.max(start + 1, region.start + Math.round((hit.startBeat + hit.durationBeats - phase) * ppq)));
+        const noteId = region.id + ':' + hit.id;
         notes.push({
-          id: region.id + ':' + hit.id,
+          id: noteId,
           chordRegionId: region.id,
           pitch: hit.midiNote,
           start,
           duration: stop - start,
-          velocity: hit.velocity / 127,
+          velocity: shapeChordVelocity(region, { id: noteId, start, patternVelocity: hit.velocity / 127 }, ppq),
         });
       }
     }
@@ -206,6 +210,47 @@ export class ChordTrackCommands {
     const notes = ed.notes().filter((note) => note.chordRegionId && ids.has(note.chordRegionId));
     if (notes.length) ed.auditionNotes(notes, regions[0].start);
     else ed.auditionChord(regions[0].pitches, 0.5, regions[0].velocity);
+  }
+
+  /**
+   * Play one chord on a loop, pattern and all, as if the loop region were set to exactly
+   * this chord and play were pressed. Returns a stop function. Used while a chord is held.
+   */
+  auditionLoop(region: ChordRegion): () => void {
+    const ed = this.editor;
+    const notes = ed.notes().filter((note) => note.chordRegionId === region.id);
+    const hasNotes = notes.length > 0;
+    const { tempo, ppq } = ed.meta;
+    const loopSeconds = ticksToSeconds(region.start + region.duration, tempo, ppq) - ticksToSeconds(region.start, tempo, ppq);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let isStopped = false;
+    const playOnce = () => {
+      if (isStopped) return;
+      if (hasNotes) ed.auditionNotes(notes, region.start);
+      else ed.auditionChord(region.pitches, loopSeconds, region.velocity);
+      timer = setTimeout(playOnce, loopSeconds * 1000);
+    };
+    playOnce();
+    return () => {
+      isStopped = true;
+      clearTimeout(timer);
+      ed.stopChord();
+    };
+  }
+
+  /**
+   * Replace some chords with changed copies (same ids) and commit, as one undo step.
+   * Used for velocity: level, ramp, humanize and accent all live on the chord.
+   */
+  commitChanged(changed: readonly ChordRegion[], label: string): boolean {
+    const regions = this.editor.chordRegions;
+    if (!regions || !changed.length) return false;
+    const byId = new Map(changed.map((region) => [region.id, region]));
+    const updated = regions.map((region) => byId.get(region.id) ?? region);
+    const edit = this.prepare(updated);
+    if (!edit) return false;
+    const selectedIds = this.editor.selectedChordRegions.map((region) => region.id);
+    return this.commit(edit, label, selectedIds);
   }
 
   /** A preview can only commit against the exact region list it was made from. */
@@ -392,7 +437,24 @@ export class ChordTrackCommands {
     const region = regions[i];
     const start = edge === 'start' ? Math.max(i ? end(regions[i - 1]) : 0, Math.min(end(region) - 1, tick)) : region.start;
     const stop = edge === 'end' ? Math.min(regions[i + 1]?.start ?? Infinity, Math.max(start + 1, tick)) : end(region);
-    return regions.map((item) => item !== region || (start === region.start && stop === end(region)) ? item : { ...item, start, duration: stop - start });
+    const isUnchanged = start === region.start && stop === end(region);
+    if (isUnchanged) return regions;
+    const resized = { ...region, start, duration: stop - start };
+    const resizedList = regions.map((item) => item === region ? resized : item);
+    // Moving a patterned chord's start keeps the pattern where it was in time: trimming
+    // the front cuts off its first hits, so the chord starts mid-pattern. The group's
+    // phase shifts by the same amount when this chord is where the group's pattern starts.
+    const groupId = region.performance?.groupId;
+    const groupOrigin = groupId ? regions.find((item) => item.performance?.groupId === groupId) : undefined;
+    const isGroupOrigin = groupOrigin === region;
+    if (!isGroupOrigin) return resizedList;
+    const shift = start - region.start;
+    return resizedList.map((item) => {
+      const isInGroup = item.performance?.groupId === groupId;
+      if (!isInGroup) return item;
+      const phaseTicks = (item.performance!.phaseTicks ?? 0) + shift;
+      return { ...item, performance: { ...item.performance!, phaseTicks } };
+    });
   }
 
   previewStyle({ voicing, templateId, inversion }: { voicing?: ScaledT.VoicingNameT; templateId?: string | null; inversion?: number }): ChordTrackEdit | undefined {

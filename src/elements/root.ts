@@ -3,7 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type FoldMode, type NoteColorMode } from '../core';
 import { Engine } from '../engine/engine';
 import { OutputRouter, type SoundChoice } from '../engine/output-router';
-import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
+import { defaultKeymap, HeldShortcuts, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
 import { computerKeyDown, computerKeyUp, releaseAll } from '../engine/computer-keyboard';
 import { pickMidiFile } from './midi-io';
@@ -11,6 +11,7 @@ import { tokens } from './tokens';
 
 /** Zest elements that handle their own keyboard input: the editor's shortcuts stay out of the way. */
 const OWN_KEYS = new Set(['z-select', 'z-number-input', 'z-input', 'z-slider', 'z-range', 'z-range-handle', 'z-switch', 'z-popover', 'z-badge', 'z-menu', 'z-context-menu', 'z-toggle-button-group']);
+const TRACK_NUMBER_DELAY = 250;
 
 const bool = (v: string | null) => v !== null && v !== 'false' && v !== 'off';
 
@@ -75,6 +76,8 @@ export class MaddieRoot extends LitElement {
   @property({ attribute: false }) keymap: Keymap = defaultKeymap;
 
   private engine = Engine.for(this.editor);
+  private heldShortcuts = new HeldShortcuts(this.editor, () => this.keymap);
+  private pendingTrackNumber?: { digit: string; timer: number };
 
   constructor() {
     super();
@@ -179,7 +182,9 @@ export class MaddieRoot extends LitElement {
     if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
     window.addEventListener('keydown', this.onWindowKeyDown);
     window.addEventListener('keyup', this.onWindowKeyUp);
+    window.addEventListener('keyup', this.onShortcutKeyUp, true);
     window.addEventListener('blur', this.onWindowBlur);
+    window.addEventListener('focusin', this.clearShortcutState, true);
     document.dispatchEvent(new Event(ROOT_READY));
     this.readMotion();
   }
@@ -248,10 +253,52 @@ export class MaddieRoot extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this.onWindowKeyDown);
     window.removeEventListener('keyup', this.onWindowKeyUp);
+    window.removeEventListener('keyup', this.onShortcutKeyUp, true);
     window.removeEventListener('blur', this.onWindowBlur);
+    window.removeEventListener('focusin', this.clearShortcutState, true);
+    this.clearShortcutState();
   }
 
-  private onWindowBlur = () => releaseAll(this.editor);
+  private onWindowBlur = () => {
+    this.clearShortcutState();
+    releaseAll(this.editor);
+  };
+
+  private clearShortcutState = () => {
+    this.clearTrackNumber();
+    this.heldShortcuts.clear();
+  };
+
+  private clearTrackNumber = () => {
+    if (this.pendingTrackNumber) window.clearTimeout(this.pendingTrackNumber.timer);
+    this.pendingTrackNumber = undefined;
+  };
+
+  private focusTrackNumber(trackNumber: number) {
+    this.clearTrackNumber();
+    const trackId = this.editor.trackIds[trackNumber - 1];
+    if (trackId === undefined) this.engine.toast(`Track ${trackNumber} doesn't exist.`, 'warning');
+    else this.editor.setActiveTrack(trackId);
+  }
+
+  private handleTrackNumber(e: KeyboardEvent): boolean {
+    if (!/^[0-9]$/.test(e.key) || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) {
+      this.clearTrackNumber();
+      return false;
+    }
+    const pending = this.pendingTrackNumber;
+    // Standalone zero and explicitly mapped digits still go through the keymap.
+    if (!pending && (e.key === '0' || this.keymap[e.key])) return false;
+    if (e.repeat) return true;
+    if (pending) this.focusTrackNumber(Number(pending.digit + e.key));
+    else {
+      const digit = e.key;
+      this.pendingTrackNumber = { digit, timer: window.setTimeout(() => this.focusTrackNumber(Number(digit)), TRACK_NUMBER_DELAY) };
+    }
+    return true;
+  }
+
+  private onShortcutKeyUp = (e: KeyboardEvent) => this.heldShortcuts.keyUp(e);
 
   private onWindowKeyUp = (e: KeyboardEvent) => {
     // Always release, wherever focus went.
@@ -269,26 +316,14 @@ export class MaddieRoot extends LitElement {
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
-    const target = e.composedPath()[0] as HTMLElement | undefined;
+    const path = e.composedPath();
+    const target = path[0] as HTMLElement | undefined;
     const tag = target?.tagName;
-    const textInput =
-      (tag === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)) ||
-      tag === 'TEXTAREA' || tag === 'SELECT' ||
-      target?.isContentEditable;
-    if (textInput) return;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || e.isComposing) return;
     const isOctaveKey = !e.metaKey && !e.ctrlKey && !e.altKey && (e.code === 'Equal' || e.code === 'Minus');
-    if (isOctaveKey && computerKeyDown(this.editor, e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     // Zest fields (selects, sliders, switches, number inputs) and open popovers keep their own keys.
-    if (!e.metaKey && !e.ctrlKey && e.composedPath().some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
-    if (computerKeyDown(this.editor, e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+    if (!isOctaveKey && !e.metaKey && !e.ctrlKey && path.some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
+    const handledTrackNumber = this.handleTrackNumber(e);
     // Keep native activation for focused buttons.
     const isButtonActivation = tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ');
     if (isButtonActivation) return;
@@ -297,7 +332,7 @@ export class MaddieRoot extends LitElement {
       pickMidiFile(this.editor, this);
       return;
     }
-    if (handleKey(this.editor, e, this.keymap)) {
+    if (handledTrackNumber || this.heldShortcuts.keyDown(e, () => computerKeyDown(this.editor, e))) {
       e.preventDefault();
       e.stopPropagation();
     }

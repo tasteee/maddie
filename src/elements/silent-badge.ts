@@ -1,14 +1,14 @@
 import { css, html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { getTrackName, getTrackSilence, type Editor, type TrackSilenceT } from '../core';
+import { getTrackSilence, type Editor, type TrackSilenceT } from '../core';
 import type { Engine } from '../engine/engine';
 import { MaddieElement } from './base';
 import { icons } from './icons';
 import { tokens } from './tokens';
 import './zest';
 
-const describeSilence = (silence: TrackSilenceT, trackName: string): string => {
-  if (silence.kind === 'muted') return `${trackName} is muted`;
+const describeSilence = (silence: TrackSilenceT): string => {
+  if (silence.kind === 'muted') return 'This track is muted';
   const isOneSoloed = silence.soloedNames.length === 1;
   if (isOneSoloed) return `Silent · ${silence.soloedNames[0]} is soloed`;
   return `Silent · ${silence.soloedNames.length} other tracks are soloed`;
@@ -51,9 +51,7 @@ export class MaddieSilentBadge extends MaddieElement {
     const shouldShow = isPlaying && silence !== null;
     this.toggleAttribute('is-showing', shouldShow);
     if (!shouldShow) return html`<span role="status"></span>`;
-    const trackIndex = ed.trackList.findIndex((item) => item.id === ed.activeTrackId);
-    const trackName = getTrackName(ed.trackList[trackIndex], trackIndex);
-    const message = describeSilence(silence, trackName);
+    const message = describeSilence(silence);
     // Muted is the track's own state: danger. Left out by a solo: warning.
     const tone = silence.kind === 'muted' ? 'danger' : 'warning';
     return html`<span role="status"><z-badge kind="solid" tone=${tone}><span slot="prefix" class="icon">${icons.mute}</span>${message}</z-badge></span>`;

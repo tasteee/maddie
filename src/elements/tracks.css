@@ -173,21 +173,23 @@ button:focus-visible, .rename-input:focus-visible { outline: 2px solid var(--bor
 }
 /* On: a solid, saturated fill that reads at a glance. */
 .track-toggle[aria-pressed='true'] { font-weight: 800; }
+/* Mute: the amber spark, with dark text (the amber is light in both themes). */
 .track .mute[aria-pressed='true'] {
-  background: var(--status-warning);
-  border-color: color-mix(in oklab, var(--status-warning) 70%, black);
-  color: oklch(from var(--status-warning) 0.24 0.06 h);
+  background: var(--accent-spark-3);
+  border-color: color-mix(in oklab, var(--accent-spark-3) 75%, black);
+  color: oklch(from var(--accent-spark-3) 0.25 0.06 h);
 }
+/* Solo: the pink spark. */
 .solo[aria-pressed='true'] {
-  background: var(--accent-secondary);
-  border-color: color-mix(in oklab, var(--accent-secondary) 70%, black);
+  background: var(--accent-spark-2);
+  border-color: color-mix(in oklab, var(--accent-spark-2) 75%, black);
   color: var(--on-accent);
 }
-/* Silenced by another track's solo: M shows a dashed warning edge, so every quiet track says why. */
+/* Silenced by another track's solo: M shows a dashed amber edge, so every quiet track says why. */
 .mute.isImplied {
   background: transparent;
-  border: 1px dashed var(--status-warning);
-  color: color-mix(in oklab, var(--status-warning) 65%, black);
+  border: 1px dashed var(--accent-spark-3);
+  color: color-mix(in oklab, var(--accent-spark-3) 60%, black);
 }
 .track-options { box-sizing: border-box; width: 220px; padding: 8px 10px; }
 .track-control-label { color: var(--text-tertiary); font-size: var(--font-size-xs); }

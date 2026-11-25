@@ -62,6 +62,7 @@ const tokenDeclarations = `
     --_key-white: var(--maddie-key-white, var(--surface-default));
     --_key-black: var(--maddie-key-black, var(--color-neutral-7));
     --_key-out: var(--maddie-key-out-of-scale, var(--surface-page));
+    --_key-out-indicator: var(--maddie-key-out-of-scale-indicator, var(--status-warning));
 
     --_radius: var(--maddie-radius, var(--radius-lg));
     --_radius-sm: var(--maddie-radius-sm, var(--radius-md));
@@ -133,6 +134,7 @@ export const PALETTE_TOKENS = [
   'key-white',
   'key-black',
   'key-out',
+  'key-out-indicator',
 ] as const;
 
 export type PaletteToken = (typeof PALETTE_TOKENS)[number];

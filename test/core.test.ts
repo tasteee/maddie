@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   barsInRange,
   buildRowMap,
@@ -207,7 +207,10 @@ describe('computer keyboard', () => {
     expect(stepOctave(12, -1)).toBe(84);
     expect(KEY_OFFSETS.get('KeyZ')).toBe(0);
     expect(KEY_OFFSETS.get('KeyX')).toBe(1);
-    expect(KEY_OFFSETS.get('KeyA')).toBe(10); // row above continues where Z row ended
+    expect(KEY_OFFSETS.get('KeyA')).toBe(7); // row above continues where Z row ended
+    expect(KEY_OFFSETS.get('KeyQ')).toBe(16);
+    expect([...KEY_OFFSETS.keys()]).toHaveLength(26);
+    expect([...KEY_OFFSETS.keys()].every((code) => /^Key[A-Z]$/.test(code))).toBe(true);
   });
 });
 
@@ -482,7 +485,7 @@ describe('arrow keys without a selection', () => {
 });
 
 describe('mute keys', () => {
-  it('0 mutes and unmutes selected notes, like M', async () => {
+  it('0 mutes selected notes and M mutes the active track', async () => {
     const { handleKey } = await import('../src/engine/keymap');
     const ed = createEditor();
     ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
@@ -491,8 +494,11 @@ describe('mute keys', () => {
     expect(ed.notes()[0].muted).toBe(true);
     expect(press('0', 'Digit0')).toBe(true);
     expect(ed.notes()[0].muted).toBe(false);
-    press('m', 'KeyM');
-    expect(ed.notes()[0].muted).toBe(true);
+    const other = ed.commands.addTrack({ activate: false });
+    expect(press('m', 'KeyM')).toBe(true);
+    expect(ed.notes()[0].muted).toBe(false);
+    expect(ed.trackList.find((track) => track.id === ed.activeTrackId)?.muted).toBe(true);
+    expect(ed.trackList.find((track) => track.id === other.id)?.muted).toBeFalsy();
   });
 
   it('0 does nothing without a selection', async () => {
@@ -502,6 +508,161 @@ describe('mute keys', () => {
     ed.select([]);
     handleKey(ed, { key: '0', code: 'Digit0' } as KeyboardEvent);
     expect(ed.notes()[0].muted).toBeFalsy();
+  });
+});
+
+describe('held keyboard shortcuts', () => {
+  beforeEach(() => vi.stubGlobal('requestAnimationFrame', () => 0));
+  afterEach(() => vi.unstubAllGlobals());
+
+  const keyEvent = (key: string, options: Partial<KeyboardEvent> = {}) =>
+    ({ key, code: key === '/' ? 'Slash' : 'Key' + key.toUpperCase(), ...options }) as KeyboardEvent;
+
+  it('toggles snap once when S, T, and G overlap in either order without soloing the track', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    const wasSnapping = ed.view.snap;
+    for (const key of ['s', 't', 'g']) shortcuts.keyDown(keyEvent(key));
+    expect(ed.view.snap).toBe(!wasSnapping);
+    shortcuts.keyDown(keyEvent('g', { repeat: true }));
+    expect(ed.view.snap).toBe(!wasSnapping);
+    for (const key of ['s', 't', 'g']) shortcuts.keyUp(keyEvent(key));
+    for (const key of ['g', 't', 's']) shortcuts.keyDown(keyEvent(key));
+    expect(ed.view.snap).toBe(wasSnapping);
+    for (const key of ['g', 't', 's']) shortcuts.keyUp(keyEvent(key));
+    expect(ed.trackList[0].solo).toBeFalsy();
+  });
+
+  it('solos the active track on S release and cancels a pending tap when shortcuts are cleared', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const other = ed.commands.addTrack();
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    shortcuts.keyDown(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBeFalsy();
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList.find((track) => track.id === other.id)?.solo).toBe(true);
+    expect(ed.trackList[0].solo).toBeFalsy();
+    shortcuts.keyDown(keyEvent('s'));
+    shortcuts.clear();
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBe(true);
+    shortcuts.keyDown(keyEvent('s'));
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBe(false);
+  });
+
+  it('fires registered singles on release and cancels only the keys used by a combination', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const fired: string[] = [];
+    const keymap = {
+      ...defaultKeymap,
+      j: () => fired.push('j'),
+      k: () => fired.push('k'),
+      'j+k': () => fired.push('j+k'),
+    };
+    const shortcuts = new HeldShortcuts(ed, () => keymap);
+    shortcuts.keyDown(keyEvent('m'));
+    shortcuts.keyDown(keyEvent('k'));
+    shortcuts.keyDown(keyEvent('j'));
+    expect(fired).toEqual(['j+k']);
+    expect(ed.trackList[0].muted).toBeFalsy();
+    shortcuts.keyDown(keyEvent('j', { repeat: true }));
+    for (const key of ['k', 'j', 'm']) shortcuts.keyUp(keyEvent(key));
+    expect(fired).toEqual(['j+k']);
+    expect(ed.trackList[0].muted).toBe(true);
+    shortcuts.keyDown(keyEvent('j'));
+    expect(fired).toEqual(['j+k']);
+    shortcuts.keyUp(keyEvent('j'));
+    expect(fired).toEqual(['j+k', 'j']);
+  });
+
+  it('cycles grid division and feel independently and reports each selection', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const { Engine } = await import('../src/engine/engine');
+    const ed = createEditor();
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    const toasts: string[] = [];
+    Engine.for(ed).onToast((toast) => toasts.push(toast.message));
+    const chord = (first: string, second: string) => {
+      shortcuts.keyDown(keyEvent(first));
+      shortcuts.keyDown(keyEvent(second));
+      shortcuts.keyUp(keyEvent(second));
+      shortcuts.keyUp(keyEvent(first));
+    };
+
+    ed.setView({ grid: '1/64T' });
+    chord('g', 'd');
+    expect(ed.view.grid).toBe('1/4T');
+    chord('f', 'g');
+    expect(ed.view.grid).toBe('1/4.');
+    chord('g', 'f');
+    expect(ed.view.grid).toBe('1/4');
+    chord('g', 'f');
+    expect(ed.view.grid).toBe('1/4T');
+    ed.setView({ grid: 'auto' });
+    chord('g', 'f');
+    expect(ed.view.grid).toBe('auto');
+    chord('d', 'g');
+    expect(ed.view.grid).toBe('1/4');
+    expect(ed.view.follow).toBe(false);
+    expect(toasts).toEqual([
+      'Grid Division · 1/4', 'Grid Feel · Dotted', 'Grid Feel · Straight', 'Grid Feel · Triplet',
+      'Grid Feel · Select a note division to change the feel', 'Grid Division · 1/4',
+    ]);
+  });
+
+  it('cycles the fold choices and skips In key when no key is set', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const { Engine } = await import('../src/engine/engine');
+    const ed = createEditor();
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    const toasts: string[] = [];
+    Engine.for(ed).onToast((toast) => toasts.push(toast.message));
+    const cycle = () => {
+      shortcuts.keyDown(keyEvent('f'));
+      shortcuts.keyDown(keyEvent('k'));
+      shortcuts.keyUp(keyEvent('f'));
+      shortcuts.keyUp(keyEvent('k'));
+      return ed.view.fold;
+    };
+
+    expect([cycle(), cycle()]).toEqual(['used', 'none']);
+    ed.transact('Key', (tx) => tx.setMeta('key', { root: 0, scale: 'major' }));
+    expect([cycle(), cycle(), cycle()]).toEqual(['used', 'scale', 'none']);
+    expect(toasts).toEqual(['Fold · Notes', 'Fold · Off', 'Fold · Notes', 'Fold · In key', 'Fold · Off']);
+  });
+
+  it('uses slash as a modifier for panels even with MIDI enabled', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ computerKeyboard: true, chordsPanel: false, suggestionsOpen: true, velocityLaneOpen: true });
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    const notes: string[] = [];
+    const down = (key: string, options?: Partial<KeyboardEvent>) =>
+      shortcuts.keyDown(keyEvent(key, options), () => {
+        if (key === '/') return false;
+        notes.push(key);
+        return true;
+      });
+    down('s');
+    shortcuts.keyUp(keyEvent('s'));
+    expect(down('/')).toBe(true);
+    for (const key of ['c', 's', 'v']) {
+      expect(down(key)).toBe(true);
+      if (key !== 'v') shortcuts.keyUp(keyEvent(key));
+    }
+    shortcuts.keyUp(keyEvent('/'));
+    expect(down('v', { repeat: true })).toBe(true);
+    shortcuts.keyUp(keyEvent('v'));
+    down('v');
+    expect(notes).toEqual(['s', 'v']);
+    expect(ed.view.chordsPanel).toBe(true);
+    expect(ed.view.suggestionsOpen).toBe(false);
+    expect(ed.view.velocityLaneOpen).toBe(false);
+    expect(ed.trackList[0].solo).toBeFalsy();
   });
 });
 
@@ -613,3 +774,31 @@ describe('grid modifier', () => {
   });
 });
 
+
+describe('precise nudges', () => {
+  it('step by half, then a quarter, of the finest visible line spacing', async () => {
+    const { vi } = await import('vitest');
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const { actions } = await import('../src/engine/keymap');
+    const { visibleLineTicks } = await import('../src/core');
+    const ed = createEditor();
+    // Zoomed out on the auto grid: quarter notes are the finest lines drawn.
+    ed.setView({ grid: 'auto', snap: true, pxPerTick: 20 / PPQ });
+    const visible = visibleLineTicks('auto', PPQ, ed.view.pxPerTick);
+    expect(visible).toBe(PPQ);
+    ed.commands.add([{ pitch: 60, start: PPQ * 4, duration: PPQ, velocity: 0.8 }]);
+    actions.nudgeFinerRight(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 + PPQ / 2);
+    actions.nudgeFinestLeft(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 + PPQ / 4);
+  });
+
+  it('never goes finer than 1/64', async () => {
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ grid: '1/64', snap: true, pxPerTick: 1 });
+    ed.commands.add([{ pitch: 60, start: PPQ, duration: PPQ, velocity: 0.8 }]);
+    actions.nudgeFinestRight(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ + PPQ / 16);
+  });
+});

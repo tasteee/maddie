@@ -1,4 +1,5 @@
-import { unsafeCSS, html, nothing } from 'lit';
+import { unsafeCSS, html, nothing, svg } from 'lit';
+import { maxScrollTick } from '../engine/interact';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ref } from 'lit/directives/ref.js';
 import { live } from 'lit/directives/live.js';
@@ -6,15 +7,19 @@ import {
   ticksToSeconds,
   exportFilename,
   formatBBT,
-  GRID_OPTIONS,
+  GRID_DIVISIONS,
+  GRID_FEELS,
+  FOLD_CHOICES,
   type GridValue,
   GRID_MODIFIERS,
   canHaveModifier,
   getGridModifier,
   getStraightGrid,
   setGridModifier,
+  detectKey,
   displayPitchClass,
   getEditorScaleId,
+  inScale,
   SCALES,
   EDITOR_SCALE_IDS,
   type Editor,
@@ -189,15 +194,6 @@ const renderChoices = (
   </z-toggle-button-group>`;
 };
 
-const GRID_DIVISIONS = GRID_OPTIONS.filter((option) =>
-  ['1/4', '1/8', '1/16', '1/32', '1/64'].includes(option.value),
-);
-const GRID_FEELS = [
-  { label: 'Straight', value: 'straight' },
-  { label: 'Triplet', value: 'triplet' },
-  { label: 'Dotted', value: 'dotted' },
-] as const;
-
 @customElement('maddie-grid-select')
 export class MaddieGridSelect extends ControlElement {
   /** The division to return to when Follow zoom is turned off. */
@@ -280,7 +276,7 @@ export class MaddieSnapToggle extends ControlElement {
     if (!ed) return nothing;
     return iconToggle({
       label: 'Snap to grid',
-      tip: tip('Snap · hold ⌥ to bypass', 'S'),
+      tip: tip('Snap · hold ⌥ to bypass', 'S + T + G'),
       icon: icons.magnet,
       tone: 'secondary',
       on: ed.view.snap,
@@ -299,7 +295,7 @@ export class MaddieChordsToggle extends ControlElement {
     if (!ed) return nothing;
     return iconToggle({
       label: 'Chords',
-      tip: tip('Chords that fit the key', 'H'),
+      tip: tip('Chords that fit the key', '/ + C'),
       icon: icons.chords,
       text: 'Chords',
       on: ed.view.chordsPanel,
@@ -356,8 +352,26 @@ export class MaddieKeySelect extends ControlElement {
       const isOwnEvent = event.target === event.currentTarget;
       if (isOwnEvent) this.query = '';
     };
-    // TODO(design): Connect detection once its behavior is decided.
-    const detect = () => this.engine?.toast("Couldn't detect a key.");
+    const detect = () => {
+      const notes = ed.trackIds.flatMap((id) => ed.notes(id)).filter((note) => !note.muted);
+      if (!notes.length) {
+        this.engine?.toast('No unmuted notes to detect a key from.', 'warning');
+        return;
+      }
+      const currentKey = ed.key;
+      if (currentKey && notes.every((note) => inScale(note.pitch, currentKey))) {
+        this.engine?.toast(`Key · ${formatEditorKey(currentKey)} · every note fits`);
+        return;
+      }
+      const guess = detectKey(notes);
+      if (!guess) return;
+      ed.commands.setKey(guess.key);
+      if (ed.key?.root !== guess.key.root || ed.key.scale !== guess.key.scale) return;
+      const fit = guess.outside
+        ? `${Math.round(guess.fit * 100)}% fits · ${guess.outside} ${guess.outside === 1 ? 'note' : 'notes'} outside`
+        : 'every note fits';
+      this.engine?.toast(`Key · ${formatEditorKey(guess.key)} · ${fit}`);
+    };
     const highlight = switchRow('Highlight key', 'Shade rows outside the key', ed.view.scaleHighlight,
       (isChecked) => ed.setView({ scaleHighlight: isChecked }));
     const lockSetting = switchRow('Lock to key', 'New and moved notes stay in key', ed.view.scaleLock,
@@ -403,12 +417,6 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
-  { value: 'none', label: 'Off' },
-  { value: 'used', label: 'Notes' },
-  { value: 'scale', label: 'In key' },
-];
-
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ControlElement {
   render = () => {
@@ -417,11 +425,14 @@ export class MaddieFoldSelect extends ControlElement {
     const hasKey = Boolean(ed.key);
     const fold = ed.view.fold;
     const isFolded = fold !== 'none' && (fold !== 'scale' || hasKey);
-    const isNotesMode = fold === 'used';
-    const isKeyMode = isFolded && fold === 'scale';
+    const selected = isFolded ? fold : 'none';
     const mode = FOLD_CHOICES.find((choice) => choice.value === fold);
     const label = isFolded ? mode?.label : nothing;
-    const keyDescription = ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first';
+    const descriptions: Record<FoldMode, string> = {
+      none: 'Show every pitch',
+      used: 'Only rows with notes',
+      scale: ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first',
+    };
     const pick = (event: CustomEvent<{ value: FoldMode }>) => {
       ed.setView({ fold: event.detail.value }, { animate: true });
     };
@@ -429,11 +440,10 @@ export class MaddieFoldSelect extends ControlElement {
       aria-label="Fold rows" .isPressed=${live(isFolded)}>${icons.fold}${label}</z-toggle-button>`;
 
     return html`<z-menu ${ref(sizeEditorMenu)} align="end" aria-label="Fold rows" @select=${pick}>
-      <z-tooltip slot="trigger" content="Fold rows" placement="bottom">${button}</z-tooltip>
-      <z-menu-item type="radio" value="none" ?is-checked=${!isFolded} description="Show every pitch">Off</z-menu-item>
-      <z-menu-item type="radio" value="used" ?is-checked=${isNotesMode} description="Only rows with notes">Notes</z-menu-item>
-      <z-menu-item type="radio" value="scale" ?is-checked=${isKeyMode}
-        ?is-disabled=${!hasKey} description=${keyDescription}>In key</z-menu-item>
+      <z-tooltip slot="trigger" content=${tip('Fold rows', 'F + K')} placement="bottom">${button}</z-tooltip>
+      ${FOLD_CHOICES.map(({ value, label }) => html`<z-menu-item type="radio" value=${value}
+        ?is-checked=${value === selected} ?is-disabled=${value === 'scale' && !hasKey}
+        description=${descriptions[value]}>${label}</z-menu-item>`)}
     </z-menu>`;
   };
 }
@@ -1010,7 +1020,7 @@ export class MaddieZoom extends ControlElement {
       const half = engine.viewport.width / 2;
       const anchor = view.scrollTick + half / view.pxPerTick;
       const pxPerTick = clamp(view.pxPerTick * factor, minTime, maxTime);
-      ed.setView({ pxPerTick, scrollTick: Math.max(0, anchor - half / pxPerTick) }, { animate: true });
+      ed.setView({ pxPerTick, scrollTick: anchor - half / pxPerTick }, { animate: true });
     };
     const fit = () => {
       const notes = ed.notes();
@@ -1030,27 +1040,92 @@ export class MaddieZoom extends ControlElement {
       engine.pauseFollow();
       ed.setView({
         pxPerTick,
-        scrollTick: Math.max(0, (start + end - width / pxPerTick) / 2),
+        scrollTick: (start + end - width / pxPerTick) / 2,
         rowHeight,
         scrollRow: clamp((top + bottom - height / rowHeight) / 2, 0, engine.maxScrollRow(rowHeight)),
       }, { animate: true });
     };
-    const button = (label: string, icon: unknown, click: () => void, isDisabled = false) => html`
-      <z-tooltip content=${label} placement="top">
-        <button type="button" class="cell" aria-label=${label} ?disabled=${isDisabled} @click=${click}>${icon}</button>
-      </z-tooltip>`;
-    const out = button('Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.minus, () => setTime(0.8), view.pxPerTick <= minTime);
-    const inward = button('Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.plus, () => setTime(1.25), view.pxPerTick >= maxTime);
-    const shorter = button('Shorter rows · Alt + scroll, or drag the keyboard down', icons.minus, () => setRows(-2), view.rowHeight <= minRow);
-    const taller = button('Taller rows · Alt + scroll, or drag the keyboard up', icons.plus, () => setRows(2), view.rowHeight >= maxRow);
-    const all = button('Zoom to fit', icons.fit, fit, !ed.notes().length);
+    const step = (label: string, path: unknown, click: () => void, isDisabled: boolean) => html`
+      <button type="button" class="zoom-step" aria-label=${label} title=${label} ?disabled=${isDisabled} @click=${click}>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">${path}</svg>
+      </button>`;
+    const minusPath = svg`<path d="M3 8h10"/>`;
+    const plusPath = svg`<path d="M8 3v10M3 8h10"/>`;
+    const fitPath = svg`<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>`;
 
-    // A flush L in the grid's corner: time zoom along the bottom edge, row height up
-    // the right edge, Fit where they meet. Each control sits on the edge it changes.
-    return html`<div class="rows" role="group" aria-label="Row height">${shorter}${taller}</div>
-      <div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
-      <div class="corner">${all}</div>`;
+    // Thumbs show the visible part of the whole song (time) and of all rows.
+    const visibleTicks = engine.viewport.width / view.pxPerTick;
+    const totalTicks = maxScrollTick(ed) + visibleTicks;
+    const thumbLeft = (Math.max(0, view.scrollTick) / totalTicks) * 100;
+    const thumbWidth = Math.min(100, (visibleTicks / totalTicks) * 100);
+    const visibleRows = engine.viewport.height / view.rowHeight;
+    const totalRows = Math.max(visibleRows, ed.rowMap.length);
+    const thumbTop = ((view.scrollRow ?? 0) / totalRows) * 100;
+    const thumbHeight = Math.min(100, (visibleRows / totalRows) * 100);
+    const thumbXStyle = `left: ${thumbLeft}%; width: ${thumbWidth}%`;
+    const thumbYStyle = `top: ${thumbTop}%; height: ${thumbHeight}%`;
+
+    // A flat scrollbar on the roll's bottom and right edges. Zoom steps sit at the end of
+    // the bar for the axis they change; Fit sits in the corner where the bars meet.
+    return html`<div class="scroll-x">
+        <div class="scroll-track" @pointerdown=${(event: PointerEvent) => this.dragScroll(event, 'x', totalTicks)}>
+          <span class="scroll-thumb" style=${thumbXStyle}></span>
+        </div>
+        ${step('Zoom out in time · Ctrl + scroll', minusPath, () => setTime(0.8), view.pxPerTick <= minTime)}
+        ${step('Zoom in on time · Ctrl + scroll', plusPath, () => setTime(1.25), view.pxPerTick >= maxTime)}
+      </div>
+      <div class="scroll-y">
+        <div class="scroll-track" @pointerdown=${(event: PointerEvent) => this.dragScroll(event, 'y', totalRows)}>
+          <span class="scroll-thumb" style=${thumbYStyle}></span>
+        </div>
+        ${step('Shorter rows · Alt + scroll', minusPath, () => setRows(-2), view.rowHeight <= minRow)}
+        ${step('Taller rows · Alt + scroll', plusPath, () => setRows(2), view.rowHeight >= maxRow)}
+      </div>
+      <button type="button" class="zoom-corner" aria-label="Zoom to fit" title="Zoom to fit" ?disabled=${!ed.notes().length} @click=${fit}>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${fitPath}</svg>
+      </button>`;
   };
+
+  /**
+   * Drag a scrollbar thumb, or press the track to jump there (the view centers on the
+   * press, then follows the drag). `total` is the axis length in ticks or rows.
+   */
+  private dragScroll(down: PointerEvent, axis: 'x' | 'y', total: number) {
+    const ed = this.ed;
+    const engine = this.engine;
+    const isPrimary = down.button === 0;
+    if (!ed || !engine || !isPrimary) return;
+    const track = down.currentTarget as HTMLElement;
+    const box = track.getBoundingClientRect();
+    const isX = axis === 'x';
+    const trackLength = isX ? box.width : box.height;
+    const visible = isX ? engine.viewport.width / ed.view.pxPerTick : engine.viewport.height / ed.view.rowHeight;
+    const unitsPerPx = total / Math.max(1, trackLength);
+    const thumb = track.querySelector('.scroll-thumb') as HTMLElement;
+    const isOnThumb = down.target === thumb;
+    const scrollTo = (value: number) => {
+      if (isX) return ed.setView({ scrollTick: Math.min(value, maxScrollTick(ed)) });
+      ed.setView({ scrollRow: clamp(value, 0, engine.maxScrollRow()) });
+    };
+    const pressOffset = isX ? down.clientX - box.left : down.clientY - box.top;
+    if (!isOnThumb) scrollTo(pressOffset * unitsPerPx - visible / 2);
+    const startValue = isX ? ed.view.scrollTick : ed.view.scrollRow ?? 0;
+    const startPointer = isX ? down.clientX : down.clientY;
+    engine.pauseFollow();
+    track.setPointerCapture(down.pointerId);
+    const move = (event: PointerEvent) => {
+      const pointer = isX ? event.clientX : event.clientY;
+      scrollTo(startValue + (pointer - startPointer) * unitsPerPx);
+    };
+    const finish = () => {
+      track.removeEventListener('pointermove', move);
+      track.removeEventListener('pointerup', finish);
+      track.removeEventListener('lostpointercapture', finish);
+    };
+    track.addEventListener('pointermove', move);
+    track.addEventListener('pointerup', finish);
+    track.addEventListener('lostpointercapture', finish);
+  }
 }
 
 @customElement('maddie-export')

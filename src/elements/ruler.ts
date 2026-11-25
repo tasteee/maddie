@@ -93,7 +93,7 @@ export class MaddieRuler extends CanvasElement {
       }
       if (gesture === 'zoom') {
         const pxPerTick = clamp(view.pxPerTick * Math.exp(-dy * 0.02), ...ZOOM_LIMITS.pxPerTick);
-        ed.setView({ pxPerTick, scrollTick: Math.max(0, anchor - point.x / pxPerTick) });
+        ed.setView({ pxPerTick, scrollTick: anchor - point.x / pxPerTick });
         return;
       }
       const edge = hit === 'start' ? loop.start : hit === 'end' ? loop.end : anchor;

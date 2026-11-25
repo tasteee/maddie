@@ -1,4 +1,5 @@
 import { unsafeCSS, html } from 'lit';
+import { icons } from './icons';
 import { ref } from 'lit/directives/ref.js';
 import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
@@ -18,7 +19,28 @@ export class MaddieEditor extends MaddieRoot {
     unsafeCSS(editorCss),
   ];
 
+  private stopViewUpdates?: () => void;
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.stopViewUpdates = this.editor.on('view', () => this.requestUpdate());
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.stopViewUpdates?.();
+  }
+
+  /** Fold the velocity lane to its label strip, or open it again. */
+  private toggleLane = () => {
+    const isOpen = this.editor.view.velocityLaneOpen;
+    this.editor.setView({ velocityLaneOpen: !isOpen });
+  };
+
   protected render() {
+    const isLaneOpen = this.editor.view.velocityLaneOpen;
+    const laneToggleLabel = isLaneOpen ? 'Hide velocity lane' : 'Show velocity lane';
+    this.toggleAttribute('lane-collapsed', !isLaneOpen);
     return html`
       <div class="frame" part="frame">
         <slot name="toolbar"
@@ -36,7 +58,12 @@ export class MaddieEditor extends MaddieRoot {
           <maddie-chord-bar part="chord-bar"></maddie-chord-bar>
           <maddie-silent-badge part="silent-badge"></maddie-silent-badge>
           <z-toaster ${ref(styleEditorToast)} position="bottom-center" part="toast"></z-toaster>
-          <div class="label" part="lane-label"><slot name="lane-label">Velocity</slot></div>
+          <div class="lane-head" part="lane-head">
+            <button type="button" class="lane-fold" aria-expanded=${isLaneOpen} aria-label=${laneToggleLabel} title=${laneToggleLabel + '   / + V'}
+              @click=${this.toggleLane}>${icons.chevron}</button>
+            <slot name="lane-label">Velocity</slot>
+          </div>
+          <div class="label" part="lane-corner"></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
           <maddie-chords part="chords"></maddie-chords>
         </div>

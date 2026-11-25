@@ -21,11 +21,13 @@
   min-height: 0;
   display: grid;
   grid-template-columns: var(--_keyboard-width) minmax(0, 1fr) auto;
-  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-height);
+  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) var(--_lane-height);
   grid-template-areas:
     'corner ruler chords'
     'keys roll chords'
+    'lanehead lanehead chords'
     'label lane chords';
+  --_lane-head-height: 36px;
 }
 .corner {
   grid-area: corner;
@@ -44,11 +46,12 @@ maddie-piano-roll {
   grid-area: roll;
   min-height: 0;
 }
+/* Scrollbars with zoom steps, over the roll's bottom and right edges. */
 maddie-zoom {
   grid-area: roll;
-  align-self: end;
-  justify-self: end;
   z-index: 2;
+  min-width: 0;
+  min-height: 0;
 }
 /* Floating chord bar: spans the roll's bottom edge, leaving room for the zoom pad. */
 maddie-chord-bar {
@@ -56,8 +59,8 @@ maddie-chord-bar {
   align-self: end;
   z-index: 3;
   min-width: 0;
-  /* Clear the zoom L (two 36px cells plus the corner). */
-  padding: 0 calc(108px + var(--space-2)) var(--space-2) var(--space-2);
+  /* Clear the 14px scrollbars. */
+  padding: 0 calc(14px + var(--space-2)) calc(14px + var(--space-2)) var(--space-2);
 }
 /* While playing on a silent track: a bold badge, top-center of the roll. */
 maddie-silent-badge {
@@ -89,18 +92,69 @@ z-toaster {
 }
 .label {
   grid-area: label;
-  display: flex;
-  align-items: flex-start;
-  padding: var(--space-2) var(--space-2) 0;
   background: var(--_surface);
-  border-top: 1px solid var(--_border);
   border-right: 1px solid var(--_border);
-  color: var(--_text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
 }
 maddie-velocity-lane {
   grid-area: lane;
+}
+/* The velocity lane's header: the folded Suggestions strip, turned on its side.
+   Same fold button, same title type, so the two panels read as one family. */
+.lane-head {
+  grid-area: lanehead;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 6px;
+  box-sizing: border-box;
+  background: var(--_surface);
+  border-top: 1px solid var(--_border);
+  border-bottom: 1px solid var(--_border);
+  color: var(--_text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lane-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--_text-muted);
+  cursor: pointer;
+}
+.lane-fold svg {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--_motion-fast) var(--_ease);
+}
+.lane-fold:hover {
+  background: var(--_surface-2);
+  color: var(--_text);
+}
+.lane-fold:focus-visible {
+  outline: 2px solid var(--_focus);
+  outline-offset: 1px;
+}
+/* Folded: only the header stays. The caret flips to point up, toward where the lane opens. */
+:host([lane-collapsed]) .grid {
+  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) 0;
+}
+:host([lane-collapsed]) maddie-velocity-lane,
+:host([lane-collapsed]) .label {
+  display: none;
+}
+:host([lane-collapsed]) .lane-head {
+  border-bottom: 0;
+}
+:host([lane-collapsed]) .lane-fold svg {
+  transform: rotate(180deg);
 }
 maddie-chords {
   grid-area: chords;

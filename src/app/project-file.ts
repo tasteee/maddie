@@ -1,5 +1,5 @@
 import { saveEditorFile } from '../elements/save-file';
-import { CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type Editor, type MaddieDoc, type LoopRegion, type ViewState, type AppViewKeyT } from '../core';
+import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type Editor, type MaddieDoc, type LoopRegion, type ViewState, type AppViewKeyT } from '../core';
 
 export interface MaddieProject {
   format: 'maddie';
@@ -43,7 +43,7 @@ const grid = (value: unknown) => text(value) && /^(auto|bar|1\/[1-9]\d{0,14}[T.]
 const viewValidators = {
   pxPerTick: numberIn(...ZOOM_LIMITS.pxPerTick),
   rowHeight: numberIn(...ZOOM_LIMITS.rowHeight),
-  scrollTick: numberIn(0),
+  scrollTick: numberIn(-1e9),
   scrollRow: nullable(numberIn(0)),
   grid,
   snap: boolean,
@@ -64,6 +64,7 @@ const viewValidators = {
   // Older projects saved browse / suggestions / song.
   chordsTab: oneOf('all', 'project', 'browse', 'suggestions', 'song'),
   suggestionsOpen: boolean,
+  velocityLaneOpen: boolean,
   chordFamily: oneOf('all', ...CHORD_FAMILIES.map(({ id }) => id)),
   chordQuery: text,
   chordOctave: (value: unknown) => int(value, 1, 6),
@@ -112,7 +113,17 @@ function validRegion(value: unknown): value is Record<string, unknown> & { start
     optional(value.voicing, id) && optional(value.inversion, (n) => int(n)) &&
     optional(value.rootMidi, (n) => typeof n === 'number' && Number.isSafeInteger(n)) &&
     (performance === undefined || (record(performance) && id(performance.templateId) && id(performance.groupId) &&
-      id(performance.key) && id(performance.scale) && optional(performance.phaseTicks, (n) => int(n))));
+      id(performance.key) && id(performance.scale) && optional(performance.phaseTicks, (n) => int(n)))) &&
+    optional(value.dynamics, validDynamics);
+}
+
+function validDynamics(value: unknown): boolean {
+  if (!record(value)) return false;
+  const { ramp, humanize, accent } = value;
+  const isRampValid = ramp === undefined || (record(ramp) && velocity(ramp.from) && velocity(ramp.to));
+  const isHumanizeValid = humanize === undefined || (record(humanize) && numberIn(0, 1)(humanize.amount) && typeof humanize.seed === 'number');
+  const isAccentValid = accent === undefined || oneOf(...CHORD_ACCENTS.map((item) => item.value))(accent);
+  return isRampValid && isHumanizeValid && isAccentValid;
 }
 
 function validRoute(value: unknown): boolean {

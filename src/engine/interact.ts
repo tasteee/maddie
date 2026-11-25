@@ -32,7 +32,7 @@ export function handleWheel(editor: Editor, e: WheelEvent, x: number, y: number,
     const px = v.pxPerTick * factor;
     editor.setView({ pxPerTick: px });
     const applied = editor.view.pxPerTick;
-    editor.setView({ scrollTick: clamp(anchor - x / applied, 0, maxScrollTick(editor)) });
+    editor.setView({ scrollTick: Math.min(anchor - x / applied, maxScrollTick(editor)) });
     return;
   }
 
@@ -50,7 +50,7 @@ export function handleWheel(editor: Editor, e: WheelEvent, x: number, y: number,
     dy = 0;
   }
   const next: { scrollTick?: number; scrollRow?: number } = {};
-  if (horizontal && dx) next.scrollTick = clamp(v.scrollTick + dx / v.pxPerTick, 0, maxScrollTick(editor));
+  if (horizontal && dx) next.scrollTick = Math.min(v.scrollTick + dx / v.pxPerTick, maxScrollTick(editor));
   if (vertical && dy) next.scrollRow = clampScrollRow(editor, (v.scrollRow ?? 0) + dy / v.rowHeight);
   const didScroll = (horizontal && dx !== 0) || (vertical && dy !== 0);
   if (didScroll) Engine.for(editor).pauseFollow();

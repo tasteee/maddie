@@ -6,20 +6,14 @@ import { Engine } from './engine';
  * Bottom row starts at `view.keyboardBase`; each key to the right is a semitone up,
  * and each row continues where the one below it ended.
  * With `view.keyboardScale` and a key set, each key is a scale step instead, and Z is the tonic.
- * By physical key (`e.code`), so it works on any layout.
+ * Uses physical key positions for letters.
  */
-const ROWS = [
-  ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM', 'Comma', 'Period', 'Slash'],
-  ['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK', 'KeyL', 'Semicolon', 'Quote'],
-  ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyP', 'BracketLeft', 'BracketRight'],
-  ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'],
-];
+const LETTER_KEYS = 'ZXCVBNM' + 'ASDFGHJKL' + 'QWERTYUIOP';
 
 /** Semitone offset from the base, by key code. */
-export const KEY_OFFSETS: ReadonlyMap<string, number> = new Map(ROWS.flat().map((code, i) => [code, i]));
+export const KEY_OFFSETS: ReadonlyMap<string, number> = new Map([...LETTER_KEYS].map((letter, i) => [`Key${letter}`, i]));
 
-const LABELS: Record<string, string> = { Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']' };
-export const keyLabel = (code: string) => LABELS[code] ?? code.replace(/^Key|^Digit/, '');
+export const keyLabel = (code: string) => code.replace(/^Key/, '');
 
 export const BASE_MIN = 12; // C0
 export const BASE_MAX = 84; // C6
@@ -85,7 +79,7 @@ export function computerKeyDown(editor: Editor, e: KeyboardEvent): boolean {
     setBaseOctave(editor, editor.view.keyboardBase / 12 - 1 + shift);
     return true;
   }
-  if (!editor.view.computerKeyboard) return false;
+  if (!editor.view.computerKeyboard || !/^\p{L}$/u.test(e.key)) return false;
   const off = KEY_OFFSETS.get(e.code);
   if (off === undefined) return false;
   if (e.repeat) return true;

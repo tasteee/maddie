@@ -1,6 +1,6 @@
 import { unsafeCSS } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { isBlackKey, pitchClass, displayPitch, ZOOM_LIMITS, type Editor } from '../core';
+import { isBlackKey, pitchClass, displayPitch, scaleMask, ZOOM_LIMITS, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
 import { clampScrollRow, handleWheel } from '../engine/interact';
 import { CanvasElement } from './canvas-element';
@@ -71,6 +71,8 @@ export class MaddieKeyboard extends CanvasElement {
     const view = engine.displayView(now);
     const rowHeight = view.rowHeight;
     const rows = engine.rows;
+    const activeScale = ed.key ? scaleMask(ed.key) : null;
+    const indicatorHeight = Math.max(1, Math.min(8, Math.floor(rowHeight - 2)));
     const isFolded = ed.view.fold === 'used' || (ed.view.fold === 'scale' && Boolean(ed.key));
     const sounding = new Set(engine.held);
     if (ed.transport.playing) {
@@ -92,7 +94,8 @@ export class MaddieKeyboard extends CanvasElement {
       if (isOffscreen) continue;
       const alpha = rows.alphaOf(pitch, now);
       if (alpha <= 0.01) continue;
-      const isC = pitchClass(pitch) === 0;
+      const pc = pitchClass(pitch);
+      const isC = pc === 0;
       const isBlack = isBlackKey(pitch);
       const isSounding = sounding.has(pitch);
       ctx.globalAlpha = alpha;
@@ -108,6 +111,10 @@ export class MaddieKeyboard extends CanvasElement {
       }
       ctx.fillStyle = isC ? p.border : p['line-row'];
       ctx.fillRect(0, Math.round(y + rowHeight) - 1, w, 1);
+      if (activeScale && !activeScale[pc]) {
+        ctx.fillStyle = p['key-out-indicator'];
+        ctx.fillRect(w - 4, Math.round(y + (rowHeight - indicatorHeight) / 2), 3, indicatorHeight);
+      }
       const shouldLabel = rowHeight >= 10 ? isFolded || isC : rowHeight >= 2 && isC && !isFolded;
       if (shouldLabel) {
         ctx.fillStyle = isSounding ? p['note-text'] : p['text-faint'];
