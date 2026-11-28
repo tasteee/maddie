@@ -411,6 +411,7 @@ export class ChordTrackCommands {
     if (!selected.length) return;
     this.clipboard = this.copyRegions(selected);
     const start = selected[0].start;
+    ed.sections.clearContentClipboard();
     ed.clipboard = ed.selectedNotes.map(({ chordRegionId: _owner, ...note }) => ({ ...note, start: note.start - start }));
   }
 

@@ -533,14 +533,28 @@ export class MaddiePianoRoll extends CanvasElement {
 
     if (ed.chordRegions) {
       const chord = this.hitRegion(x, y, hit?.note.chordRegionId);
-      if (chord) return this.begin(e, this.regionGesture(e, chord.region, chord.edge));
+      if (chord) {
+        if (chord.edge === 'body' && ed.sections.isContentSelected(ed.activeTrackId, chord.region.id)) {
+          return this.begin(e, this.sectionContentGesture(e, chord.region));
+        }
+        ed.sections.clearContentSelection();
+        return this.begin(e, this.regionGesture(e, chord.region, chord.edge));
+      }
+      ed.sections.select([]);
+      ed.sections.clearContentSelection();
       return this.begin(e, this.marqueeGesture(e));
     }
 
     if (hit) {
+      if (hit.zone === 'body' && ed.sections.isContentSelected(ed.activeTrackId, hit.note.id)) {
+        return this.begin(e, this.sectionContentGesture(e, hit.note));
+      }
+      ed.sections.clearContentSelection();
       if (hit.zone !== 'body') return this.begin(e, this.resizeGesture(e, hit));
       return this.begin(e, this.moveGesture(e, hit.note));
     }
+    ed.sections.select([]);
+    ed.sections.clearContentSelection();
     return this.begin(e, this.marqueeGesture(e));
   };
 
@@ -726,6 +740,57 @@ export class MaddiePianoRoll extends CanvasElement {
     return (p: number) => {
       const row = map.rowOf(p);
       return row === null ? clampPitch(p + (targetPitch - anchor.pitch)) : map.pitchAt(clamp(row + dRow, 0, map.length - 1));
+    };
+  }
+
+  private sectionContentGesture(down: PointerEvent, anchor: Note | ChordRegion): Gesture {
+    const ed = this.ed!;
+    const engine = this.engine!;
+    const source = ed.doc;
+    const selection = ed.sections.contentSelection;
+    const track = ed.activeTrackId;
+    const origin = this.local(down);
+    const startTick = this.tickAt(origin.x);
+    const notes = ed.selectedNotes;
+    const regions = ed.chordRegions;
+    const selectedRegions = new Set(ed.selection);
+    const anchorBar = ed.sections.barAt(anchor.start);
+    const anchorLine = ed.sections.barToTick(anchorBar);
+    let offset = 0;
+    let dragging = false;
+    const current = () => ed.doc === source && ed.activeTrackId === track && ed.sections.contentSelection === selection;
+    const move = (event: PointerEvent) => {
+      if (!current()) return;
+      const x = this.local(event).x;
+      if (!dragging && Math.abs(x - origin.x) < DRAG_THRESHOLD) return;
+      dragging = true;
+      const bars = ed.sections.barAt(anchorLine + this.tickAt(x) - startTick, true) - anchorBar;
+      offset = ed.sections.contentBarOffset(anchor.start, bars);
+      engine.sectionContentOffset = offset;
+      engine.setPreview({
+        overrides: new Map(notes.map((note) => [note.id, { ...note, start: note.start + offset }])),
+        regions: regions?.map((region) => selectedRegions.has(region.id) ? { ...region, start: region.start + offset } : region),
+        sectionMove: offset ? { start: anchor.start + offset, bars: ed.sections.barAt(anchorLine + offset) - anchorBar } : undefined,
+      }, true);
+      this.setCursor('grabbing');
+    };
+    return {
+      move,
+      up: (event) => {
+        move(event);
+        engine.sectionContentOffset = 0;
+        if (!current()) return;
+        if (!dragging) {
+          ed.select([anchor.id], down.shiftKey || down.metaKey || down.ctrlKey ? 'toggle' : 'replace');
+          return;
+        }
+        try {
+          ed.sections.moveContent(offset);
+        } catch (error) {
+          engine.toast((error as Error).message, 'error');
+        }
+      },
+      cancel: () => { engine.sectionContentOffset = 0; },
     };
   }
 
@@ -1087,6 +1152,14 @@ export class MaddiePianoRoll extends CanvasElement {
       ctx.fillRect(0, Math.round(y + rh) - 1, w, 1);
     }
 
+    if (ed.sections.selected.size) {
+      ctx.fillStyle = withAlpha(p.scale, 0.09);
+      for (const { section, start, end } of ed.sections.ranges()) {
+        if (ed.sections.selected.has(section.id)) {
+          ctx.fillRect((start - v.scrollTick) * v.pxPerTick, 0, (end - start) * v.pxPerTick, h);
+        }
+      }
+    }
     drawTimeGrid(ctx, ed, engine, v, p, w, 0, h, now);
 
     // Other tracks sit behind the active one.
@@ -1164,6 +1237,23 @@ export class MaddiePianoRoll extends CanvasElement {
     }
 
     drawPlayhead(ctx, ed, v, p, h);
+    const shift = engine.preview.sectionMove;
+    if (shift) {
+      ctx.save();
+      ctx.font = `600 11px ${p.font}`;
+      ctx.textBaseline = 'middle';
+      const label = `${shift.bars > 0 ? '+' : ''}${shift.bars} ${Math.abs(shift.bars) === 1 ? 'bar' : 'bars'}`;
+      const width = ctx.measureText(label).width + 14;
+      const x = clamp((shift.start - v.scrollTick) * v.pxPerTick + 8, 4, Math.max(4, w - width - 4));
+      ctx.fillStyle = p.bg;
+      ctx.strokeStyle = p.accent;
+      roundRect(ctx, x, 7, width, 20, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = p.text;
+      ctx.fillText(label, x + 7, 17);
+      ctx.restore();
+    }
   }
 }
 

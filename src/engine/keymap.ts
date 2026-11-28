@@ -77,6 +77,13 @@ const preciseStep = (editor: Editor, at: number, level: 1 | 2): number => {
  * `level` 1 or 2 steps by finer lines than the zoom shows (see `preciseStep`).
  */
 const nudge = (editor: Editor, dir: -1 | 1, level: 0 | 1 | 2 = 0) => {
+  if (editor.sections.allTracksSelected) {
+    const start = editor.sections.contentStart;
+    if (start === undefined) return;
+    const grid = level ? preciseStep(editor, start, level) : editor.commands.gridTicks(start);
+    const to = editor.view.snap ? stepGrid(start, grid, editor.meta.timeSignature, dir) : start + dir * grid;
+    return sectionContent(editor, () => editor.sections.moveContent(Math.round(to - start)));
+  }
   const isPrecise = level > 0;
   if (!editor.selection.size) {
     const markerFrom = editor.transport.playing ? editor.transport.position : editor.transport.marker;
@@ -143,11 +150,20 @@ const chordShortcut = (editor: Editor, operation: Promise<unknown> | undefined) 
 const nextChoice = <T extends { value: string }>(choices: readonly T[], current: string): T =>
   choices[(choices.findIndex(({ value }) => value === current) + 1) % choices.length];
 
+function sectionContent(editor: Editor, action: () => void) {
+  try {
+    action();
+  } catch (error) {
+    Engine.for(editor).toast((error as Error).message, 'error');
+  }
+}
+
 /** Built-in actions, by name. Keymaps point at these (or at functions). */
 export const actions: Record<string, Action> = {
   undo: (e) => e.undo(),
   redo: (e) => e.redo(),
   delete: (e) => {
+    if (e.sections.allTracksSelected) return sectionContent(e, () => e.sections.deleteContent());
     if (!e.selection.size) return;
     if (!e.chordRegions) return e.commands.delete();
     void e.chordTrack.delete(e.selection).catch((error: Error) => Engine.for(e).toast(error.message, 'error'));
@@ -155,13 +171,20 @@ export const actions: Record<string, Action> = {
   selectAll: (e) => e.commands.selectAll(),
   deselect: (e) => e.clearSelection(),
   duplicate: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.duplicate()) : e.selection.size && e.commands.duplicate(),
-  copy: (e) => e.commands.copy(),
+  copy: (e) => e.sections.allTracksSelected ? e.sections.copyContent() : e.commands.copy(),
   cut: (e) => {
+    if (e.sections.allTracksSelected) {
+      e.sections.copyContent();
+      return sectionContent(e, () => e.sections.deleteContent());
+    }
     if (!e.chordRegions) return e.selection.size && e.commands.cut();
     e.chordTrack.copy();
     chordShortcut(e, e.chordTrack.delete(e.selection));
   },
-  paste: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.paste()) : e.commands.paste(),
+  paste: (e) => {
+    if (e.sections.hasContentClipboard) return sectionContent(e, () => { e.sections.pasteContent(e.view.cursor); });
+    return e.chordRegions ? chordShortcut(e, e.chordTrack.paste()) : e.commands.paste();
+  },
   quantize: (e) => e.selection.size && e.commands.quantize(),
   mute: (e) => e.selection.size && e.commands.toggleMute(),
   toggleTrackMute: (e) => {

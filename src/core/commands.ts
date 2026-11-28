@@ -272,6 +272,7 @@ export class Commands {
     if (!notes.length) return;
     const start = Math.min(...notes.map((n) => n.start));
     this.editor.chordTrack.clearClipboard();
+    this.editor.sections.clearContentClipboard();
     this.editor.clipboard = notes.map(({ chordRegionId: _owner, ...note }) => ({ ...note, start: note.start - start }));
   }
 

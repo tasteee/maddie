@@ -89,7 +89,7 @@ export function drawGhostNotes(
 ) {
   const from = v.scrollTick;
   const to = from + width / v.pxPerTick;
-  const ghosts = engine.editor.view.ghostNotes ? engine.ghostNotes(from, to) : [];
+  const ghosts = engine.editor.view.ghostNotes || engine.editor.sections.contentSelection ? engine.ghostNotes(from, to) : [];
   const rowHeight = v.rowHeight;
   const radius = p.noteRadius;
   const inner = Math.max(2, rowHeight - 2);
@@ -105,10 +105,14 @@ export function drawGhostNotes(
     const isOffscreen = x > width || x + noteWidth < 0 || y > height || y + inner < 0;
     if (isOffscreen) continue;
     const color = resolveTrackColor(p, ghost.color);
-    const edgeAlpha = ghost.isAudible ? GHOST_EDGE_ALPHA : GHOST_MUTED_EDGE_ALPHA;
+    const edgeAlpha = ghost.selected ? 0.95 : ghost.isAudible ? GHOST_EDGE_ALPHA : GHOST_MUTED_EDGE_ALPHA;
     ctx.globalAlpha = rowAlpha;
     ctx.strokeStyle = withAlpha(color, edgeAlpha);
     roundRect(ctx, x + 0.5, y + 0.5, Math.max(0, noteWidth - 3), inner - 1, radius);
+    if (ghost.selected) {
+      ctx.fillStyle = withAlpha(color, 0.26);
+      ctx.fill();
+    }
     ctx.stroke();
   }
   ctx.globalAlpha = 1;

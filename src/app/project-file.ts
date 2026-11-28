@@ -1,5 +1,5 @@
 import { saveEditorFile } from '../elements/save-file';
-import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type ChordFamily, type Editor, type MaddieDoc, type LoopRegion, type ViewState, type AppViewKeyT } from '../core';
+import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type ChordFamily, type Editor, type MaddieDoc, type LoopRegion, type Section, type ViewState, type AppViewKeyT } from '../core';
 
 export interface MaddieProject {
   format: 'maddie';
@@ -175,6 +175,12 @@ function validDoc(doc: unknown): doc is MaddieDoc {
     !doc.tempo.length) return false;
   if (!list(doc.timeSignature, (e) => record(e) && int(e.tick) && int(e.numerator, 1) && int(e.denominator, 1)) ||
     !doc.timeSignature.length) return false;
+  if (doc.sections !== undefined) {
+    const validSection = (s: unknown): s is Section => record(s) && id(s.id) && id(s.name) && id(s.color) && int(s.durationBars, 1);
+    if (!Array.isArray(doc.sections) || !doc.sections.every(validSection)) return false;
+    if (new Set(doc.sections.map((s) => s.id)).size !== doc.sections.length ||
+      !Number.isSafeInteger(1 + doc.sections.reduce((sum, s) => sum + s.durationBars, 0))) return false;
+  }
   const { key } = doc;
   if (key !== null && (!record(key) || !int(key.root, 0, 11) || !SCALE_IDS.some((scale) => scale === key.scale))) return false;
   return Array.isArray(doc.tracks) && doc.tracks.length > 0 && doc.tracks.every(validTrack) &&

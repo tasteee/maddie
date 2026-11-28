@@ -1,10 +1,11 @@
-import type { Key, Note, TempoEvent, TimeSigEvent, Track, TrackChangesT } from './types';
+import type { Key, Note, Section, TempoEvent, TimeSigEvent, Track, TrackChangesT } from './types';
 
-export type MetaKey = 'tempo' | 'timeSignature' | 'key';
+export type MetaKey = 'tempo' | 'timeSignature' | 'key' | 'sections';
 export interface MetaValues {
   tempo: TempoEvent[];
   timeSignature: TimeSigEvent[];
   key: Key | null;
+  sections: readonly Section[];
 }
 
 /** The atoms of every change. History stores them; sync adapters ship them. */
