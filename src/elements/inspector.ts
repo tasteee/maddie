@@ -3,7 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import {
   accentChords, CHORD_ACCENTS, chordLevelAt, clearChordDynamics, formatBBT, GRID_OPTIONS, gridTicks, humanizeChords, levelChords,
-  pitchName, rampChords, toMidiVelocity, type ChordAccentT, type ChordRegion, type Editor,
+  pitchName, pitchRangeChords, rampChords, toMidiVelocity, type ChordAccentT, type ChordRegion, type Editor,
 } from '../core';
 import type { Engine } from '../engine/engine';
 import { modKeyLabel } from '../engine/keymap';
@@ -13,12 +13,7 @@ import { icons } from './icons';
 import { tokens } from './tokens';
 import './zest';
 
-/**
- * The selection bar. Always visible, fixed height, never over the notes.
- * The empty state reserves the bar's height and shows a selection hint.
- */
-@customElement('maddie-inspector')
-export class MaddieInspector extends MaddieElement {
+class SelectionControls extends MaddieElement {
   static styles = [
     tokens,
     partStyles,
@@ -76,18 +71,66 @@ export class MaddieInspector extends MaddieElement {
     `,
   ];
 
+  protected get notes() {
+    return this.ed?.selectedNotes ?? [];
+  }
+
+  /** A Zest slider in whole percent. */
+  protected percent(label: string, value: number, min: number, max: number, step: number, onValue: (v: number) => void) {
+    return html`<z-slider
+      label=${label}
+      tone="primary"
+      min=${min}
+      max=${max}
+      step=${step}
+      does-show-value
+      value-suffix="%"
+      .value=${live(value)}
+      @input=${(e: CustomEvent<{ value: number }>) => onValue(e.detail.value)}
+    ></z-slider>`;
+  }
+
+  /** A trigger and a panel of settings. Apply runs the command with them. */
+  protected settings(title: string, tipText: string, fields: unknown, apply: () => void) {
+    return html`<z-popover placement="top-start" label=${`${title} options`}>
+      <z-button slot="trigger" kind="ghost" size="sm" aria-label=${title}>${title}${icons.chevron}</z-button>
+      <div class="panel">
+        <z-text class="panel-title" size="sm" weight="600">${title}</z-text>
+        ${fields}
+        <z-tooltip content=${tipText} placement="top"><z-button kind="solid" tone="primary" size="sm" is-full-width @click=${apply}>Apply</z-button></z-tooltip>
+      </div>
+    </z-popover>`;
+  }
+
+  /** Text on an outlined button, with a tooltip. */
+  protected textButton(label: string, text: string, tipText: string, onClick: () => void) {
+    return html`<z-tooltip content=${tipText} placement="top"
+      ><z-button class="num" kind="outline" size="sm" aria-label=${label} @click=${onClick}>${text}</z-button></z-tooltip
+    >`;
+  }
+
+}
+
+@customElement('maddie-velocity-controls')
+export class MaddieVelocityControls extends SelectionControls {
+  static styles = [...SelectionControls.styles, css`
+    :host {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      padding: 0;
+      margin-inline-start: var(--space-2);
+      border: 0;
+      background: transparent;
+    }
+  `];
+
   /** Display velocity as MIDI 0–127 (default) or percent. */
   @property({ attribute: 'velocity-display' }) velocityDisplay: 'midi' | 'percent' = 'midi';
 
-  protected attach(editor: Editor, _engine: Engine) {
+  protected attach(editor: Editor) {
     const update = () => this.requestUpdate();
-    const reset = () => { editor.stopChord(); update(); };
-    this.track(editor.on('selection', reset), editor.on('change', reset), editor.on('tracks', reset),
-      editor.on('view', update), () => editor.stopChord());
-  }
-
-  private get notes() {
-    return this.ed?.selectedNotes ?? [];
+    this.track(editor.on('selection', update), editor.on('change', update), editor.on('tracks', update), editor.on('view', update));
   }
 
   private vel(v: number) {
@@ -118,14 +161,6 @@ export class MaddieInspector extends MaddieElement {
     ></z-number-input>`;
   }
 
-  private quantize() {
-    const ed = this.ed;
-    if (!ed) return;
-    const { quantizeGrid, quantizeStrength } = ed.view;
-    const grid = quantizeGrid === 'current' ? undefined : (gridTicks(quantizeGrid, ed.ppq) ?? undefined);
-    ed.commands.quantize(undefined, { grid, strength: quantizeStrength / 100 });
-  }
-
   private humanize() {
     const ed = this.ed;
     if (!ed) return;
@@ -140,52 +175,6 @@ export class MaddieInspector extends MaddieElement {
     const ed = this.ed;
     if (!ed) return;
     ed.commands.rampVelocity(undefined, ed.view.rampFrom / 100, ed.view.rampTo / 100);
-  }
-
-  private strum() {
-    const ed = this.ed;
-    if (!ed) return;
-    ed.commands.strum(undefined, ed.view.strumDirection, ed.view.strumAmount / 100);
-  }
-
-  private transpose(semitones: number) {
-    const ed = this.ed;
-    if (!ed) return;
-    ed.commands.nudgePitch(undefined, semitones);
-  }
-
-  /** A Zest slider in whole percent. */
-  private percent(label: string, value: number, min: number, max: number, step: number, onValue: (v: number) => void) {
-    return html`<z-slider
-      label=${label}
-      tone="primary"
-      min=${min}
-      max=${max}
-      step=${step}
-      does-show-value
-      value-suffix="%"
-      .value=${live(value)}
-      @input=${(e: CustomEvent<{ value: number }>) => onValue(e.detail.value)}
-    ></z-slider>`;
-  }
-
-  /** A trigger and a panel of settings. Apply runs the command with them. */
-  private settings(title: string, tipText: string, fields: unknown, apply: () => void) {
-    return html`<z-popover placement="top-start" label=${`${title} options`}>
-      <z-button slot="trigger" kind="ghost" size="sm" aria-label=${title}>${title}${icons.chevron}</z-button>
-      <div class="panel">
-        <z-text class="panel-title" size="sm" weight="600">${title}</z-text>
-        ${fields}
-        <z-tooltip content=${tipText} placement="top"><z-button kind="solid" tone="primary" size="sm" is-full-width @click=${apply}>Apply</z-button></z-tooltip>
-      </div>
-    </z-popover>`;
-  }
-
-  /** Text on an outlined button, with a tooltip. */
-  private textButton(label: string, text: string, tipText: string, onClick: () => void) {
-    return html`<z-tooltip content=${tipText} placement="top"
-      ><z-button class="num" kind="outline" size="sm" aria-label=${label} @click=${onClick}>${text}</z-button></z-tooltip
-    >`;
   }
 
   /** Ramp the selected chords as one line from the first to the last, or each on its own. */
@@ -213,7 +202,13 @@ export class MaddieInspector extends MaddieElement {
     const lowest = Math.min(...levels);
     const highest = Math.max(...levels);
     const isShaped = selected.some((region) => !!region.dynamics);
-    const setLevel = (value: number) => this.shapeChords('Chord velocity', (regions) => levelChords(regions, this.fromVel(value)));
+    const range = selected[0].dynamics?.pitchRange;
+    const sharesRange = range && selected.every(({ dynamics }) => dynamics?.pitchRange?.min === range.min && dynamics.pitchRange.max === range.max);
+    const setRange = (min: number, max: number) => this.shapeChords('Chord velocity', (regions) => pitchRangeChords(regions, this.fromVel(min), this.fromVel(max)));
+    const setLevel = (value: number) => {
+      if (sharesRange) setRange(value, value);
+      else this.shapeChords('Chord velocity', (regions) => levelChords(regions, this.fromVel(value)));
+    };
     const humanize = () => {
       const amount = ed.view.humanizeVelocity / 100 / 2;
       const seed = Math.floor(Math.random() * 0x7fffffff);
@@ -230,8 +225,11 @@ export class MaddieInspector extends MaddieElement {
 
     return html`<z-separator is-vertical></z-separator>
       <div class="group" part="group velocity">
-        <span class="label">Velocity</span>
-        ${this.velocityField(levelLabel, highest, setLevel, false)}
+        ${sharesRange && range.min !== range.max ? html`
+          ${this.velocityField('Lowest velocity', this.vel(range.min), (value) => setRange(value, this.vel(range.max)), false)}
+          <span class="dash">–</span>
+          ${this.velocityField('Highest velocity', this.vel(range.max), (value) => setRange(this.vel(range.min), value), false)}`
+          : this.velocityField(levelLabel, highest, setLevel, false)}
       </div>
       <z-separator is-vertical></z-separator>
       <div class="group" part="group shaping">
@@ -264,7 +262,79 @@ export class MaddieInspector extends MaddieElement {
       </div>`;
   }
 
-  /** Chord tracks: a summary, velocity shaping, and Render to MIDI. Shape editing lives in the floating chord bar. */
+  private renderNoteVelocity(ed: Editor) {
+    const vels = this.notes.map((note) => this.vel(note.velocity));
+    const vLo = Math.min(...vels);
+    const vHi = Math.max(...vels);
+    return html`<z-separator is-vertical></z-separator>
+      <div class="group" part="group velocity">
+        ${vLo === vHi
+          ? this.velocityField('Velocity', vLo, (v) => this.setVelocity(v, v))
+          : html`${this.velocityField('Lowest velocity', vLo, (v) => this.setVelocity(v, vHi))}<span class="dash">–</span>${this.velocityField('Highest velocity', vHi, (v) => this.setVelocity(vLo, v))}`}
+      </div>
+      <z-separator is-vertical></z-separator>
+      <div class="group" part="group shaping">
+        ${this.settings(
+          'Humanize',
+          'Random nudges to timing and velocity',
+          html`${this.percent('Timing', ed.view.humanizeTiming, 0, 100, 5, (v) => ed.setView({ humanizeTiming: v }))}
+            ${this.percent('Velocity', ed.view.humanizeVelocity, 0, 50, 1, (v) => ed.setView({ humanizeVelocity: v }))}`,
+          () => this.humanize(),
+        )}
+        ${this.settings(
+          'Ramp',
+          'Velocity steps evenly from the first note to the last',
+          html`${this.percent('First note', ed.view.rampFrom, 0, 100, 1, (v) => ed.setView({ rampFrom: v }))}
+            ${this.percent('Last note', ed.view.rampTo, 0, 100, 1, (v) => ed.setView({ rampTo: v }))}`,
+          () => this.rampVelocity(),
+        )}
+      </div>`;
+  }
+
+  private renderVelocityControls(ed: Editor) {
+    if (!ed.view.velocityLaneOpen) return nothing;
+    if (ed.chordRegions) {
+      const selected = ed.selectedChordRegions;
+      return selected.length ? this.renderChordVelocity(ed, selected) : nothing;
+    }
+    return this.notes.length ? this.renderNoteVelocity(ed) : nothing;
+  }
+
+  render() {
+    return this.ed ? this.renderVelocityControls(this.ed) : nothing;
+  }
+}
+
+/** Selection summary and editing tools below the piano roll. */
+@customElement('maddie-inspector')
+export class MaddieInspector extends SelectionControls {
+  protected attach(editor: Editor, _engine: Engine) {
+    const reset = () => { editor.stopChord(); this.requestUpdate(); };
+    this.track(editor.on('selection', reset), editor.on('change', reset), editor.on('tracks', reset),
+      editor.on('view', () => this.requestUpdate()), () => editor.stopChord());
+  }
+
+  private quantize() {
+    const ed = this.ed;
+    if (!ed) return;
+    const { quantizeGrid, quantizeStrength } = ed.view;
+    const grid = quantizeGrid === 'current' ? undefined : (gridTicks(quantizeGrid, ed.ppq) ?? undefined);
+    ed.commands.quantize(undefined, { grid, strength: quantizeStrength / 100 });
+  }
+
+  private strum() {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.commands.strum(undefined, ed.view.strumDirection, ed.view.strumAmount / 100);
+  }
+
+  private transpose(semitones: number) {
+    const ed = this.ed;
+    if (!ed) return;
+    ed.commands.nudgePitch(undefined, semitones);
+  }
+
+  /** Chord tracks: a summary and Render to MIDI. */
   private renderChordInspector(ed: Editor) {
     const selected = ed.selectedChordRegions;
     const hasChords = !!ed.chordRegions?.length;
@@ -274,7 +344,6 @@ export class MaddieInspector extends MaddieElement {
         ? html`<z-text size="sm" weight="600">${selected.length === 1 ? `${selected[0].symbol} · bar ${formatBBT(selected[0].start, ed.meta.timeSignature, ed.ppq).split('.')[0]}` : selected.length + ' chords selected'}</z-text>`
         : html`<z-text size="sm" color="muted">${hasChords ? 'Select chords to edit' : 'Add chords from the Chords panel'}</z-text>`}
     </div>
-    ${hasSelection ? this.renderChordVelocity(ed, selected) : nothing}
     ${hasChords ? html`<div class="group" part="actions">
       <z-button size="sm" kind="outline"
         title="Convert this track to editable MIDI notes" @click=${() => ed.chordTrack.renderToMidi()}>Render to MIDI</z-button>
@@ -295,11 +364,8 @@ export class MaddieInspector extends MaddieElement {
     const pitches = notes.map((n) => n.pitch);
     const folded = ed.view.fold === 'scale' || ed.view.fold === 'used';
     const step = folded ? 'a row' : ed.view.scaleLock && ed.key ? 'a scale step' : 'a semitone';
-    const vels = notes.map((n) => this.vel(n.velocity));
     const lo = Math.min(...pitches);
     const hi = Math.max(...pitches);
-    const vLo = Math.min(...vels);
-    const vHi = Math.max(...vels);
     const currentGrid = GRID_OPTIONS.find((o) => o.value === ed.view.grid)?.label ?? ed.view.grid;
 
     return html`
@@ -308,13 +374,6 @@ export class MaddieInspector extends MaddieElement {
         <z-badge class="range" size="sm">${lo === hi ? pitchName(lo) : `${pitchName(lo)}–${pitchName(hi)}`}</z-badge>
       </div>
 
-      <z-separator is-vertical></z-separator>
-      <div class="group" part="group velocity">
-        <span class="label">Velocity</span>
-        ${vLo === vHi
-          ? this.velocityField('Velocity', vLo, (v) => this.setVelocity(v, v))
-          : html`${this.velocityField('Lowest velocity', vLo, (v) => this.setVelocity(v, vHi))}<span class="dash">–</span>${this.velocityField('Highest velocity', vHi, (v) => this.setVelocity(vLo, v))}`}
-      </div>
 
       <z-separator is-vertical></z-separator>
       <div class="group" part="group quantize">
@@ -336,20 +395,6 @@ export class MaddieInspector extends MaddieElement {
             </div>
             ${this.percent('Strength', ed.view.quantizeStrength, 0, 100, 5, (v) => ed.setView({ quantizeStrength: v }))}`,
           () => this.quantize(),
-        )}
-        ${this.settings(
-          'Humanize',
-          'Random nudges to timing and velocity',
-          html`${this.percent('Timing', ed.view.humanizeTiming, 0, 100, 5, (v) => ed.setView({ humanizeTiming: v }))}
-            ${this.percent('Velocity', ed.view.humanizeVelocity, 0, 50, 1, (v) => ed.setView({ humanizeVelocity: v }))}`,
-          () => this.humanize(),
-        )}
-        ${this.settings(
-          'Ramp',
-          'Velocity steps evenly from the first note to the last',
-          html`${this.percent('First note', ed.view.rampFrom, 0, 100, 1, (v) => ed.setView({ rampFrom: v }))}
-            ${this.percent('Last note', ed.view.rampTo, 0, 100, 1, (v) => ed.setView({ rampTo: v }))}`,
-          () => this.rampVelocity(),
         )}
         ${this.settings(
           'Strum',
@@ -393,8 +438,8 @@ export class MaddieInspector extends MaddieElement {
       </div>
 
       <div class="group" part="group actions">
-        ${iconAction('Legato', 'Legato · extend to next note   L', icons.legato, () => ed.commands.legato())}
-        ${iconAction('Mute', 'Mute   M / 0', icons.mute, () => ed.commands.toggleMute())}
+        ${iconAction('Legato', 'Legato · extend to next note   N + L', icons.legato, () => ed.commands.legato())}
+        ${iconAction('Mute selected notes', 'Mute selected notes   0', icons.mute, () => ed.commands.toggleMute())}
         ${iconAction('Duplicate', `Duplicate   ${modKeyLabel} D`, icons.duplicate, () => ed.commands.duplicate())}
         ${iconAction('Delete', 'Delete   ⌫', icons.trash, () => ed.commands.delete(), 'danger')}
       </div>
@@ -413,5 +458,6 @@ function iconAction(label: string, tipText: string, icon: unknown, onClick: () =
 declare global {
   interface HTMLElementTagNameMap {
     'maddie-inspector': MaddieInspector;
+    'maddie-velocity-controls': MaddieVelocityControls;
   }
 }

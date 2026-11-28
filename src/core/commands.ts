@@ -289,6 +289,10 @@ export class Commands {
   }
 
   toggleMute(ids?: Ids) {
+    if (this.editor.chordRegions) {
+      this.editor.chordTrack.toggleMute(ids ?? this.editor.selection);
+      return;
+    }
     const notes = this.notesOf(ids);
     const mute = notes.some((n) => !n.muted);
     this.update(notes.map((n) => ({ id: n.id, muted: mute })), mute ? 'Mute' : 'Unmute');

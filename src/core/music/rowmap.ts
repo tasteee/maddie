@@ -7,7 +7,7 @@ export type FoldMode = 'none' | 'scale' | 'used';
 export const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
   { value: 'none', label: 'Off' },
   { value: 'used', label: 'Notes' },
-  { value: 'scale', label: 'In key' },
+  { value: 'scale', label: 'Key' },
 ];
 
 export interface Row {

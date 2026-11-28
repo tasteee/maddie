@@ -1,6 +1,6 @@
 import { css } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { chordLevelAt, createId, levelChords, type ChordRegion, type Editor, type Note } from '../core';
+import { chordLevelAt, createId, levelChords, pitchRangeChords, type ChordRegion, type Editor, type Note } from '../core';
 import type { Engine } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { handleWheel } from '../engine/interact';
@@ -287,7 +287,7 @@ export class MaddieVelocityLane extends CanvasElement {
       const isSelected = ed.selection.has(region.id);
       const startY = toY(chordLevelAt(region, region.start));
       const endY = toY(chordLevelAt(region, regionEnd));
-      ctx.strokeStyle = withAlpha(color, isSelected ? 1 : 0.7);
+      ctx.strokeStyle = withAlpha(color, region.muted ? 0.35 : isSelected ? 1 : 0.7);
       ctx.lineWidth = isSelected ? 2.5 : 2;
       ctx.beginPath();
       ctx.moveTo(startX, startY);
@@ -295,7 +295,7 @@ export class MaddieVelocityLane extends CanvasElement {
       ctx.stroke();
       const knobs = region.dynamics?.ramp ? [[startX, startY], [endX, endY]] : [[startX, startY]];
       for (const [knobX, knobY] of knobs) {
-        ctx.fillStyle = color;
+        ctx.fillStyle = region.muted ? withAlpha(color, 0.35) : color;
         ctx.beginPath();
         ctx.arc(knobX, knobY, isSelected ? 5 : 4.5, 0, Math.PI * 2);
         ctx.fill();
@@ -310,7 +310,12 @@ export class MaddieVelocityLane extends CanvasElement {
 /** Move one end of a chord's level: the level itself, or a ramp's start or end. */
 const nudgeChordLevel = (region: ChordRegion, knob: 'start' | 'end', delta: number): ChordRegion => {
   const ramp = region.dynamics?.ramp;
+  const range = region.dynamics?.pitchRange;
   const bounded = (value: number) => clamp(value, 1 / 127, 1);
+  if (range) {
+    const shift = clamp(delta, 1 / 127 - range.min, 1 - range.max);
+    return pitchRangeChords([region], range.min + shift, range.max + shift)[0];
+  }
   if (!ramp) return { ...region, velocity: bounded(region.velocity + delta) };
   const isStart = knob === 'start';
   const nextRamp = isStart ? { ...ramp, from: bounded(ramp.from + delta) } : { ...ramp, to: bounded(ramp.to + delta) };

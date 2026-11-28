@@ -226,10 +226,11 @@ export class Projects {
       const ed = this.editor;
       const { activeTrackId, loop, marker, soundId, midiPortId, volume, metronomeEnabled, metronomeVolume } = file.settings ?? {};
       const view = restoreProjectView(file.settings);
+      view.cursor = marker ?? view.cursor;
       ed.capture.clear();
       ed.setDoc(file.doc);
       ed.setActiveTrack(activeTrackId && ed.trackIds.includes(activeTrackId) ? activeTrackId : ed.trackIds[0]);
-      ed.transport.seek(marker ?? 0);
+      ed.transport.seek(view.cursor);
       ed.transport.setLoop(loop ?? EMPTY_LOOP);
       ed.transport.setMetronome({
         enabled: metronomeEnabled ?? DEFAULT_METRONOME.enabled,

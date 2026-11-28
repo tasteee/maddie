@@ -5,6 +5,7 @@ import { customElement } from 'lit/decorators.js';
 import { MaddieRoot } from './root';
 import { styleEditorToast } from './zest';
 import { themeRegion } from './tokens';
+import './toggle-palette';
 import editorCss from './editor.css?raw';
 
 /**
@@ -37,6 +38,28 @@ export class MaddieEditor extends MaddieRoot {
     this.editor.setView({ velocityLaneOpen: !isOpen });
   };
 
+  protected shortcutKeymap() {
+    return {
+      t: () => this.openPalette('toggle'),
+      '/': () => this.openPalette('panels'),
+      g: () => this.openEditMenu('grid'),
+      f: () => this.openEditMenu('fold'),
+      ...this.keymap,
+    };
+  }
+
+  private openPalette(kind: 'toggle' | 'panels') {
+    this.renderRoot.querySelector('maddie-toggle-palette')?.open(kind);
+  }
+
+  private openEditMenu(kind: 'grid' | 'fold') {
+    let focus = document.activeElement;
+    while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
+    const returnFocus = focus instanceof HTMLElement && focus !== document.body ? focus : this;
+    const toolbar = this.renderRoot.querySelector('maddie-toolbar');
+    toolbar?.shadowRoot?.querySelector('maddie-editbar')?.openMenu(kind, returnFocus);
+  }
+
   protected render() {
     const isLaneOpen = this.editor.view.velocityLaneOpen;
     const laneToggleLabel = isLaneOpen ? 'Hide velocity lane' : 'Show velocity lane';
@@ -62,6 +85,7 @@ export class MaddieEditor extends MaddieRoot {
             <button type="button" class="lane-fold" aria-expanded=${isLaneOpen} aria-label=${laneToggleLabel} title=${laneToggleLabel + '   / + V'}
               @click=${this.toggleLane}>${icons.chevron}</button>
             <slot name="lane-label">Velocity</slot>
+            <maddie-velocity-controls part="velocity-controls"></maddie-velocity-controls>
           </div>
           <div class="label" part="lane-corner"></div>
           <maddie-velocity-lane part="velocity-lane"></maddie-velocity-lane>
@@ -70,6 +94,7 @@ export class MaddieEditor extends MaddieRoot {
         <slot name="inspector"><maddie-inspector part="inspector"></maddie-inspector></slot>
         <slot name="footer"></slot>
       </div>
+      <maddie-toggle-palette></maddie-toggle-palette>
       <slot></slot>
     `;
   }

@@ -1,6 +1,6 @@
 import type { ScaledT } from '@tasteee/scaled/types';
 import { createId, type Editor } from './editor';
-import { shapeChordVelocity } from './chord-dynamics';
+import { shapeChordVelocity, withDynamics } from './chord-dynamics';
 import { ticksToSeconds } from './music/timeline';
 import { pitchClass } from './music/pitch';
 import type { ChordRegion, Key, Note, Tick } from './types';
@@ -42,6 +42,14 @@ const octaveOf = (pitch: number) => Math.floor(pitch / 12) - 1;
 
 function chordOf(region: ChordRegion): ScaledT.ChordT {
   return { symbol: region.symbol, rootPitch: region.root, chordType: region.symbol, intervals: region.intervals, midiNotes: region.pitches };
+}
+
+function voiceRegion(scaled: ScaledT, region: ChordRegion, voicing: ScaledT.VoicingNameT, inversion: number,
+  previousMidiNotes?: readonly number[]): ChordRegion {
+  const rootMidi = region.rootMidi ?? region.root + 12 * Math.round((Math.min(...region.pitches) - region.root) / 12);
+  const chord = { ...chordOf(region), midiNotes: region.intervals.map((interval) => rootMidi + interval) };
+  const pitches = scaled.getChordWithVoicing({ chord, voicing, inversion, previousMidiNotes }).midiNotes;
+  return { ...region, voicing, inversion, rootMidi, pitches };
 }
 
 function isValid(regions: readonly ChordRegion[]): boolean {
@@ -87,7 +95,8 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
       pitch,
       start: region.start,
       duration: region.duration,
-      velocity: shapeChordVelocity(region, { id: region.id + ':voice:' + i, start: region.start }, ppq),
+      velocity: shapeChordVelocity(region, { id: region.id + ':voice:' + i, start: region.start, pitch }, ppq),
+      ...(region.muted ? { muted: true } : {}),
     }));
   }
   for (const [groupId, group] of groups) {
@@ -125,7 +134,8 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
           pitch: hit.midiNote,
           start,
           duration: stop - start,
-          velocity: shapeChordVelocity(region, { id: noteId, start, patternVelocity: hit.velocity / 127 }, ppq),
+          velocity: shapeChordVelocity(region, { id: noteId, start, pitch: hit.midiNote, patternVelocity: hit.velocity / 127 }, ppq),
+          ...(region.muted ? { muted: true } : {}),
         });
       }
     }
@@ -145,8 +155,23 @@ export interface ChordTrackEdit {
   notes: readonly Note[];
 }
 
+export const CHORD_SETTING_LABELS = {
+  all: 'All settings',
+  pattern: 'Pattern',
+  voicing: 'Voicing & inversion',
+  dynamics: 'Velocity & dynamics',
+} as const;
+
+export type ChordSettingsKind = keyof typeof CHORD_SETTING_LABELS;
+type CopiedChordSettings = Pick<ChordRegion, 'velocity' | 'dynamics'> & {
+  templateId?: string;
+  voicing: ScaledT.VoicingNameT;
+  inversion: number;
+};
+
 export class ChordTrackCommands {
   private clipboard: ChordRegion[] = [];
+  private copiedSettings?: CopiedChordSettings;
 
   constructor(private editor: Editor) {}
 
@@ -199,17 +224,19 @@ export class ChordTrackCommands {
     return this.editor.auditionChord(draft.region.pitches, held ? null : 0.5, draft.region.velocity);
   }
 
-  auditionPitches(regions: readonly Pick<ChordRegion, 'pitches' | 'velocity'>[] = this.editor.selectedChordRegions) {
-    if (regions.length) this.editor.auditionChord(regions.flatMap((region) => region.pitches), 0.5, regions[0].velocity);
+  auditionPitches(regions: readonly Pick<ChordRegion, 'pitches' | 'velocity' | 'muted'>[] = this.editor.selectedChordRegions) {
+    const audible = regions.filter((region) => !region.muted);
+    if (audible.length) this.editor.auditionChord(audible.flatMap((region) => region.pitches), 0.5, audible[0].velocity);
   }
 
   audition(regions: readonly ChordRegion[] = this.editor.selectedChordRegions) {
-    if (!regions.length) return;
+    const audible = regions.filter((region) => !region.muted);
+    if (!audible.length) return;
     const ed = this.editor;
-    const ids = new Set(regions.map((region) => region.id));
+    const ids = new Set(audible.map((region) => region.id));
     const notes = ed.notes().filter((note) => note.chordRegionId && ids.has(note.chordRegionId));
     if (notes.length) ed.auditionNotes(notes, regions[0].start);
-    else ed.auditionChord(regions[0].pitches, 0.5, regions[0].velocity);
+    else ed.auditionChord(audible[0].pitches, 0.5, audible[0].velocity);
   }
 
   /**
@@ -217,6 +244,7 @@ export class ChordTrackCommands {
    * this chord and play were pressed. Returns a stop function. Used while a chord is held.
    */
   auditionLoop(region: ChordRegion): () => void {
+    if (region.muted) return () => {};
     const ed = this.editor;
     const notes = ed.notes().filter((note) => note.chordRegionId === region.id);
     const hasNotes = notes.length > 0;
@@ -236,6 +264,26 @@ export class ChordTrackCommands {
       clearTimeout(timer);
       ed.stopChord();
     };
+  }
+
+  /** Mark both the chord and its current notes so muting never restarts its pattern. */
+  toggleMute(ids: Iterable<string>) {
+    const ed = this.editor;
+    const source = ed.chordRegions;
+    if (!source) return false;
+    const owners = new Set(Array.from(ids, (id) => ed.getNote(id)?.chordRegionId ?? id));
+    const targets = source.filter((region) => owners.has(region.id));
+    if (!targets.length) return false;
+    const mute = targets.some((region) => !region.muted);
+    const setMuted = <T extends { muted?: boolean }>(value: T): T => {
+      const updated = { ...value };
+      if (mute) updated.muted = true;
+      else delete updated.muted;
+      return updated;
+    };
+    const regions = source.map((region) => owners.has(region.id) ? setMuted(region) : region);
+    const notes = ed.notes().map((note) => note.chordRegionId && owners.has(note.chordRegionId) ? setMuted(note) : note);
+    return this.commit({ trackId: ed.activeTrackId, source, regions, notes }, mute ? 'Mute chords' : 'Unmute chords');
   }
 
   /**
@@ -279,6 +327,82 @@ export class ChordTrackCommands {
 
   clearClipboard() {
     this.clipboard = [];
+  }
+
+  get hasCopiedSettings(): boolean {
+    return this.copiedSettings !== undefined;
+  }
+
+  copySettings(id: string): boolean {
+    const region = this.editor.chordRegions?.find((chord) => chord.id === id);
+    if (!region) return false;
+    this.copiedSettings = {
+      templateId: region.performance?.templateId,
+      voicing: region.voicing ?? 'rootPosition',
+      inversion: region.inversion ?? 0,
+      velocity: region.velocity,
+      dynamics: region.dynamics && structuredClone(region.dynamics),
+    };
+    return true;
+  }
+
+  async pasteSettings(kind: ChordSettingsKind): Promise<boolean> {
+    const ed = this.editor;
+    const settings = this.copiedSettings;
+    const source = ed.chordRegions;
+    const trackId = ed.activeTrackId;
+    const selected = new Set(ed.selectedChordRegions.map(({ id }) => id));
+    if (!settings || !source || !selected.size) return false;
+
+    const pastePattern = kind === 'pattern' || kind === 'all';
+    const pasteVoicing = kind === 'voicing' || kind === 'all';
+    const pasteDynamics = kind === 'dynamics' || kind === 'all';
+    if (!engine && (pasteVoicing || (pastePattern && settings.templateId) || source.some((region) => region.performance))) await loadScaled();
+    if (ed.activeTrackId !== trackId || ed.chordRegions !== source) return false;
+
+    const groupOrigins = new Map<string, ChordRegion>();
+    const survivingGroups = new Set<string>();
+    const changed: ChordRegion[] = [];
+    for (const region of source) {
+      const performance = region.performance;
+      const groupId = performance?.groupId;
+      if (pastePattern && groupId && !groupOrigins.has(groupId)) groupOrigins.set(groupId, region);
+
+      if (!selected.has(region.id)) {
+        // When the first chord of a pattern group is replaced, keep the remaining hits in phase.
+        if (pastePattern && performance && !survivingGroups.has(performance.groupId)) {
+          survivingGroups.add(performance.groupId);
+          const origin = groupOrigins.get(performance.groupId)!;
+          if (origin !== region) {
+            const phaseTicks = (origin.performance?.phaseTicks ?? 0) + region.start - origin.start;
+            changed.push({ ...region, performance: { ...performance, phaseTicks } });
+          }
+        }
+        continue;
+      }
+
+      let updated = region;
+      if (pasteVoicing && engine) {
+        const inversion = Math.max(0, Math.min(settings.inversion, 3, region.intervals.length - 1));
+        updated = voiceRegion(engine, region, settings.voicing, inversion);
+        if (settings.voicing === 'guitar') {
+          const octave = octaveOf(updated.rootMidi! - (ed.key?.root ?? 0));
+          updated.pitches = updated.pitches.map((pitch) => pitch + 12 * (octave - 3));
+        }
+        if (updated.pitches.some((pitch) => !Number.isInteger(pitch) || pitch < 0 || pitch > 127)) {
+          throw new RangeError('This voicing is outside the MIDI range for a selected chord.');
+        }
+      }
+      if (pastePattern && (settings.templateId || performance)) {
+        const templateId = settings.templateId;
+        updated = { ...updated, performance: templateId ? { templateId, groupId: createId(), ...scaledKey(ed.key, region.root) } : undefined };
+      }
+      if (pasteDynamics) updated = withDynamics({ ...updated, velocity: settings.velocity }, settings.dynamics ?? {});
+      if (updated !== region) changed.push(updated);
+    }
+
+    const label = kind === 'all' ? 'Paste chord settings' : `Paste ${CHORD_SETTING_LABELS[kind].toLowerCase()}`;
+    return this.commitChanged(changed, label);
   }
 
   copy() {
@@ -467,17 +591,9 @@ export class ChordTrackCommands {
     const context = scaledKey(ed.key, selected[0].root);
     let previous: readonly number[] | undefined;
     for (const region of selected) {
-      const styledRegion = { ...region };
-      if (voicing || inversion !== undefined) {
-        const rootMidi = region.rootMidi ?? region.root + 12 * Math.round((Math.min(...region.pitches) - region.root) / 12);
-        const chord = { ...chordOf(region), midiNotes: region.intervals.map((interval) => rootMidi + interval) };
-        styledRegion.voicing = voicing ?? region.voicing ?? 'rootPosition';
-        styledRegion.inversion = inversion ?? region.inversion ?? 0;
-        styledRegion.pitches = engine.getChordWithVoicing({
-          chord, voicing: styledRegion.voicing, inversion: styledRegion.inversion, previousMidiNotes: previous,
-        }).midiNotes;
-        styledRegion.rootMidi = rootMidi;
-      }
+      const styledRegion = voicing || inversion !== undefined
+        ? voiceRegion(engine, region, voicing ?? region.voicing ?? 'rootPosition', inversion ?? region.inversion ?? 0, previous)
+        : { ...region };
       previous = styledRegion.pitches;
       if (templateId !== undefined) styledRegion.performance = templateId ? { templateId, groupId, ...context } : undefined;
       styled.set(region.id, styledRegion);

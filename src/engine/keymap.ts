@@ -30,11 +30,11 @@ export const rowZoomBy = (editor: Editor, factor: number) => {
 /** Step the play marker to the previous / next grid line, scrolling to keep it in view. */
 const stepMarker = (editor: Editor, dir: -1 | 1, gridOverride?: number) => {
   const { transport } = editor;
-  const from = transport.playing ? transport.position : transport.marker;
+  const from = transport.marker;
   const grid = gridOverride ?? editor.commands.gridTicks(from);
   const tick = stepGrid(from, grid, editor.meta.timeSignature, dir);
-  transport.seek(tick);
-  editor.setView({ cursor: tick });
+  Engine.for(editor).pauseFollow();
+  editor.setInsertMarker(tick);
   const v = editor.view;
   const span = (Engine.for(editor).viewport.width || 800) / v.pxPerTick;
   const margin = span * 0.1;
@@ -192,16 +192,19 @@ export const actions: Record<string, Action> = {
   rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
   // Like Ableton: stopping returns to the marker, so the next play starts from it.
   playPause: (e) => e.transport.toggle(),
+  resumePlayback: (e) => e.transport.resume(),
   playSelection: (e) => {
     const notes = e.selectedNotes;
     const first = e.selectedChordRegions[0]?.start ?? (notes.length ? Math.min(...notes.map((n) => n.start)) : undefined);
     if (first === undefined) return e.transport.toggle();
+    e.setView({ cursor: first });
     e.transport.seek(first);
     if (!e.transport.playing) e.transport.play();
   },
   stop: (e) => {
     e.transport.stop();
     if (e.transport.position !== 0) e.transport.stop();
+    e.setView({ cursor: e.transport.marker });
   },
   toggleSnap: (e) => e.setView({ snap: !e.view.snap }),
   cycleGridDivision: (e) => {
@@ -235,11 +238,17 @@ export const actions: Record<string, Action> = {
   record: (e) => e.recorder.toggle(),
   captureMidi: (e) => captureMidi(e),
   toggleLoop: (e) => {
+    const { loop } = e.transport;
+    if (loop.end > loop.start) return e.transport.setLoop({ enabled: !loop.enabled });
+    const { numerator, denominator } = e.meta.timeSignature[0];
+    e.transport.setLoop({ start: 0, end: e.ppq * 8 * numerator / denominator, enabled: true });
+  },
+  loopSelection: (e) => {
     const selectedNotes = e.selectedNotes;
     const selectedChords = e.selectedChordRegions;
     const selectedSpans = [...selectedNotes, ...selectedChords];
     const hasSelection = selectedSpans.length > 0;
-    if (!hasSelection) return e.transport.setLoop({ enabled: !e.transport.loop.enabled });
+    if (!hasSelection) return actions.toggleLoop(e);
     const starts = selectedSpans.map((span) => span.start);
     const ends = selectedSpans.map((span) => span.start + span.duration);
     const start = Math.min(...starts);
@@ -266,7 +275,7 @@ export const defaultKeymap: Keymap = {
   q: 'quantize',
   m: 'toggleTrackMute',
   '0': 'mute',
-  l: 'legato',
+  'n+l': 'legato',
   arrowleft: 'nudgeLeft',
   arrowright: 'nudgeRight',
   'mod+arrowleft': 'nudgeFinerLeft',
@@ -293,23 +302,18 @@ export const defaultKeymap: Keymap = {
   'alt+=': 'rowsTaller',
   'alt+-': 'rowsShorter',
   space: 'playPause',
+  'shift+space': 'resumePlayback',
   'mod+space': 'playSelection',
   'ctrl+space': 'playSelection',
   enter: 'stop',
   s: 'toggleTrackSolo',
   's+t+g': 'toggleSnap',
-  'g+d': 'cycleGridDivision',
-  'g+f': 'cycleGridFeel',
-  'f+k': 'cycleFold',
   '/+c': 'toggleChords',
   '/+s': 'toggleSuggestions',
   '/+v': 'toggleVelocityLane',
-  'mod+l': 'toggleLoop',
+  'mod+l': 'loopSelection',
   r: 'record',
   'shift+r': 'captureMidi',
-  c: 'toggleMetronome',
-  f: 'toggleFollow',
-  h: 'toggleChords',
   'shift+m': 'toggleMasterMute',
   'mod+shift+e': 'exportMidi',
 };
@@ -368,7 +372,8 @@ export class HeldShortcuts {
     const isUnmodified = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
     const chords = isUnmodified ? Object.keys(keymap)
       .map((binding) => ({ binding, keys: binding.split('+') }))
-      .filter(({ keys }) => keys.length > 1 && keys.includes(name) && keys.every((key) => key && !modifiers.has(key))) : [];
+      .filter(({ keys }) => keys.length > 1 && keys.includes(name) && keys.every((key) => key && !modifiers.has(key)) &&
+        (!this.editor.view.computerKeyboard || !keys.every(isLetter))) : [];
 
     if (!e.repeat && chords.length) {
       const held = [...this.pressed.values()];
@@ -388,6 +393,7 @@ export class HeldShortcuts {
 
     // MIDI note input and its mode controls keep their existing keydown behavior.
     if (fallback?.()) return true;
+    if (isUnmodified && this.editor.view.computerKeyboard && isLetter(name)) return false;
     const combo = resolveCombo(e, keymap);
     const action = getAction(keymap, combo);
     if (action && combo !== '+' && combo.includes('+')) {
@@ -403,12 +409,14 @@ export class HeldShortcuts {
     const code = e.code || keyName(e);
     const press = this.pressed.get(code);
     this.pressed.delete(code);
-    if (!e.defaultPrevented) press?.onRelease?.(this.editor);
+    if (!e.defaultPrevented && press && !(this.editor.view.computerKeyboard && isLetter(press.name))) press.onRelease?.(this.editor);
   }
 
   clear() {
     this.pressed.clear();
   }
 }
+
+const isLetter = (key: string) => /^\p{L}$/u.test(key);
 
 export const modKeyLabel = isMac ? '⌘' : 'Ctrl';

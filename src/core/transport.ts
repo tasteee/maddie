@@ -47,6 +47,7 @@ export class Transport {
   private clickListeners = new Set<(e: ClickEvent) => void>();
   private stoppedAt: Tick = 0;
   private returnTo: Tick = 0;
+  private lastStop: Tick | null = null;
   private anchors: Anchor[] = [];
   private scheduledUntil = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -74,17 +75,40 @@ export class Transport {
     return this.state === 'playing';
   }
 
-  async play(from?: Tick) {
+  play(from?: Tick) {
+    return this.startPlayback(from, true);
+  }
+
+  /** Continue from the last stop while keeping the insert marker in place. */
+  resume() {
+    return this.startPlayback(this.lastStop ?? this.marker, false);
+  }
+
+  /** Start or jump playback while keeping the insert marker in place. */
+  jump(tick: Tick) {
+    const target = this.startInsideLoop(Math.max(0, tick));
+    if (this.playing) return this.seek(target, { marker: false });
+    return this.startPlayback(target, false);
+  }
+
+  /** @internal The previous stop position belongs to the current document. */
+  clearResumePosition() {
+    this.lastStop = null;
+  }
+
+  private async startPlayback(from: Tick | undefined, moveMarker: boolean) {
     if (this.state === 'playing') return;
     const ctx = this.audioContext;
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+    if (this.playing) return;
     const requested = from ?? this.stoppedAt;
-    if (this.state === 'stopped') this.returnTo = requested;
+    if (moveMarker && this.state === 'stopped') this.returnTo = requested;
     const start = this.startInsideLoop(requested);
     const time = ctx.currentTime + 0.05;
     this.anchors = [{ time, tick: start }];
     this.scheduledUntil = time;
     this.state = 'playing';
+    this.chaseNotes(start, time);
     this.schedule();
     // The first pass can already stop (starting past the end): don't leave a timer running.
     const didStopAlready = this.state !== 'playing';
@@ -96,6 +120,7 @@ export class Transport {
   pause() {
     if (this.state !== 'playing') return;
     this.stoppedAt = this.position;
+    this.lastStop = this.stoppedAt;
     this.halt('paused');
   }
 
@@ -107,7 +132,9 @@ export class Transport {
     if (this.state === 'stopped') {
       this.stoppedAt = 0;
       this.returnTo = 0;
+      this.clearResumePosition();
     } else {
+      this.lastStop = this.position;
       this.stoppedAt = this.returnTo;
       this.halt('stopped');
       return;
@@ -118,7 +145,7 @@ export class Transport {
   /** Space bar: play from the marker, or stop back to it. */
   toggle() {
     if (this.state === 'playing') this.stop();
-    else this.play();
+    else this.startPlayback(this.marker, false);
   }
 
   /** Where play starts from. */
@@ -143,6 +170,7 @@ export class Transport {
       this.anchors = [{ time, tick }];
       this.scheduledUntil = time;
       if (marker) this.returnTo = tick;
+      this.chaseNotes(tick, time);
     } else {
       this.stoppedAt = tick;
       this.returnTo = tick;
@@ -198,6 +226,19 @@ export class Transport {
 
   private emit() {
     this.editor.emitTransport();
+  }
+
+  private chaseNotes(tick: Tick, time: number) {
+    const { tempo, ppq } = this.editor.meta;
+    for (const { note, trackId } of this.editor.notesAllTracks(tick, tick + 1, { audibleOnly: true })) {
+      if (note.muted || note.start >= tick) continue;
+      const noteEnd = note.start + note.duration;
+      const end = this.loop.enabled ? Math.min(noteEnd, this.loop.end) : noteEnd;
+      if (end > tick) {
+        const duration = ticksToSeconds(end, tempo, ppq) - ticksToSeconds(tick, tempo, ppq);
+        this.editor.dispatchNote(note, time, duration, trackId);
+      }
+    }
   }
 
   private schedule() {

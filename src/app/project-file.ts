@@ -1,5 +1,5 @@
 import { saveEditorFile } from '../elements/save-file';
-import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type Editor, type MaddieDoc, type LoopRegion, type ViewState, type AppViewKeyT } from '../core';
+import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type ChordFamily, type Editor, type MaddieDoc, type LoopRegion, type ViewState, type AppViewKeyT } from '../core';
 
 export interface MaddieProject {
   format: 'maddie';
@@ -17,7 +17,7 @@ export interface MaddieProject {
     metronomeEnabled?: boolean;
     metronomeVolume?: number;
     fold?: ViewState['fold'];
-    view?: Partial<ViewState>;
+    view?: Partial<ViewState> & { chordFamily?: ChordFamily | 'all' };
   };
 }
 
@@ -40,6 +40,9 @@ const boolean = (value: unknown) => typeof value === 'boolean';
 const nullable = (test: (value: unknown) => boolean) => (value: unknown) => value === null || test(value);
 const oneOf = (...values: string[]) => (value: unknown) => text(value) && values.includes(value);
 const grid = (value: unknown) => text(value) && /^(auto|bar|1\/[1-9]\d{0,14}[T.]?)$/.test(value);
+const chordFamilyIds = CHORD_FAMILIES.map(({ id }) => id);
+const isChordFamily = oneOf(...chordFamilyIds);
+const isLegacyChordFamily = oneOf('all', ...chordFamilyIds);
 const viewValidators = {
   pxPerTick: numberIn(...ZOOM_LIMITS.pxPerTick),
   rowHeight: numberIn(...ZOOM_LIMITS.rowHeight),
@@ -65,7 +68,7 @@ const viewValidators = {
   chordsTab: oneOf('all', 'project', 'browse', 'suggestions', 'song'),
   suggestionsOpen: boolean,
   velocityLaneOpen: boolean,
-  chordFamily: oneOf('all', ...CHORD_FAMILIES.map(({ id }) => id)),
+  hiddenChordFamilies: (value: unknown) => list(value, isChordFamily),
   chordQuery: text,
   chordOctave: (value: unknown) => int(value, 1, 6),
   chordInversion: (value: unknown) => int(value, 0, 3),
@@ -92,6 +95,9 @@ export function restoreProjectView(settings: MaddieProject['settings']): ViewSta
   const isLegacyTab = legacyTab === 'browse' || legacyTab === 'suggestions';
   if (isLegacySongTab) restored.chordsTab = 'project';
   if (isLegacyTab) restored.chordsTab = 'all';
+  if (view.hiddenChordFamilies === undefined && view.chordFamily && view.chordFamily !== 'all') {
+    restored.hiddenChordFamilies = chordFamilyIds.filter((family) => family !== view.chordFamily);
+  }
   return restored;
 }
 
@@ -110,7 +116,7 @@ function validRegion(value: unknown): value is Record<string, unknown> & { start
   const { performance } = value;
   return list(value.intervals, (n) => int(n)) && value.intervals.length > 0 &&
     list(value.pitches, (n) => int(n, 0, 127)) && value.pitches.length > 0 &&
-    optional(value.voicing, id) && optional(value.inversion, (n) => int(n)) &&
+    optional(value.muted, boolean) && optional(value.voicing, id) && optional(value.inversion, (n) => int(n)) &&
     optional(value.rootMidi, (n) => typeof n === 'number' && Number.isSafeInteger(n)) &&
     (performance === undefined || (record(performance) && id(performance.templateId) && id(performance.groupId) &&
       id(performance.key) && id(performance.scale) && optional(performance.phaseTicks, (n) => int(n)))) &&
@@ -119,11 +125,13 @@ function validRegion(value: unknown): value is Record<string, unknown> & { start
 
 function validDynamics(value: unknown): boolean {
   if (!record(value)) return false;
-  const { ramp, humanize, accent } = value;
+  const { ramp, pitchRange, humanize, accent } = value;
   const isRampValid = ramp === undefined || (record(ramp) && velocity(ramp.from) && velocity(ramp.to));
+  const isPitchRangeValid = pitchRange === undefined || (record(pitchRange) && typeof pitchRange.min === 'number' &&
+    typeof pitchRange.max === 'number' && pitchRange.min >= 1 / 127 && pitchRange.max <= 1 && pitchRange.min <= pitchRange.max);
   const isHumanizeValid = humanize === undefined || (record(humanize) && numberIn(0, 1)(humanize.amount) && typeof humanize.seed === 'number');
   const isAccentValid = accent === undefined || oneOf(...CHORD_ACCENTS.map((item) => item.value))(accent);
-  return isRampValid && isHumanizeValid && isAccentValid;
+  return isRampValid && isPitchRangeValid && isHumanizeValid && isAccentValid;
 }
 
 function validRoute(value: unknown): boolean {
@@ -180,6 +188,7 @@ function validSettings(value: unknown) {
     !optional(value.metronomeVolume, velocity) || !optional(value.metronomeEnabled, boolean) ||
     !optional(value.fold, viewValidators.fold) ||
     !optional(value.view, (view) => record(view) &&
+      optional(view.chordFamily, isLegacyChordFamily) &&
       PROJECT_VIEW_KEYS.every((key) => optional(view[key], viewValidators[key])))) return false;
   const loop = value.loop;
   return loop === undefined || (record(loop) && boolean(loop.enabled) && int(loop.start) && int(loop.end) &&
@@ -202,8 +211,13 @@ export function parseProject(json: string): MaddieProject {
   return readProject(value);
 }
 
+export const projectFilename = (name: string) => {
+  const stem = name.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/\.maddie$/i, '') || 'Untitled Project';
+  const reserved = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(stem);
+  return `${reserved ? '_' : ''}${stem}.maddie`;
+};
+
 export const downloadProject = (project: MaddieProject) => {
   const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
-  const filename = (project.name.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '-') || 'Untitled Project') + '.maddie';
-  return saveEditorFile(blob, filename, 'Maddie project', '.maddie');
+  return saveEditorFile(blob, projectFilename(project.name), 'Maddie project', '.maddie');
 };

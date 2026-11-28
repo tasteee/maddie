@@ -17,6 +17,7 @@ p { margin: 0; }
 svg { width: 14px; height: 14px; vertical-align: middle; }
 button { color: inherit; background: transparent; border: 0; text-align: start; font: inherit; cursor: pointer; border-radius: var(--radius-md); }
 button:hover { background: var(--surface-page); }
+button:disabled { opacity: 0.5; cursor: default; }
 button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 .project-action, .project-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-2); width: 100%; min-height: var(--control-height-md); box-sizing: border-box; }
 z-separator { margin-block: var(--space-1); }
@@ -29,3 +30,8 @@ z-separator { margin-block: var(--space-1); }
 .project-list { height: 232px; }
 .project-list p { padding: var(--space-3); }
 .project-footer { border-top: 1px solid var(--border-default); padding: var(--space-2); margin-top: auto; }
+.folder-caption, .folder-list p, .folder-replace p { padding: var(--space-1) var(--space-2); }
+.folder-caption[title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-list { --z-scroll-area-max-height: 184px; }
+.folder-replace { padding: var(--space-1); background: var(--surface-subtle); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.folder-footer { margin-top: auto; padding-top: var(--space-1); }

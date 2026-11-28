@@ -168,6 +168,22 @@ describe('per-track outputs', () => {
     expect(setup.defaultOutput.played).toEqual([]);
   });
 
+  it('auditions a passage through its source track without activating it', () => {
+    const { editor, defaultOutput, bassOutput } = createRoutedEditor();
+    const activeTrack = editor.activeTrackId;
+    const bass = editor.commands.addTrack({ notes: [note(36)] });
+    editor.commands.setTrackRoute(bass.id, { kind: 'sound', soundId: 'bass' });
+    editor.setActiveTrack(activeTrack);
+
+    const stop = editor.auditionNotes(editor.notes(bass.id), 0, bass.id);
+    stop?.();
+
+    expect(editor.activeTrackId).toBe(activeTrack);
+    expect(defaultOutput.played).toEqual([]);
+    expect(bassOutput.played).toEqual([36]);
+    expect(bassOutput.noteOff).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the route when a track is duplicated', () => {
     const setup = createRoutedEditor();
     const lead = setup.editor.activeTrackId;

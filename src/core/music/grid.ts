@@ -1,5 +1,5 @@
 import type { Tick, TimeSigEvent } from '../types';
-import { timeSigAt } from './timeline';
+import { barLength, beatLength, timeSigAt } from './timeline';
 
 /**
  * `'1/16'` straight, `'1/8T'` triplet, `'1/8.'` dotted, `'bar'`, or `'auto'` (follows zoom).
@@ -108,12 +108,13 @@ export const MIN_BAR_PX = 12;
  * or (thinned) bars, whichever is finest while still drawn.
  */
 export function visibleLineTicks(grid: GridValue, ppq: number, pxPerTick: number, sig?: TimeSigEvent): number {
-  const barTicks = sig ? (ppq * 4 * sig.numerator) / sig.denominator : ppq * 4;
+  const barTicks = sig ? barLength(sig, ppq) : ppq * 4;
   const barPx = barTicks * pxPerTick;
   const barEvery = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
   let finest = barTicks * barEvery;
-  const areBeatsDrawn = ppq * pxPerTick >= MIN_LINE_PX;
-  if (areBeatsDrawn) finest = Math.min(finest, ppq);
+  const beat = sig ? beatLength(sig, ppq) : ppq;
+  const areBeatsDrawn = beat * pxPerTick >= MIN_LINE_PX;
+  if (areBeatsDrawn) finest = Math.min(finest, beat);
   const gridSize = resolveGrid(grid, ppq, pxPerTick, sig);
   const areSubdivisionsDrawn = gridSize * pxPerTick >= MIN_LINE_PX;
   if (areSubdivisionsDrawn) finest = Math.min(finest, gridSize);
@@ -121,6 +122,16 @@ export function visibleLineTicks(grid: GridValue, ppq: number, pxPerTick: number
 }
 
 export type SnapMode = 'round' | 'floor' | 'ceil';
+
+/** Snap-grid positions in [from, to), measured from the time-signature anchor. */
+export function* gridTicksInRange(from: Tick, to: Tick, grid: number, anchor: Tick): Iterable<Tick> {
+  if (!(grid > 0)) return;
+  for (let step = Math.floor((from - anchor) / grid); ; step++) {
+    const tick = Math.round(anchor + step * grid);
+    if (tick >= to) return;
+    if (tick >= from) yield tick;
+  }
+}
 
 /** Snap a tick to the grid. The grid is anchored to the active time signature's start. */
 export function snapTick(

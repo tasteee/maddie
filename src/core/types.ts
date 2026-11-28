@@ -43,6 +43,7 @@ export interface ChordRegion {
   start: Tick;
   duration: Tick;
   velocity: number;
+  muted?: boolean;
   voicing?: ScaledT.VoicingNameT;
   inversion?: number;
   rootMidi?: number;

@@ -259,4 +259,65 @@ describe('Chord Tracks', () => {
     expect(editor.notes()).toEqual(notes);
     expect(editor.selectedChordRegions).toHaveLength(1);
   });
+
+  it('pastes copied chord settings onto several destinations with one undo', async () => {
+    const scaled = await loadScaled();
+    const editor = createEditor({ doc: { ppq: 480, key: { root: 0, scale: 'major' } } });
+    editor.chordTrack.enable();
+    const pattern = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
+    const source = editor.chordTrack.draft({ symbol: 'Cmaj7', root: 0, intervals: [0, 4, 7, 11] },
+      { octave: 4, voicing: 'closed', inversion: 3, templateId: pattern });
+    const dynamics = { ramp: { from: 0.3, to: 0.8 }, humanize: { amount: 0.1, seed: 42 }, accent: 'offbeats' } as const;
+    editor.chordTrack.add({ ...source.region, start: 0, duration: 480, velocity: 0.6, dynamics });
+    editor.chordTrack.add({ ...chord(480, 659, 9), symbol: 'Am', intervals: [0, 3, 7], pitches: [57, 60, 64], rootMidi: 57 });
+    editor.chordTrack.add({ ...chord(1139, 1440), rootMidi: 60 });
+    const before = editor.chordRegions!;
+    const [original, ...targets] = before;
+    const ids = targets.map(({ id }) => id);
+    editor.select(ids);
+    expect(await editor.chordTrack.pasteSettings('all')).toBe(false);
+    expect(editor.chordTrack.copySettings(original.id)).toBe(true);
+
+    expect(await editor.chordTrack.pasteSettings('dynamics')).toBe(true);
+    editor.selectedChordRegions.forEach((region, index) => {
+      expect(region).toEqual({ ...targets[index], velocity: 0.6, dynamics });
+    });
+    editor.undo();
+    expect(editor.chordRegions).toEqual(before);
+
+    expect(await editor.chordTrack.pasteSettings('all')).toBe(true);
+    expect(editor.chordRegions![0]).toBe(original);
+    expect([...editor.selection]).toEqual(ids);
+    editor.selectedChordRegions.forEach((region, index) => {
+      const target = targets[index];
+      expect(region).toMatchObject({ id: target.id, root: target.root, rootMidi: target.rootMidi, symbol: target.symbol,
+        start: target.start, duration: target.duration, voicing: 'closed', inversion: index === 0 ? 2 : 3,
+        velocity: 0.6, dynamics, performance: { templateId: pattern } });
+      expect(region.performance?.groupId).not.toBe(original.performance?.groupId);
+    });
+    expect(editor.selectedChordRegions[0].performance?.groupId).not.toBe(editor.selectedChordRegions[1].performance?.groupId);
+    editor.undo();
+    expect(editor.chordRegions).toEqual(before);
+  });
+
+  it('pastes a plain pattern without shifting unselected chords in the old pattern group', async () => {
+    const scaled = await loadScaled();
+    const editor = createEditor({ doc: { ppq: 480, key: { root: 0, scale: 'major' } } });
+    editor.chordTrack.enable();
+    editor.chordTrack.add(chord(0, 659));
+    editor.chordTrack.add(chord(659, 1440, 9));
+    editor.chordTrack.add(chord(2099, 480));
+    const [first, second, plain] = editor.chordRegions!;
+    editor.select([first.id, second.id]);
+    const templateId = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ templateId })!, 'Apply rhythm');
+    const secondNotes = () => editor.notes().filter((note) => note.chordRegionId === second.id);
+    const before = secondNotes();
+    expect(before.length).toBeGreaterThan(0);
+    editor.chordTrack.copySettings(plain.id);
+    editor.select([first.id]);
+    expect(await editor.chordTrack.pasteSettings('pattern')).toBe(true);
+    expect(editor.selectedChordRegions[0].performance).toBeUndefined();
+    expect(secondNotes()).toEqual(before);
+  });
 });

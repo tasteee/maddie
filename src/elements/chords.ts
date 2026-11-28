@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import type { ScaledT } from '@tasteee/scaled/types';
 import {
-  analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_TYPES, CHORD_VOICINGS, chordsInKey, DISABLED_VOICINGS, offeredVoicings,
+  analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_INVERSION_LABELS, CHORD_TYPES, CHORD_VOICINGS, chordCraftSettings, chordsInKey, DISABLED_VOICINGS, offeredVoicings,
   formatBBT, loadScaled, pitchClassName, scaledKey, snapTick,
   type Chord, type ChordDraft, type DetectedChordT, type Editor, type Key, type NoteId,
 } from '../core';
@@ -39,11 +39,12 @@ type AnchorT = {
 type SuggestionsT = { inKey: Chord[]; borrowed: Chord[] };
 
 const OCTAVES = [1, 2, 3, 4, 5, 6];
-const INVERSIONS = ['Root', '1st', '2nd', '3rd'];
+const INVERSIONS = [CHORD_INVERSION_LABELS[0], '1st', '2nd', '3rd'];
 /** How long a shape change plays (matches auditionChord's default). */
 const SHAPE_PREVIEW_MS = 500;
 const RAIL_OPEN = 148;
 const STRIP = 40;
+const SHOW_CHORD_SEARCH = false;
 
 const toSymbol = (symbol: string) => symbol.replace(/♯/g, '#').replace(/♭/g, 'b').replace(/°/g, 'dim').replace(/ø7/g, 'm7b5');
 
@@ -156,13 +157,16 @@ export class MaddieChords extends MaddieElement {
       .tab:hover { color: var(--_text); }
       .tab[aria-selected='true'] { background: var(--_bg); border-color: var(--border-strong); color: var(--_text); }
       .tab-count { margin-left: var(--space-1); color: var(--_text-faint); font-variant-numeric: tabular-nums; }
-      .search { display: block; margin: var(--space-3) var(--space-3) 0; }
-      .chips { display: flex; gap: var(--space-1); margin-top: var(--space-3); padding: 0 var(--space-3) var(--space-3); overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--_border); }
-      .chip { flex: none; height: 24px; padding: 0 9px; border: 1px solid var(--_border); border-radius: 999px; background: var(--_bg); color: var(--_text-muted); font-size: var(--font-size-xs); font-weight: 500; cursor: pointer; }
+      .search:not([hidden]) { display: block; margin: var(--space-3) var(--space-3) 0; }
+      .search[hidden] { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-3); border-bottom: 1px solid var(--_border); }
+      .chip { flex: none; height: 24px; padding: 0 8px; border: 1px solid var(--_border); border-radius: 999px; background: var(--_bg); color: var(--_text-faint); font-size: var(--font-size-xs); font-weight: 500; cursor: pointer; }
       .chip:hover { border-color: var(--border-strong); color: var(--_text); }
-      .chip[aria-checked='true'] { border-color: transparent; background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); color: var(--accent-secondary); font-weight: 600; }
+      .chip[aria-pressed='true'] { background: var(--_surface-2); color: var(--_text); }
+      .chip.reset[aria-disabled='false'] { border-color: var(--accent-secondary); color: var(--accent-secondary); }
+      .chip.reset[aria-disabled='true'] { border-color: var(--_border); color: var(--_text-faint); cursor: default; }
       .list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-3) var(--space-3); }
-      .group-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; justify-content: space-between; padding: var(--space-4) 2px var(--space-2); background: var(--_bg); }
+      .group-head { display: flex; align-items: baseline; justify-content: space-between; padding: var(--space-4) 2px var(--space-2); }
       .group-name { font-weight: 600; }
       .group-count { color: var(--_text-faint); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
       .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
@@ -205,14 +209,20 @@ export class MaddieChords extends MaddieElement {
       .wave span:nth-child(2) { animation-delay: 0.15s; }
       .wave span:nth-child(3) { animation-delay: 0.3s; }
       @keyframes wave { from { height: 3px; } to { height: 10px; } }
-      .project-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); width: 100%; height: 36px; margin-bottom: var(--space-1); padding: 0 var(--space-3); box-sizing: border-box; border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); color: var(--_text); text-align: left; cursor: pointer; }
+      .project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 36px; margin-bottom: var(--space-1); padding-inline-end: var(--space-1); border: 1px solid var(--_border); border-radius: var(--radius-md); background: var(--_bg); }
       .project-row:hover { border-color: var(--border-strong); background: var(--_surface); }
-      .project-row[aria-current='true'] { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+      .project-row:has(.project-pick[aria-pressed='true']) { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
       .project-row.isPlaying { border-color: var(--accent-secondary); background: color-mix(in oklch, var(--accent-secondary) 20%, transparent); }
+      .project-pick { display: grid; grid-template-columns: max-content minmax(4ch, 1fr) minmax(0, max-content); align-items: center; align-self: stretch; gap: var(--space-2); min-width: 0; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--_text); text-align: start; cursor: pointer; }
+      .project-jump { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--_text-muted); cursor: pointer; }
+      .project-jump:hover, .project-jump[aria-current] { background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); color: var(--accent-secondary); }
+      .project-jump svg { width: 16px; height: 16px; }
+      .project-pick:focus-visible, .project-jump:focus-visible { outline-offset: -2px; }
       .project-pos { color: var(--_text-faint); font: var(--font-size-xs) var(--_font-mono); }
       .project-name { font-weight: 600; }
+      .project-name, .project-track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .project-track { display: flex; align-items: center; gap: 6px; color: var(--_text-muted); font-size: var(--font-size-xs); }
-      .project-dot { width: 6px; height: 6px; border-radius: 50%; }
+      .project-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
       .hint { margin: var(--space-3) 2px var(--space-2); color: var(--_text-muted); line-height: 1.45; }
 
       /* Crafting area: inverted region, one card */
@@ -250,12 +260,12 @@ export class MaddieChords extends MaddieElement {
       .prop { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-2) 6px var(--space-2) var(--space-3); border-left: 1px solid var(--_border); }
       .prop:first-child { border-left: 0; }
       .prop-label { color: var(--_text-faint); font-size: var(--font-size-2xs); font-weight: 500; }
-      .stepper { display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; align-items: center; height: 24px; margin-left: -6px; }
+      .stepper { display: grid; grid-template-columns: 16px minmax(0, 1fr) 16px; align-items: center; height: 24px; margin-left: -6px; }
       .stepper button { display: inline-flex; align-items: center; justify-content: center; height: 100%; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--_text-muted); cursor: pointer; }
       .stepper button:hover { background: var(--_surface-2); color: var(--_text); }
       .stepper button:disabled { color: var(--_text-faint); opacity: 0.5; background: transparent; cursor: default; }
       .stepper svg { width: 12px; height: 12px; }
-      .stepper-value { font-weight: 500; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+      .stepper-value { font-size: var(--font-size-xs); font-weight: 500; font-variant-numeric: tabular-nums; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .voicing { width: 100%; height: 24px; padding: 0 18px 0 0; border: 0; background: transparent; color: var(--_text); font: inherit; font-weight: 500; cursor: pointer; }
       .voicing:focus-visible { outline: 2px solid var(--_focus); outline-offset: 1px; }
       .pattern-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-top: 1px solid var(--_border); background: var(--_surface); }
@@ -362,7 +372,7 @@ export class MaddieChords extends MaddieElement {
         for (const region of regions) {
           const chord = this.catalogChord({ symbol: region.symbol, rootPitch: region.root, chordType: region.symbol,
             intervals: region.intervals, midiNotes: region.pitches });
-          rows.push({ key: region.id, trackId: track.id, trackName, trackColor, start: region.start, position: '',
+          rows.push({ key: `${track.id}:${region.id}`, trackId: track.id, trackName, trackColor, start: region.start, position: '',
             chord, regionId: region.id, noteIds: [] });
         }
         return;
@@ -636,36 +646,66 @@ export class MaddieChords extends MaddieElement {
 
   // ── Project tab ────────────────────────────────────────────────
 
-  private selectProjectChord(row: ProjectChordT) {
+  private jumpToProjectChord(row: ProjectChordT) {
     const ed = this.ed;
-    if (!ed) return;
-    const isOtherTrack = ed.activeTrackId !== row.trackId;
-    if (isOtherTrack) ed.setActiveTrack(row.trackId);
-    const ids = row.regionId ? [row.regionId] : row.noteIds;
-    ed.select(ids);
-    const view = ed.view;
-    const leftEdge = view.scrollTick;
-    const isOffscreen = row.start < leftEdge || row.start > leftEdge + (this.engine?.viewport.width ?? 0) / view.pxPerTick;
-    if (isOffscreen) ed.setView({ scrollTick: row.start - 40 / view.pxPerTick }, { animate: true });
+    const engine = this.engine;
+    const track = ed?.trackList.find(({ id }) => id === row.trackId);
+    if (!ed || !engine || !track) return;
+    const region = track.chordRegions?.find(({ id }) => id === row.regionId);
+    if (row.regionId && !region) return;
+    const notes = row.noteIds.flatMap((id) => ed.getNote(id, track.id) ?? []);
+    if (!region && !notes.length) return;
+
+    ed.setActiveTrack(track.id);
+    ed.select(region ? [region.id] : notes.map(({ id }) => id));
+    engine.pauseFollow();
+
+    const { width, height } = engine.viewport;
+    const { scrollTick, scrollRow, pxPerTick, rowHeight } = ed.view;
+    const start = region?.start ?? row.start;
+    const startX = (start - scrollTick) * pxPerTick;
+    const margin = Math.min(40, width / 4);
+    const shouldScrollTime = startX < 0 || startX >= width - margin;
+    const nextTick = shouldScrollTime ? start - margin / pxPerTick : scrollTick;
+    const rowMap = ed.rowMap;
+    const pitches = [...(region?.pitches ?? []), ...ed.selectedNotes.map(({ pitch }) => pitch)];
+    const rows = pitches.map((pitch) => rowMap.rowOf(pitch) ?? rowMap.virtual[pitch]);
+    const top = Math.min(...rows);
+    const bottom = Math.max(...rows) + 1;
+    const visibleRows = height / rowHeight;
+    const shouldScrollPitch = height > 0 && (scrollRow === null || top < scrollRow || bottom > scrollRow + visibleRows);
+    const center = (top + bottom - visibleRows) / 2;
+    const nextRow = shouldScrollPitch ? Math.max(0, Math.min(engine.maxScrollRow(), center)) : scrollRow;
+    ed.setView({ scrollTick: nextTick, scrollRow: nextRow }, { animate: true });
+  }
+
+  private pickProjectChord(event: MouseEvent, row: ProjectChordT) {
+    const ed = this.ed;
+    const track = ed?.trackList.find(({ id }) => id === row.trackId);
+    if (!ed || !track) return;
+    const region = track.chordRegions?.find(({ id }) => id === row.regionId);
+    if (row.regionId && !region) return;
+    this.pickChord('project-' + row.key, row.chord);
+    if (region) ed.setView(chordCraftSettings(region, ed.key?.root));
+    if (event.detail === 0) this.playProjectChord(row);
   }
 
   /** The row's own notes, as they are in the song: its voicing and pattern included. */
   private playProjectChord(row: ProjectChordT): (() => void) | undefined {
     const ed = this.ed;
-    if (!ed) return;
+    if (!ed || !ed.trackIds.includes(row.trackId)) return;
     const notes = row.regionId
       ? ed.notes(row.trackId).filter((note) => note.chordRegionId === row.regionId)
       : row.noteIds.flatMap((id) => ed.getNote(id, row.trackId) ?? []);
     const hasNotes = notes.length > 0;
     if (!hasNotes) return;
-    return ed.auditionNotes(notes, row.start);
+    return ed.auditionNotes(notes, row.start, row.trackId);
   }
 
-  /** Mouse down: select it in the editor and hear it until mouse up, like a tile. */
+  /** Hold the row to hear the chord as it sounds in the project. */
   private pressProjectChord(event: PointerEvent, row: ProjectChordT) {
     const isPrimary = event.button === 0 && event.isPrimary;
     if (!isPrimary) return;
-    this.selectProjectChord(row);
     const stop = this.playProjectChord(row);
     this.playingId = 'project-' + row.key;
     const source = event.currentTarget as HTMLElement;
@@ -680,16 +720,6 @@ export class MaddieChords extends MaddieElement {
     source.addEventListener('pointerup', release);
     source.addEventListener('pointercancel', release);
     source.addEventListener('lostpointercapture', release);
-  }
-
-  /** Enter or Space on a focused row: select it and play it once. */
-  private onProjectKey(event: KeyboardEvent, row: ProjectChordT) {
-    const isActivate = event.key === 'Enter' || event.key === ' ';
-    if (!isActivate) return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.selectProjectChord(row);
-    this.playProjectChord(row);
   }
 
   // ── Pattern picker ─────────────────────────────────────────────
@@ -805,29 +835,35 @@ export class MaddieChords extends MaddieElement {
 
   private renderLibrary(ed: Editor) {
     const view = ed.view;
-    const query = toSymbol(view.chordQuery.trim()).toLowerCase();
+    const query = SHOW_CHORD_SEARCH ? toSymbol(view.chordQuery.trim()).toLowerCase() : '';
+    const hiddenFamilies = view.hiddenChordFamilies;
+    const allHidden = CHORD_FAMILIES.every(({ id }) => hiddenFamilies.includes(id));
     const groups = this.browseGroups(ed.key).map((group) => ({
       ...group,
       chords: group.chords.filter((chord) => {
-        const matchesFamily = view.chordFamily === 'all' || chord.type.family === view.chordFamily;
+        const matchesFamily = !hiddenFamilies.includes(chord.type.family);
         const matchesQuery = !query || toSymbol(chord.name).toLowerCase().includes(query) || chord.type.name.toLowerCase().includes(query);
         return matchesFamily && matchesQuery;
       }),
     })).filter((group) => group.chords.length > 0);
-    const families = [{ id: 'all' as const, label: 'All' }, ...CHORD_FAMILIES];
-
-    return html`<z-input class="search" size="sm" type="search" aria-label="Search chords" placeholder="Search chords"
+    return html`<z-input class="search" size="sm" type="search" aria-label="Search chords" placeholder="Search chords" ?hidden=${!SHOW_CHORD_SEARCH}
         .value=${live(view.chordQuery)} @input=${(event: CustomEvent<{ value: string }>) => ed.setView({ chordQuery: event.detail.value })}></z-input>
-      <div class="chips" role="radiogroup" aria-label="Chord type">
-        ${families.map((family) => html`<button type="button" class="chip" role="radio" aria-checked=${view.chordFamily === family.id}
-          @click=${() => ed.setView({ chordFamily: family.id })}>${family.label}</button>`)}
+      <div class="chips" role="group" aria-label="Chord families">
+        <button type="button" class="chip reset" aria-label="Enable all chord families" aria-disabled=${!hiddenFamilies.length}
+          @click=${() => { if (ed.view.hiddenChordFamilies.length) ed.setView({ hiddenChordFamilies: [] }); }}>All</button>
+        ${CHORD_FAMILIES.map(({ id, label }) => html`<button type="button" class="chip" aria-pressed=${!hiddenFamilies.includes(id)}
+          @click=${() => {
+            const hidden = ed.view.hiddenChordFamilies;
+            const next = hidden.includes(id) ? hidden.filter((family) => family !== id) : [...hidden, id];
+            ed.setView({ hiddenChordFamilies: next });
+          }}>${label}</button>`)}
       </div>
       <div class="list" part="list">
         ${!this.scaled ? html`<p class="hint" role="status">${this.loadError || 'Loading chord tools…'}</p>` : nothing}
         ${groups.map((group) => html`<div class="group-head"><span class="group-name">${pitchClassName(group.root)}</span>
             <span class="group-count">${group.chords.length} ${group.chords.length === 1 ? 'chord' : 'chords'}</span></div>
           <div class="tiles">${group.chords.map((chord) => this.renderTile('lib-' + group.root + '-' + chord.name, chord))}</div>`)}
-        ${this.scaled && !groups.length ? html`<p class="hint">No chords match.</p>` : nothing}
+        ${this.scaled && !groups.length ? html`<p class="hint">${allHidden ? 'Enable a chord family or choose All.' : 'No chords match.'}</p>` : nothing}
       </div>`;
   }
 
@@ -835,20 +871,28 @@ export class MaddieChords extends MaddieElement {
     const rows = this.projectChords;
     const selection = ed.selection;
     return html`<div class="list" part="list">
-      <p class="hint">Chords found in this project. Hold one to hear it; it’s selected in the editor too.</p>
-      ${rows.length ? rows.map((row) => {
-        const isSelected = row.regionId ? selection.has(row.regionId) : row.noteIds.length > 0 && row.noteIds.every((id) => selection.has(id));
-        const isPlaying = this.playingId === 'project-' + row.key;
+      ${rows.length ? html`<p class="hint">Click a chord to use it in the crafting card, or hold to hear it.</p>${rows.map((row) => {
+        const isSelected = ed.activeTrackId === row.trackId &&
+          (row.regionId ? selection.has(row.regionId) : row.noteIds.length > 0 && row.noteIds.every((id) => selection.has(id)));
+        const id = 'project-' + row.key;
+        const isPlaying = this.playingId === id;
         const rowClass = isPlaying ? 'project-row isPlaying' : 'project-row';
-        return html`<button type="button" class=${rowClass} aria-current=${isSelected}
-          title="Hold to hear · selects it in the editor"
-          @pointerdown=${(event: PointerEvent) => this.pressProjectChord(event, row)}
-          @keydown=${(event: KeyboardEvent) => this.onProjectKey(event, row)}>
-          <span class="project-pos">${row.position}</span>
-          <span class="project-name">${row.chord.name}</span>
-          <span class="project-track"><span class="project-dot" style=${'background:' + row.trackColor}></span>${row.trackName}</span>
-        </button>`;
-      }) : html`<p class="hint">No chords in this project yet.</p>`}
+        const location = `${row.chord.name} at ${row.position} on ${row.trackName}`;
+        return html`<div class=${rowClass}>
+          <button type="button" class="project-pick" aria-label=${`Craft with ${location}`} aria-pressed=${this.crafting?.id === id}
+            @pointerdown=${(event: PointerEvent) => this.pressProjectChord(event, row)}
+            @click=${(event: MouseEvent) => this.pickProjectChord(event, row)}>
+            <span class="project-pos">${row.position}</span>
+            <span class="project-name">${row.chord.name}</span>
+            <span class="project-track"><span class="project-dot" style=${'background:' + row.trackColor}></span>
+              <span class="project-track-name">${row.trackName}</span></span>
+          </button>
+          <z-tooltip content="Go to chord in editor" placement="top">
+            <button type="button" class="project-jump" aria-label=${`Go to ${location}`} aria-current=${isSelected ? 'location' : nothing}
+              @click=${() => this.jumpToProjectChord(row)}>${icons.locate}</button>
+          </z-tooltip>
+        </div>`;
+      })}` : html`<p class="hint">No chords in this project yet.</p>`}
     </div>`;
   }
 
@@ -856,7 +900,7 @@ export class MaddieChords extends MaddieElement {
     return html`<div class="prop"><span class="prop-label">${label}</span>
       <div class="stepper" role="group" aria-label=${label}>
         <button type="button" aria-label=${label + ' down'} ?disabled=${!canDown} @click=${down}>${icons.back}</button>
-        <span class="stepper-value">${value}</span>
+        <span class="stepper-value" title=${value}>${value}</span>
         <button type="button" aria-label=${label + ' up'} ?disabled=${!canUp} @click=${up}>${forwardIcon}</button>
       </div>
     </div>`;

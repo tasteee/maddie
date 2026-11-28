@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDoc, createEditor, DEFAULT_VIEW, loadScaled, toMidiFile } from '../src/core';
-import { parseProject, type MaddieProject } from '../src/app/project-file';
+import { CHORD_FAMILIES, createDoc, createEditor, DEFAULT_VIEW, loadScaled, pitchRangeChords, toMidiFile } from '../src/core';
+import { parseProject, restoreProjectView, type MaddieProject } from '../src/app/project-file';
 import { PROJECT_STORAGE_KEY, Projects } from '../src/app/projects';
 import { MidiInput } from '../src/engine/midi-input';
 import { MIDI_SOURCE, OutputRouter } from '../src/engine/output-router';
@@ -52,14 +52,18 @@ describe('Maddie projects', () => {
     const draft = editor.chordTrack.draft({ symbol: 'Cmaj7', root: 0, intervals: [0, 4, 7, 11] },
       { octave: 3, inversion: 1, voicing: 'closed', templateId: '' });
     editor.chordTrack.placeDraft(draft, editor.ppq);
+    editor.chordTrack.commitChanged(pitchRangeChords(editor.selectedChordRegions, 50 / 127, 70 / 127), 'Velocity range');
+    editor.commands.toggleMute();
     projects.save('Harmony');
     const exported = JSON.stringify(projects.snapshot());
     const project = parseProject(exported);
     projects.importProject(project);
     expect(projects.activeId).not.toBe(original);
     expect(projects.entries).toHaveLength(2);
-    expect(editor.chordRegions?.[0]).toMatchObject({ symbol: 'Cmaj7', inversion: 1 });
+    expect(editor.chordRegions?.[0]).toMatchObject({ symbol: 'Cmaj7', inversion: 1, muted: true,
+      dynamics: { pitchRange: { min: 50 / 127, max: 70 / 127 } } });
     expect(editor.notes()).toEqual(project.doc.tracks[0].notes);
+    expect(editor.notes().every((note) => note.muted)).toBe(true);
     expect(storage.getItem(PROJECT_STORAGE_KEY)).toContain('"name":"Harmony"');
   });
 
@@ -111,7 +115,7 @@ describe('Maddie projects', () => {
       grid: '1/64T', snap: false, scaleLock: true, scaleHighlight: false, follow: true,
       noteLength: 180, noteVelocity: 0.45, noteColor: 'mono',
       computerKeyboard: true, keyboardBase: 60, keyboardScale: true, midiInput: true, midiDevice: 'keys',
-      chordsPanel: true, chordsTab: 'project', chordFamily: 'seventh', chordQuery: 'maj7',
+      chordsPanel: true, chordsTab: 'project', hiddenChordFamilies: ['power', 'eleventh'], chordQuery: 'maj7',
       chordOctave: 4, chordInversion: 2, chordVoicing: 'drop2',
       chordTemplateId: 'pattern', quantizeGrid: '1/8.',
       quantizeStrength: 75, humanizeTiming: 25, humanizeVelocity: 9,
@@ -131,7 +135,7 @@ describe('Maddie projects', () => {
 
     const restored = createEditor();
     const reopened = new Projects(restored, storage);
-    expect(restored.view).toEqual(view);
+    expect(restored.view).toEqual({ ...view, cursor: 960 });
     expect(restored.transport).toMatchObject({ state: 'stopped', marker: 960, position: 960, metronome: { enabled: false } });
     expect(restored.volume).toEqual({ muted: true, level: 0.3 });
     expect(OutputRouter.for(restored)).toMatchObject({ source: MIDI_SOURCE, portId: 'out-1' });
@@ -141,9 +145,19 @@ describe('Maddie projects', () => {
     expect(restored.transport).toMatchObject({ marker: 0, metronome: { enabled: true } });
     expect(restored.volume).toEqual({ muted: false, level: 0.8 });
     reopened.open(first);
-    expect(restored.view).toEqual(view);
+    expect(restored.view).toEqual({ ...view, cursor: 960 });
     expect(restored.transport.marker).toBe(960);
     expect(restored.history.canUndo).toBe(false);
+  });
+
+  it('restores older single-family filters as exclusions', () => {
+    const project = JSON.stringify({
+      format: 'maddie', version: 1, name: 'Older project', doc: createDoc(),
+      settings: { view: { chordFamily: 'seventh' } },
+    });
+    expect(restoreProjectView(parseProject(project).settings).hiddenChordFamilies)
+      .toEqual(CHORD_FAMILIES.map(({ id }) => id).filter((id) => id !== 'seventh'));
+    expect(restoreProjectView({ view: { chordFamily: 'seventh', hiddenChordFamilies: [] } }).hiddenChordFamilies).toEqual([]);
   });
 
   it('batches viewport-only autosaves and flushes a pending viewport when switching projects', async () => {

@@ -2,7 +2,14 @@
   height: var(--maddie-editbar-height, 48px);
   background: var(--surface-default);
   gap: var(--space-4);
+  padding-inline-start: 0;
   overflow: visible;
 }
-.tracks { flex: 1; min-width: 0; }
+.tracks {
+  display: flex;
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  --track-list-inset: 12px;
+}
 .group { gap: 6px; }

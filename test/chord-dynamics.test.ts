@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  accentChords, clearChordDynamics, createEditor, humanizeChords, levelChords, loadScaled, rampChords, type ChordRegion,
+  accentChords, clearChordDynamics, createEditor, humanizeChords, levelChords, loadScaled, pitchRangeChords, rampChords, type ChordRegion,
 } from '../src/core';
 
 const chord = (start: number, duration: number): Omit<ChordRegion, 'id'> => ({
@@ -42,6 +42,64 @@ describe('chord dynamics', () => {
     expect(ramped[1].dynamics!.ramp!.to).toBeCloseTo(1);
     const each = rampChords(regions, 0.2, 1, false);
     expect(each.every((region) => region.dynamics!.ramp!.from === 0.2 && region.dynamics!.ramp!.to === 1)).toBe(true);
+  });
+
+  it('reapplies a pitch-based velocity range after a new voicing or performance pattern', async () => {
+    const scaled = await loadScaled();
+    const editor = setup();
+    const [first] = editor.chordRegions!;
+    editor.select([first.id]);
+    const lo = 50 / 127;
+    const hi = 90 / 127;
+    const byPitch = () => editor.selectedNotes.slice().sort((a, b) => a.pitch - b.pitch);
+    const pitches = () => byPitch().map((note) => note.pitch);
+    editor.chordTrack.commitChanged(pitchRangeChords([first], lo, hi), 'Velocity range');
+    expect(byPitch()[0].velocity).toBeCloseTo(lo);
+    expect(byPitch().at(-1)?.velocity).toBeCloseTo(hi);
+
+    const originalPitches = pitches();
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ voicing: 'open' })!, 'Voice chord');
+    expect(pitches()).not.toEqual(originalPitches);
+    expect(byPitch()[0].velocity).toBeCloseTo(lo);
+    expect(byPitch().at(-1)?.velocity).toBeCloseTo(hi);
+
+    const templateId = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ templateId })!, 'Apply rhythm');
+    expect(editor.selectedChordRegions[0].dynamics?.pitchRange).toEqual({ min: lo, max: hi });
+    const hits = velocitiesOf(editor, first.id);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((value) => value >= lo && value <= hi)).toBe(true);
+    editor.chordTrack.commitChanged(pitchRangeChords(editor.selectedChordRegions, hi, hi), 'Fixed velocity');
+    expect(velocitiesOf(editor, first.id).every((value) => value === hi)).toBe(true);
+  });
+
+  it('mutes a chord and its pattern without moving hits, and keeps the mute during revoicing', async () => {
+    const scaled = await loadScaled();
+    const editor = setup();
+    const templateId = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ templateId })!, 'Apply rhythm');
+    const [first, second] = editor.chordRegions!;
+    editor.select([first.id]);
+    const original = editor.notes();
+    const hits = () => editor.notes().filter((note) => note.chordRegionId === first.id);
+    editor.commands.toggleMute();
+    expect(editor.selectedChordRegions[0]).toEqual({ ...first, muted: true });
+    expect(editor.chordRegions![1]).toBe(second);
+    expect(editor.notes()).toEqual(original.map((note) => note.chordRegionId === first.id ? { ...note, muted: true } : note));
+    const audition = vi.spyOn(editor, 'auditionNotes');
+    const stop = editor.chordTrack.auditionLoop(editor.selectedChordRegions[0]);
+    expect(audition).not.toHaveBeenCalled();
+    stop();
+    audition.mockRestore();
+    editor.undo();
+    expect(editor.notes()).toEqual(original);
+    editor.redo();
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ inversion: 1 })!, 'Voice chord');
+    expect(hits().length).toBeGreaterThan(0);
+    expect(hits().every((note) => note.muted)).toBe(true);
+    editor.commands.toggleMute([hits()[0].id]);
+    expect(editor.selectedChordRegions[0].muted).toBeUndefined();
+    expect(hits().some((note) => note.muted)).toBe(false);
   });
 
   it('ramps the hits of a patterned chord and keeps the shaping after a new pattern', async () => {

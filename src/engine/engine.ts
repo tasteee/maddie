@@ -127,6 +127,7 @@ export class Engine {
     });
     editor.on('view', ({ view, prev, animate }) => {
       const now = performance.now();
+      if (view.follow && !prev.follow) this.resumeFollow();
       this.view.set(this.targetView(), animate ? this.motion.slow : 0, now);
       if (view.fold !== prev.fold) this.reflowRows(this.motion.slow, now);
       if (view.grid !== prev.grid) this.gridChangedAt = now;
@@ -287,6 +288,10 @@ export class Engine {
   pauseFollow = () => {
     this.isFollowPaused = this.editor.transport.playing;
   };
+
+  resumeFollow() {
+    this.isFollowPaused = false;
+  }
 
   private followPlayhead = () => {
     const editor = this.editor;

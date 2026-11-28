@@ -25,7 +25,9 @@ const TRACK_SWATCHES = [
   { name: 'Blue', color: 'var(--accent-spark-5)' },
 ];
 
-type TrackActionT = 'rename' | 'duplicate' | 'export' | 'chords' | 'delete';
+type TrackActionT = 'duplicate' | 'export' | 'chords' | 'delete';
+
+type TrackNameField = HTMLElement & { value: string };
 
 const navigateSwatches = (event: KeyboardEvent) => {
   const isPrevious = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
@@ -61,6 +63,10 @@ const bindTrackMenu = (element?: Element) => {
     const isOpen = panel.matches(':popover-open');
     trigger.setAttribute('aria-expanded', String(isOpen));
     element.toggleAttribute('data-expanded', isOpen);
+    if (!isOpen) return;
+    const input = element.querySelector('.track-name-field')?.shadowRoot?.querySelector('input');
+    input?.focus({ preventScroll: true });
+    input?.select();
   }, true);
 };
 
@@ -88,7 +94,6 @@ const renderTrackActions = (isLast: boolean, isChord: boolean) => {
   const chords = isChord ? html`<z-menu-item value="chords">Show chords</z-menu-item>` : nothing;
 
   return html`<z-menu-separator></z-menu-separator>
-    <z-menu-item value="rename" shortcut="Double-click">${icons.draw} Rename</z-menu-item>
     <z-menu-item value="duplicate">${icons.duplicate} Duplicate</z-menu-item>
     <z-menu-item value="export">${icons.download} Export MIDI…</z-menu-item>
     ${chords}
@@ -100,7 +105,6 @@ const renderTrackActions = (isLast: boolean, isChord: boolean) => {
 export class MaddieTracks extends MaddieElement {
   static styles = [tokens, unsafeCSS(trackStyles)];
 
-  @state() private renamingId: string | null = null;
   @state() private hasOverflow = false;
   // Bumped after a drag so the list is rebuilt from data, not from the nodes the sortable moved.
   @state() private sortEpoch = 0;
@@ -118,7 +122,7 @@ export class MaddieTracks extends MaddieElement {
   private updateOverflow = () => {
     const tabs = this.renderRoot.querySelector('.tabs');
     if (!tabs) return;
-    this.hasOverflow = tabs.scrollLeft + tabs.clientWidth + 1 < tabs.scrollWidth;
+    this.hasOverflow = tabs.clientWidth < tabs.scrollWidth;
   };
 
   protected updated() {
@@ -130,49 +134,56 @@ export class MaddieTracks extends MaddieElement {
     this.renderRoot.querySelector('.isActive')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
-  private startRename = (id: string) => {
-    this.renamingId = id;
-    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLInputElement>('.rename-input')?.select());
-  };
-
-  private finishRename = (id: string, value?: string) => {
-    const isEditing = this.renamingId === id;
-    if (!isEditing) return;
-    this.renamingId = null;
-    const shouldCommit = Boolean(value?.trim());
-    if (shouldCommit && value) this.ed?.commands.renameTrack(id, value);
-  };
-
-  private renderName = (ed: Editor, track: TrackMetaT, name: string, isActive: boolean) => {
-    const isEditing = this.renamingId === track.id;
+  private renderName = (ed: Editor, track: TrackMetaT, name: string, isActive: boolean, isChord: boolean) => {
     const activate = () => ed.setActiveTrack(track.id);
-    const rename = () => this.startRename(track.id);
     const onKey = (event: KeyboardEvent) => {
-      const isRename = event.key === 'F2';
-      if (isRename) rename();
+      if (event.key !== 'F2') return;
+      event.preventDefault();
+      const tab = (event.currentTarget as HTMLElement).closest('.track');
+      tab?.querySelector<HTMLButtonElement>('.track-menu')?.click();
     };
     const tabIndex = isActive ? 0 : -1;
     // Select on pointerdown: the sortable captures the pointer, which can swallow the click.
-    if (!isEditing) return html`<button type="button" class="track-name" role="tab" title=${name} data-track-id=${track.id}
-      tabindex=${tabIndex} aria-selected=${isActive} @pointerdown=${activate} @click=${activate} @keydown=${onKey}>${name}</button>`;
-
-    const commit = (event: Event) => this.finishRename(track.id, (event.currentTarget as HTMLInputElement).value);
-    const onEditKey = (event: KeyboardEvent) => {
-      const shouldCancel = event.key === 'Escape';
-      const shouldCommit = event.key === 'Enter';
-      const shouldFinish = shouldCancel || shouldCommit;
-      if (!shouldFinish) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const element = (event.currentTarget as HTMLElement).closest('.track');
-      if (shouldCancel) this.finishRename(track.id);
-      if (shouldCommit) commit(event);
-      void this.updateComplete.then(() => element?.querySelector<HTMLElement>('.track-name')?.focus());
-    };
-
-    return html`<input class="rename-input" aria-label="Track name"
-      .value=${name} @blur=${commit} @keydown=${onEditKey}>`;
+    return html`<button type="button" class="track-name" role="tab" title=${isChord ? `${name} · Chord track` : name}
+      aria-description=${isChord ? 'Chord track' : nothing} tabindex=${tabIndex} aria-selected=${isActive}
+      @pointerdown=${activate} @click=${activate} @keydown=${onKey}>
+      ${isChord ? html`<span class="track-type" aria-hidden="true">${icons.chordTrack}</span>` : nothing}
+      <span class="track-name-text">${name}</span>
+    </button>`;
   };
+
+  private renderMenuName(ed: Editor, trackId: string, name: string) {
+    const resetField = (field: TrackNameField, value: string) => {
+      field.value = value;
+      const input = field.shadowRoot?.querySelector('input');
+      if (input) input.value = value;
+    };
+    const commit = (event: CustomEvent<{ value: string }>) => {
+      const index = ed.trackList.findIndex(({ id }) => id === trackId);
+      const track = ed.trackList[index];
+      if (!track) return;
+      const currentName = getTrackName(track, index);
+      const value = event.detail.value.trim();
+      if (value && value !== currentName) ed.commands.renameTrack(trackId, value);
+      resetField(event.currentTarget as TrackNameField, value || currentName);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const field = event.currentTarget as TrackNameField;
+      if (event.key === 'Escape' && !event.isComposing) {
+        resetField(field, name);
+        return;
+      }
+      if (event.key === 'Tab') return;
+      // Arrow keys and Space belong to the field while editing, not to menu items.
+      event.stopPropagation();
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        field.shadowRoot?.querySelector('input')?.blur();
+      }
+    };
+    return html`<z-input class="track-name-field" size="sm" aria-label="Track name" .value=${name}
+      @change=${commit} @keydown=${onKey}></z-input>`;
+  }
 
   // A menu closes on any pointerdown outside it. The tab strip stops those for its own buttons,
   // so replay one from this element, which sits outside every menu.
@@ -234,16 +245,20 @@ export class MaddieTracks extends MaddieElement {
     const name = getTrackName(track, index);
     const colors = renderSwatches(ed, track);
     const actions = renderTrackActions(isLast, isChord);
-    const nameControl = this.renderName(ed, track, name, isActive);
+    const nameControl = this.renderName(ed, track, name, isActive, isChord);
     const fill = `--track-color: ${ed.getTrackColor(track.id)}`;
-    const classes = classMap({ track: true, isActive, isSilent, isChord });
+    const classes = classMap({ track: true, isActive, isSilent });
     const menuLabel = name + ' options';
     const muteLabel = 'Mute ' + name;
     const soloLabel = 'Solo ' + name;
     const mute = () => ed.commands.setTrackMuted(track.id, !track.muted);
     const isImplied = isSilent && !track.muted;
-    const muteTip = isImplied ? 'Silenced by solo' : muteLabel;
-    const soloTip = soloLabel + '  ·  ' + modKeyLabel + '-click to add';
+    const muteTip = isImplied ? 'Another track is soloed' : muteLabel;
+    const additiveClick = `${modKeyLabel}+click`;
+    const hasOtherSolo = track.solo && ed.trackList.some((other) => other.id !== track.id && other.solo);
+    const soloTip = track.solo
+      ? hasOtherSolo ? `Solo this track alone. ${additiveClick} to unsolo just this track.` : 'Unsolo this track.'
+      : `Solo this track. ${additiveClick} to keep other tracks soloed.`;
     const muteClasses = classMap({ 'track-toggle': true, mute: true, isImplied });
     const solo = (event: MouseEvent) => {
       const isAdditive = event.ctrlKey || event.metaKey;
@@ -259,7 +274,6 @@ export class MaddieTracks extends MaddieElement {
     };
     const selectAction = (event: CustomEvent<{ value: TrackActionT }>) => {
       const action = event.detail.value;
-      if (action === 'rename') this.startRename(track.id);
       if (action === 'duplicate') ed.commands.duplicateTrack(track.id);
       if (action === 'delete') {
         const wasActive = ed.activeTrackId === track.id;
@@ -295,6 +309,7 @@ export class MaddieTracks extends MaddieElement {
         </div>
       </div>
       <div slot="controls" class="track-options">
+        ${this.renderMenuName(ed, track.id, name)}
         ${colors}
         ${this.renderGain(ed, track.id, name)}
         ${renderTrackOutput(ed, OutputRouter.for(ed), track, index)}
@@ -307,20 +322,12 @@ export class MaddieTracks extends MaddieElement {
   private guardSortPointer = (event: PointerEvent) => {
     const isPrimary = event.button === 0;
     const path = event.composedPath();
-    const isControl = path.some((item) => item instanceof HTMLElement && item.matches('.track-toggle, .track-menu, .rename-input'));
+    const isControl = path.some((item) => item instanceof HTMLElement && item.matches('.track-toggle, .track-menu'));
     const shouldIgnore = !isPrimary || isControl;
     const isMenuTrigger = path.some((item) => item instanceof HTMLElement && item.matches('.track-menu'));
     const isOtherControl = isControl && !isMenuTrigger;
     if (isOtherControl) this.closeOpenMenus();
     if (shouldIgnore) event.stopPropagation();
-  };
-
-  // The sortable captures the pointer, so a double-click lands on it; find the tab under the cursor.
-  private renameTabAtPointer = (event: MouseEvent) => {
-    const hits = this.shadowRoot?.elementsFromPoint(event.clientX, event.clientY) ?? [];
-    const nameButton = hits.find((item) => item.matches('.track-name[data-track-id]'));
-    const trackId = nameButton?.getAttribute('data-track-id');
-    if (trackId) this.startRename(trackId);
   };
 
   private sortTracks = (event: CustomEvent<{ oldIndex: number; newIndex: number }>) => {
@@ -364,8 +371,7 @@ export class MaddieTracks extends MaddieElement {
     const guardOptions = { handleEvent: this.guardSortPointer, capture: true };
     const sortable = html`<z-sortable is-horizontal handle=".track"
       @pointerdown=${guardOptions} @sort=${this.sortTracks}>${tracks}</z-sortable>`;
-    return html`<div class="tabs" role="tablist" aria-label="Tracks"
-      @keydown=${this.moveTab} @scroll=${this.updateOverflow} @dblclick=${this.renameTabAtPointer}>
+    return html`<div class="tabs" role="tablist" aria-label="Tracks" @keydown=${this.moveTab}>
       ${keyed(this.sortEpoch, sortable)}
     </div>
     <div class="add-track" ?data-overflow=${this.hasOverflow}>
