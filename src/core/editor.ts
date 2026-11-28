@@ -8,6 +8,7 @@ import { NoteIndex } from './notes';
 import type { Output, OutputResolverT } from './output';
 import { invertPatches, type MetaKey, type MetaValues, type Patch } from './patches';
 import { createCapture, type CaptureT } from './capture';
+import { SectionCommands } from './sections';
 import { Recorder } from './recorder';
 import { Transport } from './transport';
 import { getAudibleTrackIds, getTrackColor } from './tracks';
@@ -41,6 +42,7 @@ export interface ViewChangeEvent {
 
 export interface EditorEvents extends Record<string, unknown> {
   change: ChangeEvent;
+  sectionselection: undefined;
   beforechange: BeforeChangeEvent;
   selection: { ids: ReadonlySet<NoteId> };
   view: ViewChangeEvent;
@@ -80,6 +82,7 @@ export function createDoc(partial: Partial<MaddieDoc> = {}): MaddieDoc {
     tempo: partial.tempo?.length ? partial.tempo : [{ tick: 0, bpm: 120 }],
     timeSignature: partial.timeSignature?.length ? partial.timeSignature : [{ tick: 0, numerator: 4, denominator: 4 }],
     key: partial.key ?? null,
+    sections: partial.sections ?? [],
     tracks: partial.tracks?.length ? partial.tracks : [{ id: DEFAULT_TRACK, notes: [] }],
   };
 }
@@ -87,6 +90,7 @@ export function createDoc(partial: Partial<MaddieDoc> = {}): MaddieDoc {
 interface Tx {
   label: string;
   patches: Patch[];
+  exactTracks: Set<string>;
   origin: Origin;
   gestureId?: string;
   selectionBefore: NoteId[];
@@ -112,6 +116,7 @@ export class Editor extends Emitter<EditorEvents> {
   audioContext: AudioContext | null;
   activeTrackId: string;
 
+  readonly sections = new SectionCommands(this);
   readonly chordTrack = new ChordTrackCommands(this);
   private tracks = new Map<string, { track: TrackMetaT; notes: NoteIndex }>();
   // Track order before the latest change, so a removed active track hands over to its neighbor.
@@ -134,7 +139,7 @@ export class Editor extends Emitter<EditorEvents> {
   constructor(options: EditorOptions = {}) {
     super();
     const doc = createDoc(options.doc);
-    this._meta = { ppq: doc.ppq, tempo: doc.tempo, timeSignature: doc.timeSignature, key: doc.key };
+    this._meta = { ppq: doc.ppq, tempo: doc.tempo, timeSignature: doc.timeSignature, key: doc.key, sections: doc.sections ?? [] };
     for (const t of doc.tracks) {
       const { notes, ...track } = t;
       this.tracks.set(t.id, { track, notes: new NoteIndex(notes) });
@@ -174,6 +179,7 @@ export class Editor extends Emitter<EditorEvents> {
         tempo: this._meta.tempo,
         timeSignature: this._meta.timeSignature,
         key: this._meta.key,
+        sections: this._meta.sections,
         tracks: [...this.tracks.values()].map(({ track, notes }) => ({ ...track, notes: [...notes.all()] })),
       };
     }
@@ -184,7 +190,8 @@ export class Editor extends Emitter<EditorEvents> {
   setDoc(doc: Partial<MaddieDoc>, { keepHistory = false, origin = 'load' as Origin } = {}) {
     const next = createDoc(doc);
     this.transport.clearResumePosition();
-    this._meta = { ppq: next.ppq, tempo: next.tempo, timeSignature: next.timeSignature, key: next.key };
+    this._meta = { ppq: next.ppq, tempo: next.tempo, timeSignature: next.timeSignature, key: next.key, sections: next.sections ?? [] };
+    this.sections.reset();
     this.tracks.clear();
     for (const t of next.tracks) {
       const { notes, ...track } = t;
@@ -275,6 +282,8 @@ export class Editor extends Emitter<EditorEvents> {
     if (trackId === this.activeTrackId) return;
     this.activeTrackId = trackId;
     this.resetSelection();
+    if (!this.sections.allTracksSelected) this.sections.clearContentSelection();
+    this.select(this.sections.contentSelection?.get(trackId) ?? [], 'replace', true);
     this.invalidate();
     this.emitTracks();
   }
@@ -364,7 +373,8 @@ export class Editor extends Emitter<EditorEvents> {
     return [...this._selection].map((id) => idx.get(id)).filter((n): n is Note => !!n);
   }
 
-  select(ids: Iterable<NoteId>, mode: 'replace' | 'add' | 'toggle' | 'remove' = 'replace') {
+  select(ids: Iterable<NoteId>, mode: 'replace' | 'add' | 'toggle' | 'remove' = 'replace', keepSectionContent = false) {
+    if (!keepSectionContent) this.sections.clearContentSelection();
     const next = mode === 'replace' ? new Set<NoteId>() : new Set(this._selection);
     for (const id of new Set(Array.from(ids, (value) => this.selectionId(value)))) {
       if (id === undefined) continue;
@@ -419,6 +429,7 @@ export class Editor extends Emitter<EditorEvents> {
     this.tx = {
       label,
       patches: [],
+      exactTracks: new Set(),
       origin: opts.origin ?? 'user',
       gestureId: opts.gestureId,
       selectionBefore: [...this._selection],
@@ -460,7 +471,7 @@ export class Editor extends Emitter<EditorEvents> {
     for (const [trackId, touchedIds] of touchedByTrack) {
       const isChordTrack = !!this.tracks.get(trackId)?.track.chordRegions;
       // The transaction API edits the active track, which is where note edits happen.
-      const isOtherTrack = trackId !== this.activeTrackId;
+      const isOtherTrack = trackId !== this.activeTrackId || this.tx?.exactTracks.has(trackId);
       if (isChordTrack || isOtherTrack) continue;
       const touched = [...touchedIds].flatMap((id) => this.getNote(id, trackId) ?? []);
       this.resolveTouchedOverlaps(trackId, touched);
@@ -522,6 +533,7 @@ export class Editor extends Emitter<EditorEvents> {
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this.pruneSelection();
+    this.sections.prune();
     this.emit('change', { patches, origin, label: 'Remote' });
     this.emitTracksIfChanged(patches, hasNewActiveTrack);
   }
@@ -534,6 +546,7 @@ export class Editor extends Emitter<EditorEvents> {
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this._selection = new Set(entry.selectionBefore.filter((id) => this.selectionId(id) !== undefined));
+    this.sections.prune();
     this.emit('change', { patches, origin: 'history', label: `Undo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
     this.emitTracksIfChanged(patches, hasNewActiveTrack);
@@ -547,6 +560,7 @@ export class Editor extends Emitter<EditorEvents> {
     const hasNewActiveTrack = this.settleActiveTrack();
     this.invalidate();
     this._selection = new Set(entry.selectionAfter.filter((id) => this.selectionId(id) !== undefined));
+    this.sections.prune();
     this.emit('change', { patches: entry.patches, origin: 'history', label: `Redo ${entry.label}` });
     this.emit('selection', { ids: this._selection });
     this.emitTracksIfChanged(entry.patches, hasNewActiveTrack);
@@ -732,18 +746,11 @@ export class Editor extends Emitter<EditorEvents> {
       this.record({ op: 'replace', track: this.activeTrackId, from, to });
     },
     setChordRegions: (regions, notes) => {
-      const track = this.activeTrackId;
-      const index = this.index();
-      const existing = new Map(notes.map((note) => [note.id, note]));
-      this.txApi.updateTrack(track, { chordRegions: regions });
-      for (const note of index.all()) {
-        if (!existing.has(note.id)) this.record({ op: 'remove', track, note });
-      }
-      for (const to of notes) {
-        const from = index.get(to.id);
-        if (!from) this.record({ op: 'add', track, note: to });
-        else if (noteChanged(from, to)) this.record({ op: 'replace', track, from, to });
-      }
+      this.replaceTrackContent(this.activeTrackId, notes, regions);
+    },
+    setTrackContent: (track, notes, regions) => {
+      this.tx!.exactTracks.add(track);
+      this.replaceTrackContent(track, notes, regions);
     },
     setMeta: (key, value) => {
       const from = this._meta[key];
@@ -781,6 +788,22 @@ export class Editor extends Emitter<EditorEvents> {
       this.record({ op: 'track-update', id, from, to });
     },
   };
+
+  private replaceTrackContent(track: string, notes: readonly Note[], regions?: readonly ChordRegion[]) {
+    const index = this.index(track);
+    const existing = new Map(notes.map((note) => [note.id, note]));
+    if (this.tracks.get(track)?.track.chordRegions !== regions) {
+      this.txApi.updateTrack(track, { chordRegions: regions });
+    }
+    for (const note of index.all()) {
+      if (!existing.has(note.id)) this.record({ op: 'remove', track, note });
+    }
+    for (const to of notes) {
+      const from = index.get(to.id);
+      if (!from) this.record({ op: 'add', track, note: to });
+      else if (noteChanged(from, to)) this.record({ op: 'replace', track, from, to });
+    }
+  }
 
   private record(p: Patch) {
     if (!this.tx) throw new Error('[maddie] Patches must be recorded inside transact()');
@@ -905,6 +928,7 @@ export class Editor extends Emitter<EditorEvents> {
         selectionAfter: [...this._selection],
       });
     }
+    this.sections.prune();
     this.emit('change', { patches: tx.patches, origin: tx.origin, label: tx.label, gestureId: tx.gestureId });
     this.emitTracksIfChanged(tx.patches, hasNewActiveTrack);
     this.emitHistory();
@@ -933,6 +957,8 @@ export interface TxApi {
   add(note: Note): void;
   remove(id: NoteId): void;
   update(id: NoteId, changes: Partial<Omit<Note, 'id'>>): void;
+  /** Replace validated content on any track, preserving the exact note positions. */
+  setTrackContent(track: string, notes: readonly Note[], regions?: readonly ChordRegion[]): void;
   setChordRegions(regions: readonly ChordRegion[] | undefined, notes: readonly Note[]): void;
   setMeta<K extends MetaKey>(key: K, value: MetaValues[K]): void;
   /** Insert a track (at the end by default). Its notes come with it. */

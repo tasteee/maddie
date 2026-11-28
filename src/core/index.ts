@@ -7,6 +7,7 @@ export * from './patches';
 export * from './history';
 export * from './notes';
 export * from './tracks';
+export * from './sections';
 export * from './output';
 export * from './transport';
 export * from './recorder';

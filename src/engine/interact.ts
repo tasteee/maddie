@@ -5,7 +5,7 @@ import { Engine } from './engine';
 /** Furthest the view can scroll right. */
 export function maxScrollTick(editor: Editor) {
   const bar = editor.ppq * 4;
-  return Math.max(editor.contentEnd() + bar * 16, bar * 64);
+  return Math.max(Math.max(editor.contentEnd(), editor.sections.end) + bar * 16, bar * 64);
 }
 
 export function clampScrollRow(editor: Editor, row: number, rowHeight = editor.view.rowHeight) {

@@ -88,6 +88,13 @@ export type TrackChangesT = Partial<Pick<Track, 'name' | 'color' | 'gain' | 'rou
 /** A note and the track it belongs to. */
 export type TrackNoteT = { trackId: string; note: Note };
 
+export interface Section {
+  id: string;
+  name: string;
+  color: string;
+  durationBars: number;
+}
+
 export interface MaddieDoc {
   version: 1;
   ppq: number;
@@ -95,6 +102,7 @@ export interface MaddieDoc {
   timeSignature: TimeSigEvent[];
   key: Key | null;
   tracks: Track[];
+  sections?: readonly Section[];
 }
 
 export type ScaleId =

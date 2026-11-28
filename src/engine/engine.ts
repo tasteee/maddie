@@ -12,6 +12,7 @@ export interface Preview {
   hidden: Set<NoteId>;
   regions?: readonly ChordRegion[];
   insertion?: number;
+  sectionMove?: { start: number; bars: number };
 }
 
 export type DisplayView = {
@@ -51,6 +52,7 @@ export type GhostNoteT = {
   color: string;
   /** Does the track play? Muted tracks draw fainter. */
   isAudible: boolean;
+  selected: boolean;
 };
 
 export interface Toast {
@@ -115,6 +117,7 @@ export class Engine {
       this.invalidate();
     });
     editor.on('selection', () => this.invalidate());
+    editor.on('sectionselection', () => this.invalidate());
     editor.on('tracks', () => {
       this.reflowRows(this.motion.slow, performance.now());
       this.invalidate();
@@ -251,17 +254,25 @@ export class Engine {
     return out;
   }
 
+  sectionContentOffset = 0;
+
   /** Notes of every other track overlapping a tick range, with the colors to draw them in. */
   ghostNotes(from: number, to: number): GhostNoteT[] {
     const editor = this.editor;
     const activeId = editor.activeTrackId;
     const ghosts: GhostNoteT[] = [];
-    for (const entry of editor.notesAllTracks(from, to)) {
-      const isActive = entry.trackId === activeId;
-      if (isActive) continue;
-      const color = editor.getTrackColor(entry.trackId);
-      const isAudible = editor.isTrackAudible(entry.trackId);
-      ghosts.push({ trackId: entry.trackId, note: entry.note, color, isAudible });
+    const offset = this.sectionContentOffset;
+    const fromSource = Math.min(from, from - offset);
+    const toSource = Math.max(to, to - offset);
+    for (const { trackId, note } of editor.notesAllTracks(fromSource, toSource)) {
+      if (trackId === activeId) continue;
+      const selected = editor.sections.isContentSelected(trackId, note.chordRegionId ?? note.id);
+      if (!selected && !editor.view.ghostNotes) continue;
+      const start = note.start + (selected ? offset : 0);
+      if (start >= to || start + note.duration <= from) continue;
+      const color = editor.getTrackColor(trackId);
+      const isAudible = editor.isTrackAudible(trackId);
+      ghosts.push({ trackId, note: start === note.start ? note : { ...note, start }, color, isAudible, selected });
     }
     return ghosts;
   }

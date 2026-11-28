@@ -16,19 +16,24 @@
 }
 .grid {
   --_chords-size: var(--maddie-chords-width, min(420px, 46cqw));
+  --_zoom-bar-size: 14px;
   position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: var(--_keyboard-width) minmax(0, 1fr) auto;
-  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) var(--_lane-height);
+  grid-template-rows: 30px var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) var(--_lane-height);
   grid-template-areas:
+    'sectionscorner sections chords'
     'corner ruler chords'
     'keys roll chords'
     'lanehead lanehead chords'
     'label lane chords';
   --_lane-head-height: 40px;
 }
+.sections-corner { grid-area: sectionscorner; }
+maddie-sections { grid-area: sections; }
+.sections-corner,
 .corner {
   grid-area: corner;
   background: var(--_surface);
@@ -41,12 +46,14 @@ maddie-ruler {
 maddie-keyboard {
   grid-area: keys;
   width: auto;
+  margin-block-end: var(--_zoom-bar-size);
 }
 maddie-piano-roll {
   grid-area: roll;
   min-height: 0;
+  margin-block-end: var(--_zoom-bar-size);
 }
-/* Scrollbars with zoom steps, over the roll's bottom and right edges. */
+/* The horizontal bar occupies the space below the keyboard and piano roll. */
 maddie-zoom {
   grid-area: roll;
   z-index: 2;
@@ -59,8 +66,7 @@ maddie-chord-bar {
   align-self: end;
   z-index: 3;
   min-width: 0;
-  /* Clear the 14px scrollbars. */
-  padding: 0 calc(14px + var(--space-2)) calc(14px + var(--space-2)) var(--space-2);
+  padding: 0 calc(var(--_zoom-bar-size) + var(--space-2)) calc(var(--_zoom-bar-size) + var(--space-2)) var(--space-2);
 }
 @container (width < 44rem) {
   maddie-chord-bar { grid-column: 2 / -1; }
@@ -148,7 +154,7 @@ maddie-velocity-lane {
 }
 /* Folded: only the header stays. The caret flips to point up, toward where the lane opens. */
 :host([lane-collapsed]) .grid {
-  grid-template-rows: var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) 0;
+  grid-template-rows: 30px var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) 0;
 }
 :host([lane-collapsed]) maddie-velocity-lane,
 :host([lane-collapsed]) maddie-velocity-controls,

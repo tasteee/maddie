@@ -6,6 +6,7 @@ import { MaddieRoot } from './root';
 import { styleEditorToast } from './zest';
 import { themeRegion } from './tokens';
 import './toggle-palette';
+import './sections';
 import editorCss from './editor.css?raw';
 
 /**
@@ -73,6 +74,8 @@ export class MaddieEditor extends MaddieRoot {
             </maddie-toolbar
         ></slot>
         <div class="grid" part="body">
+          <div class="sections-corner"></div>
+          <maddie-sections part="sections"></maddie-sections>
           <div class="corner" part="corner"><slot name="corner"></slot></div>
           <maddie-ruler part="ruler"></maddie-ruler>
           <maddie-keyboard part="keyboard"></maddie-keyboard>
