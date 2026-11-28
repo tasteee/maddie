@@ -141,7 +141,7 @@ export class Commands {
     const { view, key } = this.editor;
     const before = this.notesOf(ids);
     if (Math.abs(steps) !== 1) this.transpose(ids, { semitones: steps }, opts);
-    else if (view.fold === 'scale' || view.fold === 'used') this.transpose(ids, { rows: steps }, opts);
+    else if (view.fold !== 'none') this.transpose(ids, { rows: steps }, opts);
     else if (view.scaleLock && key) this.transpose(ids, { degrees: steps }, opts);
     else this.transpose(ids, { semitones: steps }, opts);
     // Let the user hear where the notes landed (only if they moved).

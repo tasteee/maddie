@@ -5,7 +5,7 @@ import type { ScaledT } from '@tasteee/scaled/types';
 import {
   analyzeChords, analyzeSelection, CHORD_FAMILIES, CHORD_INVERSION_LABELS, CHORD_TYPES, CHORD_VOICINGS, chordCraftSettings, chordsInKey, DISABLED_VOICINGS, offeredVoicings,
   formatBBT, loadScaled, pitchClassName, scaledKey, snapTick,
-  type Chord, type ChordDraft, type DetectedChordT, type Editor, type Key, type NoteId,
+  type Chord, type ChordDraft, type DetectedChordT, type Editor, type Key, type NoteId, type PatternSpeed,
 } from '../core';
 import type { ChordDrag, Engine } from '../engine/engine';
 import { MaddieElement } from './base';
@@ -162,9 +162,7 @@ export class MaddieChords extends MaddieElement {
       .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-3); border-bottom: 1px solid var(--_border); }
       .chip { flex: none; height: 24px; padding: 0 8px; border: 1px solid var(--_border); border-radius: 999px; background: var(--_bg); color: var(--_text-faint); font-size: var(--font-size-xs); font-weight: 500; cursor: pointer; }
       .chip:hover { border-color: var(--border-strong); color: var(--_text); }
-      .chip[aria-pressed='true'] { background: var(--_surface-2); color: var(--_text); }
-      .chip.reset[aria-disabled='false'] { border-color: var(--accent-secondary); color: var(--accent-secondary); }
-      .chip.reset[aria-disabled='true'] { border-color: var(--_border); color: var(--_text-faint); cursor: default; }
+      .chip[aria-pressed='true'] { background: var(--_surface-2); color: var(--_text); font-weight: 600; }
       .list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--space-3) var(--space-3); }
       .group-head { display: flex; align-items: baseline; justify-content: space-between; padding: var(--space-4) 2px var(--space-2); }
       .group-name { font-weight: 600; }
@@ -494,7 +492,8 @@ export class MaddieChords extends MaddieElement {
     const ed = this.ed!;
     const view = ed.view;
     return ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
-      { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing, templateId: view.chordTemplateId });
+      { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing,
+        templateId: view.chordTemplateId, patternSpeed: view.chordPatternSpeed });
   }
 
   /**
@@ -759,8 +758,10 @@ export class MaddieChords extends MaddieElement {
       if (!crafting) return;
       try {
         const chord = crafting.chord;
+        const view = ed.view;
         const draft = ed.chordTrack.draft({ symbol: chord.name, root: chord.root, intervals: chord.type.intervals },
-          { octave: ed.view.chordOctave, inversion: ed.view.chordInversion, voicing: ed.view.chordVoicing, templateId });
+          { octave: view.chordOctave, inversion: view.chordInversion, voicing: view.chordVoicing,
+            templateId, patternSpeed: view.chordPatternSpeed });
         return ed.chordTrack.auditionDraft(draft, true) ?? (() => {});
       } catch (error) {
         this.engine?.toast((error as Error).message, 'error');
@@ -768,10 +769,14 @@ export class MaddieChords extends MaddieElement {
       }
     };
     const apply = (templateId: string) => ed.setView({ chordTemplateId: templateId });
-    const close = () => ed.setView({ patternPicker: null });
+    const close = (restoreFocus?: boolean) => {
+      ed.setView({ patternPicker: null });
+      if (restoreFocus) this.renderRoot.querySelector<HTMLElement>('[data-pattern-trigger]')?.focus({ preventScroll: true });
+    };
     const style = `left: ${this.pickerPosition.left}px; top: ${this.pickerPosition.top}px`;
     return html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${ed.view.chordTemplateId}
-      .targetPrefix=${'Playing on'} .targetName=${crafting?.chord.name ?? ''} .projectIds=${this.projectTemplateIds(ed)}
+      .appliedSpeed=${ed.view.chordPatternSpeed} .setSpeed=${(speed: PatternSpeed) => ed.setView({ chordPatternSpeed: speed })}
+      .targetName=${crafting?.chord.name ?? ''} .projectIds=${this.projectTemplateIds(ed)}
       .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`;
   }
 
@@ -836,12 +841,12 @@ export class MaddieChords extends MaddieElement {
   private renderLibrary(ed: Editor) {
     const view = ed.view;
     const query = SHOW_CHORD_SEARCH ? toSymbol(view.chordQuery.trim()).toLowerCase() : '';
-    const hiddenFamilies = view.hiddenChordFamilies;
-    const allHidden = CHORD_FAMILIES.every(({ id }) => hiddenFamilies.includes(id));
+    const families = view.selectedChordFamilies;
+    const showAll = families.length === 0;
     const groups = this.browseGroups(ed.key).map((group) => ({
       ...group,
       chords: group.chords.filter((chord) => {
-        const matchesFamily = !hiddenFamilies.includes(chord.type.family);
+        const matchesFamily = showAll || families.includes(chord.type.family);
         const matchesQuery = !query || toSymbol(chord.name).toLowerCase().includes(query) || chord.type.name.toLowerCase().includes(query);
         return matchesFamily && matchesQuery;
       }),
@@ -849,13 +854,13 @@ export class MaddieChords extends MaddieElement {
     return html`<z-input class="search" size="sm" type="search" aria-label="Search chords" placeholder="Search chords" ?hidden=${!SHOW_CHORD_SEARCH}
         .value=${live(view.chordQuery)} @input=${(event: CustomEvent<{ value: string }>) => ed.setView({ chordQuery: event.detail.value })}></z-input>
       <div class="chips" role="group" aria-label="Chord families">
-        <button type="button" class="chip reset" aria-label="Enable all chord families" aria-disabled=${!hiddenFamilies.length}
-          @click=${() => { if (ed.view.hiddenChordFamilies.length) ed.setView({ hiddenChordFamilies: [] }); }}>All</button>
-        ${CHORD_FAMILIES.map(({ id, label }) => html`<button type="button" class="chip" aria-pressed=${!hiddenFamilies.includes(id)}
+        <button type="button" class="chip" aria-pressed=${showAll}
+          @click=${() => { if (ed.view.selectedChordFamilies.length) ed.setView({ selectedChordFamilies: [] }); }}>All</button>
+        ${CHORD_FAMILIES.map(({ id, label }) => html`<button type="button" class="chip" aria-pressed=${families.includes(id)}
           @click=${() => {
-            const hidden = ed.view.hiddenChordFamilies;
-            const next = hidden.includes(id) ? hidden.filter((family) => family !== id) : [...hidden, id];
-            ed.setView({ hiddenChordFamilies: next });
+            const selected = ed.view.selectedChordFamilies;
+            const next = selected.includes(id) ? selected.filter((family) => family !== id) : [...selected, id];
+            ed.setView({ selectedChordFamilies: next });
           }}>${label}</button>`)}
       </div>
       <div class="list" part="list">
@@ -863,7 +868,7 @@ export class MaddieChords extends MaddieElement {
         ${groups.map((group) => html`<div class="group-head"><span class="group-name">${pitchClassName(group.root)}</span>
             <span class="group-count">${group.chords.length} ${group.chords.length === 1 ? 'chord' : 'chords'}</span></div>
           <div class="tiles">${group.chords.map((chord) => this.renderTile('lib-' + group.root + '-' + chord.name, chord))}</div>`)}
-        ${this.scaled && !groups.length ? html`<p class="hint">${allHidden ? 'Enable a chord family or choose All.' : 'No chords match.'}</p>` : nothing}
+        ${this.scaled && !groups.length ? html`<p class="hint">No chords match.</p>` : nothing}
       </div>`;
   }
 

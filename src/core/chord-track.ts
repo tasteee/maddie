@@ -3,7 +3,7 @@ import { createId, type Editor } from './editor';
 import { shapeChordVelocity, withDynamics } from './chord-dynamics';
 import { ticksToSeconds } from './music/timeline';
 import { pitchClass } from './music/pitch';
-import type { ChordRegion, Key, Note, Tick } from './types';
+import { PATTERN_SPEEDS, type ChordRegion, type Key, type Note, type PatternSpeed, type Tick } from './types';
 
 let engine: ScaledT | undefined;
 let loading: Promise<ScaledT> | undefined;
@@ -55,6 +55,7 @@ function voiceRegion(scaled: ScaledT, region: ChordRegion, voicing: ScaledT.Voic
 function isValid(regions: readonly ChordRegion[]): boolean {
   return regions.every((region, i) => Number.isSafeInteger(region.start) && region.start >= 0 &&
     Number.isSafeInteger(region.duration) && Number.isSafeInteger(end(region)) && region.duration > 0 && (!i || end(regions[i - 1]) <= region.start) &&
+    (region.patternSpeed === undefined || PATTERN_SPEEDS.includes(region.patternSpeed)) &&
     region.pitches.length > 0 && region.pitches.every((pitch) => Number.isInteger(pitch) && pitch >= 0 && pitch <= 127));
 }
 
@@ -111,22 +112,23 @@ function renderRegions(regions: readonly ChordRegion[], source: readonly ChordRe
     if (!template) throw new Error('This performance is unavailable.');
     const origin = group[0].start;
     for (const region of group) {
+      const ticksPerBeat = ppq / (region.patternSpeed ?? 1);
       const octave = octaveOf(Math.min(...region.pitches));
       const performance = engine.adaptPerformanceTemplate({
         template, midiNotes: region.pitches, chordRootPitch: region.root, key, scale, octave,
       });
       // Render the local window at the phase it has in the group. Whole cycles
       // before this region contain no useful hits, including across silent gaps.
-      const elapsed = (region.start - origin + phaseTicks) / ppq;
+      const elapsed = (region.start - origin + phaseTicks) / ticksPerBeat;
       // Positive modulo: a start pulled earlier than the pattern's start reads the pattern's previous cycle.
       const phase = ((elapsed % performance.durationBeats) + performance.durationBeats) % performance.durationBeats;
       const startBeat = Math.max(0, phase - 1e-10);
-      const progression = [{ id: region.id, chord: chordOf(region), startBeat, durationBeats: region.duration / ppq + phase - startBeat }];
+      const progression = [{ id: region.id, chord: chordOf(region), startBeat, durationBeats: region.duration / ticksPerBeat + phase - startBeat }];
       const clip = engine.applyPerformance({ progression, performance, key, scale, octave });
       for (const hit of clip.notes) {
-        const start = Math.max(region.start, region.start + Math.round((hit.startBeat - phase) * ppq));
+        const start = Math.max(region.start, region.start + Math.round((hit.startBeat - phase) * ticksPerBeat));
         if (start >= end(region)) continue;
-        const stop = Math.min(end(region), Math.max(start + 1, region.start + Math.round((hit.startBeat + hit.durationBeats - phase) * ppq)));
+        const stop = Math.min(end(region), Math.max(start + 1, region.start + Math.round((hit.startBeat + hit.durationBeats - phase) * ticksPerBeat)));
         const noteId = region.id + ':' + hit.id;
         notes.push({
           id: noteId,
@@ -163,7 +165,7 @@ export const CHORD_SETTING_LABELS = {
 } as const;
 
 export type ChordSettingsKind = keyof typeof CHORD_SETTING_LABELS;
-type CopiedChordSettings = Pick<ChordRegion, 'velocity' | 'dynamics'> & {
+type CopiedChordSettings = Pick<ChordRegion, 'velocity' | 'dynamics' | 'patternSpeed'> & {
   templateId?: string;
   voicing: ScaledT.VoicingNameT;
   inversion: number;
@@ -184,7 +186,9 @@ export class ChordTrackCommands {
   }
 
   draft(chord: Pick<ChordRegion, 'root' | 'symbol' | 'intervals'>,
-    { octave, inversion, voicing, templateId }: { octave: number; inversion: number; voicing: ScaledT.VoicingNameT; templateId: string }): ChordDraft {
+    { octave, inversion, voicing, templateId, patternSpeed = 1 }: {
+      octave: number; inversion: number; voicing: ScaledT.VoicingNameT; templateId: string; patternSpeed?: PatternSpeed;
+    }): ChordDraft {
     if (!engine) throw new Error('Chord tools are still loading.');
     const ed = this.editor;
     const tonic = ed.key?.root ?? 0;
@@ -195,6 +199,7 @@ export class ChordTrackCommands {
     const region: ChordRegion = {
       ...chord, id: createId(), start: 0, duration, velocity: ed.view.noteVelocity, voicing, inversion, rootMidi: root,
       pitches: chord.intervals.map((interval) => root + interval),
+      ...(patternSpeed === 1 ? {} : { patternSpeed }),
       performance: templateId ? { templateId, groupId: createId(), ...scaledKey(ed.key, chord.root) } : undefined,
     };
     const pitches = engine.getChordWithVoicing({ chord: chordOf(region), voicing, inversion }).midiNotes;
@@ -220,7 +225,7 @@ export class ChordTrackCommands {
   }
 
   auditionDraft(draft: ChordDraft, held = false) {
-    if (draft.region.performance && draft.notes.length) return this.editor.auditionNotes(draft.notes, 0);
+    if (draft.region.performance) return this.editor.auditionNotes(draft.notes, 0);
     return this.editor.auditionChord(draft.region.pitches, held ? null : 0.5, draft.region.velocity);
   }
 
@@ -236,7 +241,7 @@ export class ChordTrackCommands {
     const ids = new Set(audible.map((region) => region.id));
     const notes = ed.notes().filter((note) => note.chordRegionId && ids.has(note.chordRegionId));
     if (notes.length) ed.auditionNotes(notes, regions[0].start);
-    else ed.auditionChord(audible[0].pitches, 0.5, audible[0].velocity);
+    else if (!audible[0].performance) ed.auditionChord(audible[0].pitches, 0.5, audible[0].velocity);
   }
 
   /**
@@ -255,7 +260,7 @@ export class ChordTrackCommands {
     const playOnce = () => {
       if (isStopped) return;
       if (hasNotes) ed.auditionNotes(notes, region.start);
-      else ed.auditionChord(region.pitches, loopSeconds, region.velocity);
+      else if (!region.performance) ed.auditionChord(region.pitches, loopSeconds, region.velocity);
       timer = setTimeout(playOnce, loopSeconds * 1000);
     };
     playOnce();
@@ -338,6 +343,7 @@ export class ChordTrackCommands {
     if (!region) return false;
     this.copiedSettings = {
       templateId: region.performance?.templateId,
+      patternSpeed: region.patternSpeed,
       voicing: region.voicing ?? 'rootPosition',
       inversion: region.inversion ?? 0,
       velocity: region.velocity,
@@ -396,6 +402,9 @@ export class ChordTrackCommands {
       if (pastePattern && (settings.templateId || performance)) {
         const templateId = settings.templateId;
         updated = { ...updated, performance: templateId ? { templateId, groupId: createId(), ...scaledKey(ed.key, region.root) } : undefined };
+      }
+      if (pastePattern && (settings.patternSpeed ?? 1) !== (region.patternSpeed ?? 1)) {
+        updated = { ...updated, patternSpeed: settings.patternSpeed };
       }
       if (pasteDynamics) updated = withDynamics({ ...updated, velocity: settings.velocity }, settings.dynamics ?? {});
       if (updated !== region) changed.push(updated);
@@ -582,11 +591,14 @@ export class ChordTrackCommands {
     });
   }
 
-  previewStyle({ voicing, templateId, inversion }: { voicing?: ScaledT.VoicingNameT; templateId?: string | null; inversion?: number }): ChordTrackEdit | undefined {
+  previewStyle({ voicing, templateId, inversion, patternSpeed }: {
+    voicing?: ScaledT.VoicingNameT; templateId?: string | null; inversion?: number; patternSpeed?: PatternSpeed;
+  }): ChordTrackEdit | undefined {
     const ed = this.editor;
     const regions = ed.chordRegions;
     const selected = ed.selectedChordRegions;
-    if (!regions || !selected.length || !engine || (!voicing && templateId === undefined && inversion === undefined)) return;
+    if (!regions || !selected.length || !engine ||
+      (!voicing && templateId === undefined && inversion === undefined && patternSpeed === undefined)) return;
     const styled = new Map<string, ChordRegion>();
     const groupId = createId();
     const context = scaledKey(ed.key, selected[0].root);
@@ -597,9 +609,25 @@ export class ChordTrackCommands {
         : { ...region };
       previous = styledRegion.pitches;
       if (templateId !== undefined) styledRegion.performance = templateId ? { templateId, groupId, ...context } : undefined;
+      if (patternSpeed !== undefined) styledRegion.patternSpeed = patternSpeed === 1 ? undefined : patternSpeed;
       styled.set(region.id, styledRegion);
     }
-    return this.prepare(regions.map((region) => styled.get(region.id) ?? region));
+    if (templateId === undefined) return this.prepare(regions.map((region) => styled.get(region.id) ?? region));
+    const groupOrigins = new Map<string, ChordRegion>();
+    const survivingGroups = new Set<string>();
+    return this.prepare(regions.map((region) => {
+      const performance = region.performance;
+      if (performance && !groupOrigins.has(performance.groupId)) groupOrigins.set(performance.groupId, region);
+      const replacement = styled.get(region.id);
+      if (replacement) return replacement;
+      if (!performance || survivingGroups.has(performance.groupId)) return region;
+      survivingGroups.add(performance.groupId);
+      const origin = groupOrigins.get(performance.groupId)!;
+      if (origin === region) return region;
+      // If the old group's first chord was selected, keep the remaining chords in phase.
+      const phaseTicks = (origin.performance?.phaseTicks ?? 0) + region.start - origin.start;
+      return { ...region, performance: { ...performance, phaseTicks } };
+    }));
   }
 
   renderToMidi(): boolean {

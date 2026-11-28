@@ -98,6 +98,25 @@ describe('music', () => {
 describe('editor', () => {
   const note = (pitch: number, start: number) => ({ pitch, start, duration: 240, velocity: 0.8 });
 
+  it('folds to pitches from the active track or the whole project', () => {
+    const ed = createEditor({ doc: { tracks: [
+      { id: 'lead', notes: [{ id: 'a', ...note(60, 0) }, { id: 'b', ...note(67, 240) }] },
+      { id: 'bass', notes: [{ id: 'c', ...note(48, 0) }] },
+      { id: 'empty', notes: [] },
+    ] } });
+    const pitches = () => ed.rowMap.rows.map(({ pitch }) => pitch);
+    ed.setView({ fold: 'track' });
+    expect(pitches()).toEqual([67, 60]);
+    ed.setActiveTrack('bass');
+    expect(pitches()).toEqual([48]);
+    ed.setActiveTrack('empty');
+    expect(ed.rowMap.length).toBe(128);
+    ed.setView({ fold: 'used' });
+    expect(pitches()).toEqual([67, 60, 48]);
+    ed.setActiveTrack('lead');
+    expect(pitches()).toEqual([67, 60, 48]);
+  });
+
   it('adds, moves and undoes', () => {
     const ed = createEditor();
     const [a] = ed.commands.add([note(60, 0)]);
@@ -357,6 +376,44 @@ describe('detectKey', () => {
 });
 
 describe('transport', () => {
+  it('starts at the earliest selected section and returns to the insert marker on stop', async () => {
+    vi.useFakeTimers();
+    const played: { pitch: number; duration?: number }[] = [];
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0 } as unknown as AudioContext;
+    const ed = createEditor({
+      audioContext,
+      doc: { sections: ['intro', 'verse', 'outro'].map((id) => ({ id, name: id, durationBars: 1, color: 'blue' })) },
+      output: { noteOn: ({ note, duration }) => played.push({ pitch: note.pitch, duration }), noteOff: () => {}, allNotesOff: () => {} },
+    });
+    ed.transport.setMetronome({ enabled: false });
+    try {
+      ed.commands.add([{ pitch: 67, start: PPQ * 4, duration: PPQ, velocity: 0.8 }]);
+      ed.setInsertMarker(PPQ);
+      ed.transport.setLoop({ enabled: true, start: PPQ, end: PPQ * 2 });
+      ed.sections.select(['outro', 'verse']);
+      await ed.transport.toggle();
+      expect(ed.transport.position).toBe(PPQ * 4);
+      expect(played).toEqual([{ pitch: 67, duration: 0.5 }]);
+      expect(ed.transport.marker).toBe(PPQ);
+      ed.transport.toggle();
+      expect(ed.transport.position).toBe(PPQ);
+      expect(ed.transport.loop.enabled).toBe(true);
+
+      ed.sections.select(['outro']);
+      await ed.transport.toggle();
+      expect(ed.transport.playing).toBe(true);
+      expect(ed.transport.position).toBe(PPQ * 8);
+      ed.transport.toggle();
+
+      ed.sections.select([]);
+      await ed.transport.toggle();
+      expect(ed.transport.position).toBe(PPQ);
+    } finally {
+      if (ed.transport.playing) ed.transport.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('pastes at the insert marker and resumes from the last stop without moving it', async () => {
     vi.useFakeTimers();
     const audioContext = { currentTime: 1, state: 'running', outputLatency: 0 };
@@ -741,10 +798,13 @@ describe('held keyboard shortcuts', () => {
       return ed.view.fold;
     };
 
-    expect([cycle(), cycle()]).toEqual(['used', 'none']);
+    expect([cycle(), cycle(), cycle()]).toEqual(['track', 'used', 'none']);
     ed.transact('Key', (tx) => tx.setMeta('key', { root: 0, scale: 'major' }));
-    expect([cycle(), cycle(), cycle()]).toEqual(['used', 'scale', 'none']);
-    expect(toasts).toEqual(['Fold · Notes', 'Fold · Off', 'Fold · Notes', 'Fold · Key', 'Fold · Off']);
+    expect([cycle(), cycle(), cycle(), cycle()]).toEqual(['track', 'used', 'scale', 'none']);
+    expect(toasts).toEqual([
+      'Fold · Track Notes', 'Fold · Project Notes', 'Fold · Off',
+      'Fold · Track Notes', 'Fold · Project Notes', 'Fold · Key', 'Fold · Off',
+    ]);
   });
 
   it('uses slash as a modifier for panels even with MIDI enabled', async () => {

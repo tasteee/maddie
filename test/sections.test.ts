@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseProject } from '../src/app/project-file';
 import { createEditor, type ChordRegion, type Note, type Section, type Track } from '../src/core';
+import { actions } from '../src/engine/keymap';
 
 const bar = 1920;
 const at = (number: number) => (number - 1) * bar;
@@ -91,6 +92,31 @@ describe('arrangement sections', () => {
     expect(ed.doc.tracks[0].notes.map(({ id, start }) => [id, start])).toEqual([
       ['a', long.start], ['b', at(2)], ['tail', at(4)],
     ]);
+  });
+
+  it('duplicates selected sections and their content across tracks in one edit', () => {
+    const harmony = chord('harmony', at(2) + 15);
+    const ed = setup([label('A', 1), label('B', 1), label('C', 1), label('D', 1)], [
+      { id: 'midi', notes: [note('a', 0), note('c', at(3) + 10), note('d', at(4) + 20)] },
+      { id: 'chords', chordRegions: [harmony], notes: [{ ...note('rendered', harmony.start + 30), chordRegionId: harmony.id }] },
+    ]);
+    const before = ed.doc;
+    ed.sections.select(ids('A', 'B', 'D'));
+    actions.duplicate(ed);
+    expect(ed.sections.items.map(({ name }) => name)).toEqual(['A', 'B', 'A copy', 'B copy', 'C', 'D', 'D copy']);
+    expect(ed.sections.items.filter(({ id }) => ed.sections.selected.has(id)).map(({ name }) => name))
+      .toEqual(['A copy', 'B copy', 'D copy']);
+    expect(ed.notes().map(({ start }) => start)).toEqual([0, at(3), at(5) + 10, at(6) + 20, at(7) + 20]);
+    const copy = ed.doc.tracks[1].chordRegions![1];
+    expect(copy).toMatchObject({ start: at(4) + 15, duration: harmony.duration });
+    expect(copy.id).not.toBe(harmony.id);
+    expect(ed.notes('chords')[1]).toMatchObject({ start: at(4) + 45, chordRegionId: copy.id });
+    const duplicated = ed.doc;
+    ed.undo();
+    expect(ed.doc).toEqual(before);
+    expect(ed.history.canUndo).toBe(false);
+    ed.redo();
+    expect(ed.doc).toEqual(duplicated);
   });
 
   it('uses start membership for cross-track selection and pastes back onto the original tracks', () => {

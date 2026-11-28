@@ -73,7 +73,7 @@ export class MaddieKeyboard extends CanvasElement {
     const rows = engine.rows;
     const activeScale = ed.key ? scaleMask(ed.key) : null;
     const indicatorHeight = Math.max(1, Math.min(8, Math.floor(rowHeight - 2)));
-    const isFolded = ed.view.fold === 'used' || (ed.view.fold === 'scale' && Boolean(ed.key));
+    const isFolded = ed.view.fold !== 'none' && (ed.view.fold !== 'scale' || Boolean(ed.key));
     const sounding = new Set(engine.held);
     if (ed.transport.playing) {
       const pos = ed.transport.position;

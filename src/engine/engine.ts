@@ -117,6 +117,10 @@ export class Engine {
       this.invalidate();
     });
     editor.on('selection', () => this.invalidate());
+    editor.on('chordpreview', () => {
+      this.reflowRows(this.motion.slow, performance.now());
+      this.invalidate();
+    });
     editor.on('sectionselection', () => this.invalidate());
     editor.on('tracks', () => {
       this.reflowRows(this.motion.slow, performance.now());
@@ -245,7 +249,7 @@ export class Engine {
   visibleNotes(from: number, to: number): Note[] {
     const { overrides, added, hidden, regions } = this.preview;
     const out: Note[] = [];
-    for (const n of this.editor.notesInRange(from, to)) {
+    for (const n of this.editor.displayNotesInRange(from, to)) {
       if (!hidden.has(n.id) && !overrides.has(n.id)) out.push(n);
     }
     const overlaps = (n: Note) => !regions || (n.start < to && n.start + n.duration > from);

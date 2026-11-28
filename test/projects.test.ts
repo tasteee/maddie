@@ -50,7 +50,7 @@ describe('Maddie projects', () => {
     const original = projects.activeId;
     editor.chordTrack.enable();
     const draft = editor.chordTrack.draft({ symbol: 'Cmaj7', root: 0, intervals: [0, 4, 7, 11] },
-      { octave: 3, inversion: 1, voicing: 'closed', templateId: '' });
+      { octave: 3, inversion: 1, voicing: 'closed', templateId: '', patternSpeed: 2 });
     editor.chordTrack.placeDraft(draft, editor.ppq);
     editor.chordTrack.commitChanged(pitchRangeChords(editor.selectedChordRegions, 50 / 127, 70 / 127), 'Velocity range');
     editor.commands.toggleMute();
@@ -60,7 +60,7 @@ describe('Maddie projects', () => {
     projects.importProject(project);
     expect(projects.activeId).not.toBe(original);
     expect(projects.entries).toHaveLength(2);
-    expect(editor.chordRegions?.[0]).toMatchObject({ symbol: 'Cmaj7', inversion: 1, muted: true,
+    expect(editor.chordRegions?.[0]).toMatchObject({ symbol: 'Cmaj7', inversion: 1, muted: true, patternSpeed: 2,
       dynamics: { pitchRange: { min: 50 / 127, max: 70 / 127 } } });
     expect(editor.notes()).toEqual(project.doc.tracks[0].notes);
     expect(editor.notes().every((note) => note.muted)).toBe(true);
@@ -112,12 +112,12 @@ describe('Maddie projects', () => {
     const view = {
       ...DEFAULT_VIEW,
       pxPerTick: 0.12, rowHeight: 18, scrollTick: 123.5, scrollRow: 4.5, cursor: 240,
-      grid: '1/64T', snap: false, scaleLock: true, scaleHighlight: false, follow: true,
+      grid: '1/64T', snap: false, fold: 'track', scaleLock: true, scaleHighlight: false, follow: true,
       noteLength: 180, noteVelocity: 0.45, noteColor: 'mono',
       computerKeyboard: true, keyboardBase: 60, keyboardScale: true, midiInput: true, midiDevice: 'keys',
-      chordsPanel: true, chordsTab: 'project', hiddenChordFamilies: ['power', 'eleventh'], chordQuery: 'maj7',
+      chordsPanel: true, chordsTab: 'project', selectedChordFamilies: ['power', 'eleventh'], chordQuery: 'maj7',
       chordOctave: 4, chordInversion: 2, chordVoicing: 'drop2',
-      chordTemplateId: 'pattern', quantizeGrid: '1/8.',
+      chordTemplateId: 'pattern', chordPatternSpeed: 0.5, quantizeGrid: '1/8.',
       quantizeStrength: 75, humanizeTiming: 25, humanizeVelocity: 9,
     } as const;
     editor.setView(view);
@@ -150,14 +150,16 @@ describe('Maddie projects', () => {
     expect(restored.history.canUndo).toBe(false);
   });
 
-  it('restores older single-family filters as exclusions', () => {
+  it('restores older chord family filters as selections', () => {
     const project = JSON.stringify({
       format: 'maddie', version: 1, name: 'Older project', doc: createDoc(),
       settings: { view: { chordFamily: 'seventh' } },
     });
-    expect(restoreProjectView(parseProject(project).settings).hiddenChordFamilies)
-      .toEqual(CHORD_FAMILIES.map(({ id }) => id).filter((id) => id !== 'seventh'));
-    expect(restoreProjectView({ view: { chordFamily: 'seventh', hiddenChordFamilies: [] } }).hiddenChordFamilies).toEqual([]);
+    expect(restoreProjectView(parseProject(project).settings).selectedChordFamilies).toEqual(['seventh']);
+    const hiddenChordFamilies = CHORD_FAMILIES.map(({ id }) => id).filter((id) => id !== 'triad');
+    expect(restoreProjectView({ view: { hiddenChordFamilies } }).selectedChordFamilies).toEqual(['triad']);
+    expect(restoreProjectView({ view: { chordFamily: 'seventh', hiddenChordFamilies: [] } }).selectedChordFamilies).toEqual([]);
+    expect(restoreProjectView({ view: { hiddenChordFamilies, selectedChordFamilies: [] } }).selectedChordFamilies).toEqual([]);
   });
 
   it('batches viewport-only autosaves and flushes a pending viewport when switching projects', async () => {

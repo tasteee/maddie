@@ -257,6 +257,8 @@ export class MaddieSections extends MaddieElement {
     } else if (event.key === 'F2') {
       const trigger = (event.currentTarget as HTMLElement).closest('article')!.querySelector<HTMLElement>('.section-dot')!;
       this.show(id, trigger);
+    } else if (event.code === 'Space' && this.sections.selected.size && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      if (!event.repeat) void this.ed!.transport.toggle();
     } else if (direction && !event.ctrlKey && !event.metaKey) {
       if (event.altKey && !event.shiftKey) {
         const ids = this.movingBlock(id);
@@ -264,7 +266,7 @@ export class MaddieSections extends MaddieElement {
         const to = Math.min(items.length - ids.size, Math.max(0, start + direction));
         if (to !== start) {
           this.run(() => this.sections.move(ids, to));
-          this.focusHeader(id);
+          this.revealHeader(id, true);
         }
       } else if (event.shiftKey && !event.altKey) {
         this.run(() => this.sections.resize(id, direction));
@@ -272,7 +274,7 @@ export class MaddieSections extends MaddieElement {
         const next = items[index + direction];
         if (next) {
           this.choose(next.id, false, false);
-          this.focusHeader(next.id);
+          this.revealHeader(next.id, true);
         }
       } else return;
     } else return;
@@ -280,12 +282,13 @@ export class MaddieSections extends MaddieElement {
     event.stopPropagation();
   }
 
-  private focusHeader(id: string) {
+  private revealHeader(id: string, moveFocus: boolean) {
     const range = this.sections.ranges().find(({ section }) => section.id === id);
     if (!range || !this.ed) return;
     if (this.x(range.start) < 0 || this.x(range.start) >= this.clientWidth - 24) {
       this.ed.setView({ scrollTick: range.start });
     }
+    if (!moveFocus) return;
     void this.updateComplete.then(() => {
       const header = [...this.renderRoot.querySelectorAll<HTMLButtonElement>('.section-name')]
         .find((button) => button.dataset.id === id);
@@ -293,12 +296,12 @@ export class MaddieSections extends MaddieElement {
     });
   }
 
-  private activate(action: () => string | void | undefined) {
+  private activate(event: MouseEvent, action: () => string | void | undefined) {
     const id = this.run(action);
     this.closeMenu(!id);
     if (id) {
       this.choose(id, false, false);
-      this.focusHeader(id);
+      this.revealHeader(id, event.detail === 0);
     }
   }
 
@@ -350,21 +353,21 @@ export class MaddieSections extends MaddieElement {
             aria-label=${name} title=${name} aria-pressed=${section.color === color} style=${styleMap({ '--swatch': color })}
             @click=${() => this.run(() => this.sections.color(ids, color))}></button>`)}
         </div>
-        <button type="button" @click=${() => this.activate(() => this.sections.selectContent(ids, false))}>Select in current track</button>
-        <button type="button" @click=${() => this.activate(() => this.sections.selectContent(ids, true))}>Select in all tracks</button>
+        <button type="button" @click=${(event: MouseEvent) => this.activate(event, () => this.sections.selectContent(ids, false))}>Select in current track</button>
+        <button type="button" @click=${(event: MouseEvent) => this.activate(event, () => this.sections.selectContent(ids, true))}>Select in all tracks</button>
         <button type="button" ?disabled=${!canSplit}
-          @click=${() => this.activate(() => this.sections.split(id, split!))}>${this.splitBar && canSplit ? `Split at bar ${split}` : 'Split section in half'}</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.split(id, split!))}>${this.splitBar && canSplit ? `Split at bar ${split}` : 'Split section in half'}</button>
         ${unavailable ? html`<p>${unavailable}</p>` : nothing}
         <button type="button" ?disabled=${!!unavailable}
-          @click=${() => this.activate(() => this.sections.insert(id, true, true))}>Duplicate section with music</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.insert(id, true, true))}>Duplicate section with music</button>
         <button type="button" ?disabled=${!!unavailable}
-          @click=${() => this.activate(() => this.sections.insert(id, false))}>Insert empty section before</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.insert(id, false))}>Insert empty section before</button>
         <button type="button" ?disabled=${!!unavailable}
-          @click=${() => this.activate(() => this.sections.insert(id, true))}>Insert empty section after</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.insert(id, true))}>Insert empty section after</button>
         <hr>
-        <button type="button" @click=${() => this.activate(() => this.sections.remove(ids, false))}>Remove section label</button>
+        <button type="button" @click=${(event: MouseEvent) => this.activate(event, () => this.sections.remove(ids, false))}>Remove section label</button>
         <button type="button" class="danger" ?disabled=${!!unavailable}
-          @click=${() => this.activate(() => this.sections.remove(ids, true))}>Delete section and music</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.remove(ids, true))}>Delete section and music</button>
       ` : nothing}
     </div>`;
   }
@@ -409,7 +412,7 @@ export class MaddieSections extends MaddieElement {
         })}
         <button type="button" class="append" style=${styleMap({ left: this.x(ranges.at(-1)?.end ?? 0) + 'px' })}
           title="Add section label" aria-label="Add section label"
-          @click=${() => this.activate(() => this.sections.append())}>${icons.plus}</button>
+          @click=${(event: MouseEvent) => this.activate(event, () => this.sections.append())}>${icons.plus}</button>
         ${this.dropTick === undefined ? nothing
           : html`<span class="drop" style=${styleMap({ left: this.x(this.dropTick) + 'px' })}></span>`}
       </div>

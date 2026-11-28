@@ -362,7 +362,7 @@ export class MaddieInspector extends SelectionControls {
     </div>`;
 
     const pitches = notes.map((n) => n.pitch);
-    const folded = ed.view.fold === 'scale' || ed.view.fold === 'used';
+    const folded = ed.view.fold !== 'none';
     const step = folded ? 'a row' : ed.view.scaleLock && ed.key ? 'a scale step' : 'a semitone';
     const lo = Math.min(...pitches);
     const hi = Math.max(...pitches);

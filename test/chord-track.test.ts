@@ -14,6 +14,89 @@ const chord = (start: number, duration: number, root = 0): Omit<ChordRegion, 'id
 beforeAll(loadScaled);
 
 describe('Chord Tracks', () => {
+  it('scales pattern timing within fixed chord bounds and keeps speed when replacing or removing the pattern', async () => {
+    const scaled = await loadScaled();
+    const editor = createEditor({ doc: { ppq: 480 } });
+    editor.chordTrack.enable();
+    const templateId = scaled.performanceTemplates.find(({ name, category }) => name === 'Basic 1' && category === 'Bass')!.id;
+    editor.chordTrack.add(chord(240, 1920));
+    editor.chordTrack.commit(editor.chordTrack.previewStyle({ templateId })!, 'Apply pattern');
+    editor.history.clear();
+
+    const [original] = editor.chordRegions!;
+    const noteStarts = (notes: readonly { start: number }[]) =>
+      [...new Set(notes.map((note) => note.start - original.start))].sort((a, b) => a - b);
+    expect(noteStarts(editor.notes())).toEqual([0, 360, 720, 960, 1320, 1680]);
+    const slower = editor.chordTrack.previewStyle({ patternSpeed: 0.5 })!;
+    const faster = editor.chordTrack.previewStyle({ patternSpeed: 2 })!;
+    expect(noteStarts(slower.notes)).toEqual([0, 720, 1440]);
+    expect(noteStarts(faster.notes)).toEqual([0, 180, 360, 480, 660, 840, 960, 1140, 1320, 1440, 1620, 1800]);
+    expect(faster.notes.every(({ start, duration }) => start >= 240 && start + duration <= 2160)).toBe(true);
+    editor.setChordPreview(slower);
+    expect(editor.history.canUndo).toBe(false);
+    editor.setChordPreview(faster);
+    expect(editor.chordTrack.commit(faster, 'Change chord pattern speed')).toBe(true);
+    editor.setChordPreview();
+    editor.undo();
+    expect(editor.chordRegions![0]).toBe(original);
+    editor.redo();
+    expect(editor.chordRegions![0]).toMatchObject({ start: 240, duration: 1920, patternSpeed: 2, performance: original.performance });
+
+    const remove = editor.chordTrack.previewStyle({ templateId: null })!;
+    editor.chordTrack.commit(remove, 'Remove pattern');
+    expect(editor.chordRegions![0]).toMatchObject({ patternSpeed: 2, performance: undefined });
+    const replace = editor.chordTrack.previewStyle({ templateId })!;
+    expect(noteStarts(replace.notes)).toEqual(noteStarts(faster.notes));
+  });
+
+  it('uses the pending pattern in playback without touching the saved chord or undo stack', async () => {
+    const scaled = await loadScaled();
+    const editor = createEditor();
+    editor.chordTrack.enable();
+    editor.chordTrack.add(chord(0, 3840));
+    editor.chordTrack.add(chord(3840, 3840, 9));
+    editor.commands.selectAll();
+    editor.history.clear();
+    const original = editor.doc;
+    const originalNotes = editor.notes();
+    const templates = scaled.performanceTemplates.filter((item) => item.category === 'Rhythms').slice(0, 2);
+    const [first, second] = templates.map((template) => editor.chordTrack.previewStyle({ templateId: template.id })!);
+    expect(first.notes).not.toEqual(originalNotes);
+
+    editor.setChordPreview(first);
+    expect(editor.notesStartingAudible(0, 7680).map(({ note }) => note)).toHaveLength(first.notes.length);
+    expect(editor.displayNotesInRange(0, 7680)).toEqual(expect.arrayContaining([...first.notes]));
+    expect(editor.notesAllTracks(1, 2, { audibleOnly: true, preview: true }).map(({ note }) => note))
+      .toEqual(editor.displayNotesInRange(1, 2));
+    editor.setChordPreview(second);
+    expect(editor.doc).toBe(original);
+    expect(editor.history.canUndo).toBe(false);
+
+    editor.setChordPreview();
+    expect(editor.displayNotesInRange(0, 7680)).toEqual(originalNotes);
+    editor.setChordPreview(second);
+    expect(editor.chordTrack.commit(second, 'Apply chord pattern')).toBe(true);
+    editor.setChordPreview();
+    expect(editor.chordRegions).toBe(second.regions);
+    editor.undo();
+    expect(editor.doc).toEqual(original);
+    expect(editor.history.canUndo).toBe(false);
+
+    editor.setChordPreview(first);
+    editor.setChordPreview();
+    expect(editor.history.canRedo).toBe(true);
+    editor.redo();
+    const clear = editor.chordTrack.previewStyle({ templateId: null })!;
+    editor.setChordPreview(clear);
+    expect(editor.chordRegions?.every((region) => region.performance)).toBe(true);
+    expect(editor.displayNotesInRange(0, 7680)).toEqual(originalNotes);
+    expect(editor.chordTrack.commit(clear, 'Clear chord pattern')).toBe(true);
+    editor.setChordPreview();
+    expect(editor.chordRegions?.every((region) => !region.performance)).toBe(true);
+    editor.undo();
+    expect(editor.chordRegions).toBe(second.regions);
+  });
+
   it('selects a chord through any note and protects the generated pitches', () => {
     const editor = createEditor();
     const midi = editor.activeTrackId;
@@ -266,7 +349,7 @@ describe('Chord Tracks', () => {
     editor.chordTrack.enable();
     const pattern = scaled.performanceTemplates.find((template) => template.category === 'Rhythms')!.id;
     const source = editor.chordTrack.draft({ symbol: 'Cmaj7', root: 0, intervals: [0, 4, 7, 11] },
-      { octave: 4, voicing: 'closed', inversion: 3, templateId: pattern });
+      { octave: 4, voicing: 'closed', inversion: 3, templateId: pattern, patternSpeed: 0.5 });
     const dynamics = { ramp: { from: 0.3, to: 0.8 }, humanize: { amount: 0.1, seed: 42 }, accent: 'offbeats' } as const;
     editor.chordTrack.add({ ...source.region, start: 0, duration: 480, velocity: 0.6, dynamics });
     editor.chordTrack.add({ ...chord(480, 659, 9), symbol: 'Am', intervals: [0, 3, 7], pitches: [57, 60, 64], rootMidi: 57 });
@@ -292,7 +375,7 @@ describe('Chord Tracks', () => {
       const target = targets[index];
       expect(region).toMatchObject({ id: target.id, root: target.root, rootMidi: target.rootMidi, symbol: target.symbol,
         start: target.start, duration: target.duration, voicing: 'closed', inversion: index === 0 ? 2 : 3,
-        velocity: 0.6, dynamics, performance: { templateId: pattern } });
+        velocity: 0.6, dynamics, patternSpeed: 0.5, performance: { templateId: pattern } });
       expect(region.performance?.groupId).not.toBe(original.performance?.groupId);
     });
     expect(editor.selectedChordRegions[0].performance?.groupId).not.toBe(editor.selectedChordRegions[1].performance?.groupId);

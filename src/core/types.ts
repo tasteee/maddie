@@ -4,6 +4,8 @@ import type { ChordDynamicsT } from './chord-dynamics';
 /** Time in ticks. Integer. `ppq` ticks per quarter note. */
 export type Tick = number;
 export type NoteId = string;
+export const PATTERN_SPEEDS = [0.5, 1, 2] as const;
+export type PatternSpeed = (typeof PATTERN_SPEEDS)[number];
 
 export interface Note {
   id: NoteId;
@@ -47,6 +49,8 @@ export interface ChordRegion {
   voicing?: ScaledT.VoicingNameT;
   inversion?: number;
   rootMidi?: number;
+  /** Playback speed for this chord's pattern. Defaults to 1×. */
+  patternSpeed?: PatternSpeed;
   performance?: { templateId: string; groupId: string; key: string; scale: string; phaseTicks?: Tick };
   /** Velocity shaping: ramp, humanize, accent. Applied every time the chord's notes are built. */
   dynamics?: ChordDynamicsT;

@@ -2,11 +2,12 @@ import type { Key } from '../types';
 import { isBlackKey, MAX_PITCH, MIN_PITCH } from './pitch';
 import { inScale } from './scale';
 
-export type FoldMode = 'none' | 'scale' | 'used';
+export type FoldMode = 'none' | 'scale' | 'track' | 'used';
 
 export const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
   { value: 'none', label: 'Off' },
-  { value: 'used', label: 'Notes' },
+  { value: 'track', label: 'Track Notes' },
+  { value: 'used', label: 'Project Notes' },
   { value: 'scale', label: 'Key' },
 ];
 
@@ -82,6 +83,6 @@ export function buildRowMap({ fold, key, used = [], min = MIN_PITCH, max = MAX_P
   // Folding never hides a note: pitches in use always keep their row.
   const usedSet = new Set(used);
   if (fold === 'scale' && key) return new RowMap(all.filter((p) => inScale(p, key) || usedSet.has(p)), key);
-  if (fold === 'used' && usedSet.size) return new RowMap([...usedSet], key);
+  if ((fold === 'track' || fold === 'used') && usedSet.size) return new RowMap([...usedSet], key);
   return new RowMap(all, key);
 }

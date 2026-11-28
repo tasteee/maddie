@@ -1,4 +1,4 @@
-import { ChordTrackCommands } from './chord-track';
+import { ChordTrackCommands, type ChordTrackEdit } from './chord-track';
 import { Commands } from './commands';
 import { Emitter } from './emitter';
 import { History } from './history';
@@ -45,6 +45,7 @@ export interface EditorEvents extends Record<string, unknown> {
   sectionselection: undefined;
   beforechange: BeforeChangeEvent;
   selection: { ids: ReadonlySet<NoteId> };
+  chordpreview: undefined;
   view: ViewChangeEvent;
   transport: { state: Transport['state']; position: Tick };
   history: { canUndo: boolean; canRedo: boolean };
@@ -119,6 +120,7 @@ export class Editor extends Emitter<EditorEvents> {
   readonly sections = new SectionCommands(this);
   readonly chordTrack = new ChordTrackCommands(this);
   private tracks = new Map<string, { track: TrackMetaT; notes: NoteIndex }>();
+  private chordPreview?: { edit: ChordTrackEdit; notes: NoteIndex };
   // Track order before the latest change, so a removed active track hands over to its neighbor.
   private trackOrder: string[] = [];
   private trackListCache: TrackMetaT[] | null = null;
@@ -308,6 +310,27 @@ export class Editor extends Emitter<EditorEvents> {
     return this.index(track).range(from, to);
   }
 
+  /** Replace the rendered notes for playback and display without editing the document. */
+  setChordPreview(edit?: ChordTrackEdit) {
+    if (edit === this.chordPreview?.edit) return;
+    this.chordPreview = edit && { edit, notes: new NoteIndex(edit.notes) };
+    this.rowMapCache = null;
+    if (this.transport.playing) this.transport.seek(this.transport.position, { marker: false });
+    this.emit('chordpreview', undefined);
+  }
+
+  private previewIndex(trackId: string) {
+    const preview = this.chordPreview;
+    if (trackId === this.activeTrackId && preview?.edit.trackId === trackId &&
+      this.tracks.get(trackId)?.track.chordRegions === preview.edit.source) {
+      return preview.notes;
+    }
+  }
+
+  displayNotesInRange(from: Tick, to: Tick) {
+    return (this.previewIndex(this.activeTrackId) ?? this.index()).range(from, to);
+  }
+
   /** Notes starting in [from, to). Used by the scheduler. */
   notesStarting(from: Tick, to: Tick, track = this.activeTrackId) {
     return this.index(track).starting(from, to);
@@ -317,13 +340,14 @@ export class Editor extends Emitter<EditorEvents> {
    * Notes of every track overlapping [from, to), each with its track id.
    * `audibleOnly` leaves out tracks that are muted or not soloed.
    */
-  notesAllTracks(from: Tick, to: Tick, { audibleOnly = false } = {}): TrackNoteT[] {
+  notesAllTracks(from: Tick, to: Tick, { audibleOnly = false, preview = false } = {}): TrackNoteT[] {
     const audibleIds = getAudibleTrackIds(this.trackList);
     const found: TrackNoteT[] = [];
     for (const [trackId, entry] of this.tracks) {
       const isSilent = audibleOnly && !audibleIds.has(trackId);
       if (isSilent) continue;
-      for (const note of entry.notes.range(from, to)) found.push({ trackId, note });
+      const notes = (preview ? this.previewIndex(trackId) : undefined) ?? entry.notes;
+      for (const note of notes.range(from, to)) found.push({ trackId, note });
     }
     return found;
   }
@@ -334,7 +358,7 @@ export class Editor extends Emitter<EditorEvents> {
     const found: TrackNoteT[] = [];
     for (const [trackId, entry] of this.tracks) {
       if (!audibleIds.has(trackId)) continue;
-      for (const note of entry.notes.starting(from, to)) found.push({ trackId, note });
+      for (const note of (this.previewIndex(trackId) ?? entry.notes).starting(from, to)) found.push({ trackId, note });
     }
     return found;
   }
@@ -353,9 +377,9 @@ export class Editor extends Emitter<EditorEvents> {
   /** Rows for the current fold mode and key. */
   get rowMap(): RowMap {
     if (!this.rowMapCache) {
-      const isFoldedToNotes = this._view.fold === 'used';
-      const used = isFoldedToNotes ? this.usedPitches() : [];
-      this.rowMapCache = buildRowMap({ fold: this._view.fold, key: this._meta.key, used });
+      const { fold } = this._view;
+      const used = fold === 'track' ? this.usedPitches(this.activeTrackId) : fold === 'used' ? this.usedPitches() : [];
+      this.rowMapCache = buildRowMap({ fold, key: this._meta.key, used });
     }
     return this.rowMapCache;
   }
@@ -874,11 +898,13 @@ export class Editor extends Emitter<EditorEvents> {
     if (hadSelection) this.emit('selection', { ids: this._selection });
   }
 
-  private usedPitches(): Set<number> {
+  private usedPitches(trackId?: string): Set<number> {
     const pitches = new Set<number>();
-    for (const entry of this.tracks.values()) {
+    for (const [id, entry] of this.tracks) {
+      if (trackId !== undefined && id !== trackId) continue;
       for (const note of entry.notes.all()) pitches.add(note.pitch);
     }
+    for (const note of this.previewIndex(this.activeTrackId)?.all() ?? []) pitches.add(note.pitch);
     return pitches;
   }
 

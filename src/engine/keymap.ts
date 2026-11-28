@@ -170,7 +170,14 @@ export const actions: Record<string, Action> = {
   },
   selectAll: (e) => e.commands.selectAll(),
   deselect: (e) => e.clearSelection(),
-  duplicate: (e) => e.chordRegions ? chordShortcut(e, e.chordTrack.duplicate()) : e.selection.size && e.commands.duplicate(),
+  duplicate: (e) => {
+    if (e.sections.selected.size) return sectionContent(e, () => {
+      const copies = e.sections.duplicate(e.sections.selected);
+      if (copies.length) e.sections.select(copies);
+    });
+    if (e.chordRegions) return chordShortcut(e, e.chordTrack.duplicate());
+    if (e.selection.size) e.commands.duplicate();
+  },
   copy: (e) => e.sections.allTracksSelected ? e.sections.copyContent() : e.commands.copy(),
   cut: (e) => {
     if (e.sections.allTracksSelected) {
@@ -213,7 +220,7 @@ export const actions: Record<string, Action> = {
   zoomOut: (e) => zoomBy(e, 1 / 1.5),
   rowsTaller: (e) => rowZoomBy(e, 1.25),
   rowsShorter: (e) => rowZoomBy(e, 1 / 1.25),
-  // Like Ableton: stopping returns to the marker, so the next play starts from it.
+  // The selected section can start playback without moving the insert marker.
   playPause: (e) => e.transport.toggle(),
   resumePlayback: (e) => e.transport.resume(),
   playSelection: (e) => {

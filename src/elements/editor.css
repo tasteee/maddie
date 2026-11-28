@@ -24,18 +24,21 @@
   grid-template-columns: var(--_keyboard-width) minmax(0, 1fr) auto;
   grid-template-rows: 30px var(--_ruler-height) minmax(0, 1fr) var(--_lane-head-height) var(--_lane-height);
   grid-template-areas:
-    'sectionscorner sections chords'
+    'corner sections chords'
     'corner ruler chords'
     'keys roll chords'
     'lanehead lanehead chords'
     'label lane chords';
   --_lane-head-height: 40px;
 }
-.sections-corner { grid-area: sectionscorner; }
 maddie-sections { grid-area: sections; }
-.sections-corner,
 .corner {
   grid-area: corner;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
   background: var(--_surface);
   border-right: 1px solid var(--_border);
   border-bottom: 1px solid var(--_border);

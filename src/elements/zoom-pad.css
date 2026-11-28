@@ -22,6 +22,7 @@
   gap: 2px;
   padding: 0 2px 0 4px;
   border-top: 1px solid var(--_border);
+  border-inline-start: 1px solid var(--_border);
 }
 .scroll-y {
   grid-area: y;

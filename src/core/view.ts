@@ -2,7 +2,7 @@ import type { ScaledT } from '@tasteee/scaled/types';
 import type { ChordFamily } from './music/chords';
 import type { FoldMode } from './music/rowmap';
 import type { GridValue } from './music/grid';
-import type { ChordRegion, Tick } from './types';
+import type { ChordRegion, PatternSpeed, Tick } from './types';
 
 
 /** How notes are colored. `pitch`: low → high gradient. `pitch-class`: every C the same. `mono`: one color. */
@@ -26,13 +26,15 @@ export const DISABLED_VOICINGS: readonly ScaledT.VoicingNameT[] = ['dynamic', 'd
 export const offeredVoicings = (names: readonly ScaledT.VoicingNameT[]): ScaledT.VoicingNameT[] =>
   names.filter((name) => !DISABLED_VOICINGS.includes(name));
 
-export function chordCraftSettings(region: ChordRegion, tonic = 0): Pick<ViewState, 'chordOctave' | 'chordInversion' | 'chordVoicing' | 'chordTemplateId'> {
+export function chordCraftSettings(region: ChordRegion, tonic = 0): Pick<ViewState,
+  'chordOctave' | 'chordInversion' | 'chordVoicing' | 'chordTemplateId' | 'chordPatternSpeed'> {
   const rootMidi = region.rootMidi ?? Math.min(...region.pitches);
   return {
     chordOctave: Math.max(1, Math.min(6, Math.floor((rootMidi - tonic) / 12) - 1)),
     chordInversion: region.inversion ?? 0,
     chordVoicing: region.voicing ?? 'rootPosition',
     chordTemplateId: region.performance?.templateId ?? '',
+    chordPatternSpeed: region.patternSpeed ?? 1,
   };
 }
 
@@ -85,12 +87,14 @@ export interface ViewState {
   chordsPanelDark: boolean;
   chordCraftDark: boolean;
   suggestionsDark: boolean;
-  hiddenChordFamilies: readonly ChordFamily[];
+  /** Chord families shown in the library. An empty list means All. */
+  selectedChordFamilies: readonly ChordFamily[];
   chordQuery: string;
   chordOctave: number;
   chordInversion: number;
   chordVoicing: ScaledT.VoicingNameT;
   chordTemplateId: string;
+  chordPatternSpeed: PatternSpeed;
   quantizeGrid: GridValue;
   quantizeStrength: number;
   humanizeTiming: number;
@@ -120,7 +124,7 @@ export const DEFAULT_VIEW: ViewState = {
   rowHeight: 20,
   scrollTick: -TIME_LEAD_IN_PX / 0.09,
   scrollRow: null,
-  grid: '1/16',
+  grid: 'auto',
   snap: true,
   fold: 'none',
   scaleLock: false,
@@ -143,12 +147,13 @@ export const DEFAULT_VIEW: ViewState = {
   chordsPanelDark: false,
   chordCraftDark: false,
   suggestionsDark: false,
-  hiddenChordFamilies: [],
+  selectedChordFamilies: [],
   chordQuery: '',
   chordOctave: 3,
   chordInversion: 0,
   chordVoicing: 'rootPosition',
   chordTemplateId: '',
+  chordPatternSpeed: 1,
   quantizeGrid: 'current',
   quantizeStrength: 100,
   humanizeTiming: 20,

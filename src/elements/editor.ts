@@ -57,6 +57,10 @@ export class MaddieEditor extends MaddieRoot {
     let focus = document.activeElement;
     while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
     const returnFocus = focus instanceof HTMLElement && focus !== document.body ? focus : this;
+    if (kind === 'fold') {
+      this.renderRoot.querySelector('maddie-fold-select')?.openMenu(returnFocus);
+      return;
+    }
     const toolbar = this.renderRoot.querySelector('maddie-toolbar');
     toolbar?.shadowRoot?.querySelector('maddie-editbar')?.openMenu(kind, returnFocus);
   }
@@ -68,15 +72,17 @@ export class MaddieEditor extends MaddieRoot {
     return html`
       <div class="frame" part="frame">
         <slot name="toolbar"
-          ><maddie-toolbar part="toolbar"
+          ><maddie-toolbar part="toolbar" hide-fold
             ><slot name="toolbar-start" slot="start"></slot><slot name="toolbar-end" slot="end"></slot>
               <slot name="tracks" slot="tracks"><maddie-tracks part="tracks"></maddie-tracks></slot>
             </maddie-toolbar
         ></slot>
         <div class="grid" part="body">
-          <div class="sections-corner"></div>
+          <div class="corner" part="corner">
+            <maddie-fold-select compact part="fold-select"></maddie-fold-select>
+            <slot name="corner"></slot>
+          </div>
           <maddie-sections part="sections"></maddie-sections>
-          <div class="corner" part="corner"><slot name="corner"></slot></div>
           <maddie-ruler part="ruler"></maddie-ruler>
           <maddie-keyboard part="keyboard"></maddie-keyboard>
           <maddie-piano-roll part="piano-roll"></maddie-piano-roll>
