@@ -52,6 +52,7 @@ export class Transport {
   private scheduledUntil = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ctx: AudioContext | null = null;
+  private sectionPlayback?: { end: Tick; ignoreLoop: boolean };
 
   constructor(private editor: Editor) {}
 
@@ -96,14 +97,16 @@ export class Transport {
     this.lastStop = null;
   }
 
-  private async startPlayback(from: Tick | undefined, moveMarker: boolean) {
+  private async startPlayback(from: Tick | undefined, moveMarker: boolean, sectionEnd?: Tick) {
     if (this.state === 'playing') return;
     const ctx = this.audioContext;
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
     if (this.playing) return;
     const requested = from ?? this.stoppedAt;
     if (moveMarker && this.state === 'stopped') this.returnTo = requested;
-    const start = this.startInsideLoop(requested);
+    const loopStart = this.startInsideLoop(requested);
+    const start = sectionEnd === undefined ? loopStart : requested;
+    this.sectionPlayback = sectionEnd === undefined ? undefined : { end: sectionEnd, ignoreLoop: start !== loopStart };
     const time = ctx.currentTime + 0.05;
     this.anchors = [{ time, tick: start }];
     this.scheduledUntil = time;
@@ -142,10 +145,12 @@ export class Transport {
     this.emit();
   }
 
-  /** Space bar: play from the marker, or stop back to it. */
+  /** Play from the first selected section or the marker. Stop returns to the marker. */
   toggle() {
-    if (this.state === 'playing') this.stop();
-    else this.startPlayback(this.marker, false);
+    if (this.playing) return this.stop();
+    const { sections } = this.editor;
+    const section = sections.selected.size && sections.ranges().find(({ section }) => sections.selected.has(section.id));
+    return section ? this.startPlayback(section.start, false, section.end) : this.startPlayback(this.marker, false);
   }
 
   /** Where play starts from. */
@@ -220,6 +225,7 @@ export class Transport {
     this.timer = null;
     this.anchors = [];
     this.state = state;
+    this.sectionPlayback = undefined;
     this.editor.allOutputsOff();
     this.emit();
   }
@@ -230,10 +236,10 @@ export class Transport {
 
   private chaseNotes(tick: Tick, time: number) {
     const { tempo, ppq } = this.editor.meta;
-    for (const { note, trackId } of this.editor.notesAllTracks(tick, tick + 1, { audibleOnly: true })) {
+    for (const { note, trackId } of this.editor.notesAllTracks(tick, tick + 1, { audibleOnly: true, preview: true })) {
       if (note.muted || note.start >= tick) continue;
       const noteEnd = note.start + note.duration;
-      const end = this.loop.enabled ? Math.min(noteEnd, this.loop.end) : noteEnd;
+      const end = this.loop.enabled && !this.sectionPlayback?.ignoreLoop ? Math.min(noteEnd, this.loop.end) : noteEnd;
       if (end > tick) {
         const duration = ticksToSeconds(end, tempo, ppq) - ticksToSeconds(tick, tempo, ppq);
         this.editor.dispatchNote(note, time, duration, trackId);
@@ -246,14 +252,15 @@ export class Transport {
     const until = ctx.currentTime + HORIZON_S;
     const { tempo, ppq } = this.editor.meta;
     const secs = (t: Tick) => ticksToSeconds(t, tempo, ppq);
+    const { loop, sectionPlayback } = this;
+    const loopEnabled = loop.enabled && !sectionPlayback?.ignoreLoop;
 
     while (this.scheduledUntil < until) {
       const anchor = this.anchors[this.anchors.length - 1];
       const fromTick = this.tickAtAnchor(anchor, this.scheduledUntil);
       let toTick = this.tickAtAnchor(anchor, until);
       let wrapped = false;
-      const { loop } = this;
-      if (loop.enabled && fromTick < loop.end && toTick >= loop.end) {
+      if (loopEnabled && fromTick < loop.end && toTick >= loop.end) {
         toTick = loop.end;
         wrapped = true;
       }
@@ -275,7 +282,7 @@ export class Transport {
         const note = entry.note;
         if (note.muted) continue;
         const time = anchor.time + secs(note.start) - secs(anchor.tick);
-        const end = loop.enabled ? Math.min(note.start + note.duration, loop.end) : note.start + note.duration;
+        const end = loopEnabled ? Math.min(note.start + note.duration, loop.end) : note.start + note.duration;
         const duration = secs(end) - secs(note.start);
         this.editor.dispatchNote(note, time, duration, entry.trackId);
       }
@@ -290,9 +297,9 @@ export class Transport {
       this.scheduledUntil = wrapTime;
     }
 
-    const contentEnd = this.editor.contentEnd();
+    const contentEnd = Math.max(this.editor.contentEnd(), sectionPlayback?.end ?? 0);
     const end = contentEnd > 0 ? contentEnd : ppq * 8;
-    const shouldStop = !this.loop.enabled && !this.editor.recorder.recording && this.position >= end;
+    const shouldStop = !loopEnabled && !this.editor.recorder.recording && this.position >= end;
     if (shouldStop) this.stop();
   }
 

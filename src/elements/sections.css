@@ -77,6 +77,8 @@ article[data-dragging] { opacity: .75; z-index: 1; }
 .section-row .section-name { cursor: grab; }
 .section-row .section-name:active { cursor: grabbing; }
 .section-row button:focus-visible { outline: 2px solid var(--_focus); outline-offset: -2px; }
+.section-row .section-name:focus-visible { outline: none; }
+.section-name:focus-visible .name { text-decoration: underline; text-underline-offset: 2px; }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .range { flex: none; color: var(--_text-muted); font-size: 10px; }
 .edge { position: absolute; inset: 0 0 0 auto; width: min(10px, 30%); cursor: ew-resize; }

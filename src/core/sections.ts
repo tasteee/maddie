@@ -282,19 +282,36 @@ export class SectionCommands {
   }
 
   insert(id: string, after: boolean, duplicate = false) {
+    if (duplicate) return this.duplicate(new Set([id]))[0];
     this.requireTiming();
     const index = this.items.findIndex((item) => item.id === id);
     if (index < 0) return;
-    const original = this.ranges()[index];
-    const added = duplicate
-      ? { ...original.section, id: createId(), name: original.section.name + ' copy' }
-      : makeSection(original.section.durationBars);
-    const insertion = index + Number(after || duplicate);
+    const added = makeSection(this.items[index].durationBars);
     const items = [...this.items];
-    items.splice(insertion, 0, added);
-    this.arrange(duplicate ? 'Duplicate section with music' : 'Insert empty section', items,
-      duplicate ? { from: id, to: added.id } : undefined);
+    items.splice(index + Number(after), 0, added);
+    this.arrange('Insert empty section', items);
     return added.id;
+  }
+
+  duplicate(ids: ReadonlySet<string>) {
+    this.requireTiming();
+    const sections: Section[] = [];
+    const copies = new Map<string, Section>();
+    const block: Section[] = [];
+    for (const section of this.items) {
+      if (!ids.has(section.id)) {
+        sections.push(...block.splice(0), section);
+        continue;
+      }
+      const copy = { ...section, id: createId(), name: section.name + ' copy' };
+      copies.set(section.id, copy);
+      sections.push(section);
+      block.push(copy);
+    }
+    sections.push(...block);
+    if (!copies.size) return [];
+    this.arrange(copies.size === 1 ? 'Duplicate section with music' : 'Duplicate sections with music', sections, copies);
+    return this.items === sections ? Array.from(copies.values(), ({ id }) => id) : [];
   }
 
   move(ids: ReadonlySet<string>, insertion: number) {
@@ -335,7 +352,7 @@ export class SectionCommands {
     if (this.timingUnavailable) throw new Error(this.timingUnavailable);
   }
 
-  private arrange(label: string, sections: readonly Section[], duplicate?: { from: string; to: string }) {
+  private arrange(label: string, sections: readonly Section[], copies?: ReadonlyMap<string, Section>) {
     const original = this.ranges();
     const placed = this.ranges(sections);
     const byId = new Map(placed.map((range) => [range.section.id, range]));
@@ -346,8 +363,9 @@ export class SectionCommands {
       const next = byId.get(old.section.id);
       if (!next) return [];
       const result: Placement[] = [{ start: start + (next.start - old.start) }];
-      if (duplicate?.from === old.section.id) {
-        result.push({ start: start + (byId.get(duplicate.to)!.start - old.start), copy: true });
+      const copy = copies?.get(old.section.id);
+      if (copy) {
+        result.push({ start: start + (byId.get(copy.id)!.start - old.start), copy: true });
       }
       return result;
     };

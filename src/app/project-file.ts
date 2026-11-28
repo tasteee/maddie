@@ -1,5 +1,5 @@
 import { saveEditorFile } from '../elements/save-file';
-import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, SCALE_IDS, ZOOM_LIMITS, type ChordFamily, type Editor, type MaddieDoc, type LoopRegion, type Section, type ViewState, type AppViewKeyT } from '../core';
+import { CHORD_ACCENTS, CHORD_FAMILIES, CHORD_VOICINGS, DEFAULT_VIEW, PATTERN_SPEEDS, SCALE_IDS, ZOOM_LIMITS, type ChordFamily, type Editor, type MaddieDoc, type LoopRegion, type Section, type ViewState, type AppViewKeyT } from '../core';
 
 export interface MaddieProject {
   format: 'maddie';
@@ -17,7 +17,7 @@ export interface MaddieProject {
     metronomeEnabled?: boolean;
     metronomeVolume?: number;
     fold?: ViewState['fold'];
-    view?: Partial<ViewState> & { chordFamily?: ChordFamily | 'all' };
+    view?: Partial<ViewState> & { chordFamily?: ChordFamily | 'all'; hiddenChordFamilies?: readonly ChordFamily[] };
   };
 }
 
@@ -40,6 +40,7 @@ const boolean = (value: unknown) => typeof value === 'boolean';
 const nullable = (test: (value: unknown) => boolean) => (value: unknown) => value === null || test(value);
 const oneOf = (...values: string[]) => (value: unknown) => text(value) && values.includes(value);
 const grid = (value: unknown) => text(value) && /^(auto|bar|1\/[1-9]\d{0,14}[T.]?)$/.test(value);
+const patternSpeed = (value: unknown) => PATTERN_SPEEDS.some((speed) => speed === value);
 const chordFamilyIds = CHORD_FAMILIES.map(({ id }) => id);
 const isChordFamily = oneOf(...chordFamilyIds);
 const isLegacyChordFamily = oneOf('all', ...chordFamilyIds);
@@ -50,7 +51,7 @@ const viewValidators = {
   scrollRow: nullable(numberIn(0)),
   grid,
   snap: boolean,
-  fold: oneOf('none', 'scale', 'used'),
+  fold: oneOf('none', 'scale', 'track', 'used'),
   scaleLock: boolean,
   scaleHighlight: boolean,
   follow: boolean,
@@ -68,12 +69,13 @@ const viewValidators = {
   chordsTab: oneOf('all', 'project', 'browse', 'suggestions', 'song'),
   suggestionsOpen: boolean,
   velocityLaneOpen: boolean,
-  hiddenChordFamilies: (value: unknown) => list(value, isChordFamily),
+  selectedChordFamilies: (value: unknown) => list(value, isChordFamily),
   chordQuery: text,
   chordOctave: (value: unknown) => int(value, 1, 6),
   chordInversion: (value: unknown) => int(value, 0, 3),
   chordVoicing: oneOf(...Object.keys(CHORD_VOICINGS)),
   chordTemplateId: text,
+  chordPatternSpeed: patternSpeed,
   quantizeGrid: (value: unknown) => value === 'current' || grid(value),
   quantizeStrength: numberIn(0, 100),
   humanizeTiming: numberIn(0, 100),
@@ -95,8 +97,12 @@ export function restoreProjectView(settings: MaddieProject['settings']): ViewSta
   const isLegacyTab = legacyTab === 'browse' || legacyTab === 'suggestions';
   if (isLegacySongTab) restored.chordsTab = 'project';
   if (isLegacyTab) restored.chordsTab = 'all';
-  if (view.hiddenChordFamilies === undefined && view.chordFamily && view.chordFamily !== 'all') {
-    restored.hiddenChordFamilies = chordFamilyIds.filter((family) => family !== view.chordFamily);
+  if (view.selectedChordFamilies === undefined) {
+    const hidden = view.hiddenChordFamilies;
+    if (hidden?.length) restored.selectedChordFamilies = chordFamilyIds.filter((family) => !hidden.includes(family));
+    else if (hidden === undefined && view.chordFamily && view.chordFamily !== 'all') {
+      restored.selectedChordFamilies = [view.chordFamily];
+    }
   }
   return restored;
 }
@@ -118,6 +124,7 @@ function validRegion(value: unknown): value is Record<string, unknown> & { start
     list(value.pitches, (n) => int(n, 0, 127)) && value.pitches.length > 0 &&
     optional(value.muted, boolean) && optional(value.voicing, id) && optional(value.inversion, (n) => int(n)) &&
     optional(value.rootMidi, (n) => typeof n === 'number' && Number.isSafeInteger(n)) &&
+    optional(value.patternSpeed, patternSpeed) &&
     (performance === undefined || (record(performance) && id(performance.templateId) && id(performance.groupId) &&
       id(performance.key) && id(performance.scale) && optional(performance.phaseTicks, (n) => int(n)))) &&
     optional(value.dynamics, validDynamics);
@@ -195,6 +202,7 @@ function validSettings(value: unknown) {
     !optional(value.fold, viewValidators.fold) ||
     !optional(value.view, (view) => record(view) &&
       optional(view.chordFamily, isLegacyChordFamily) &&
+      optional(view.hiddenChordFamilies, viewValidators.selectedChordFamilies) &&
       PROJECT_VIEW_KEYS.every((key) => optional(view[key], viewValidators[key])))) return false;
   const loop = value.loop;
   return loop === undefined || (record(loop) && boolean(loop.enabled) && int(loop.start) && int(loop.end) &&

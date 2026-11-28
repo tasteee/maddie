@@ -1,15 +1,17 @@
 import { css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { ref } from 'lit/directives/ref.js';
 import type { ScaledT } from '@tasteee/scaled/types';
-import { keyed } from 'lit/directives/keyed.js';
 import { live } from 'lit/directives/live.js';
 import { CHORD_INVERSION_LABELS, CHORD_VOICINGS, chordCraftSettings, formatBBT, loadScaled, offeredVoicings, type ChordRegion, type Editor } from '../core';
 import type { Engine } from '../engine/engine';
+import type { ChordTrackEdit } from '../core/chord-track';
 import { MaddieElement } from './base';
+import type { PatternChoice } from './pattern-picker';
 import './pattern-picker';
 import { icons } from './icons';
 import { themeRegion, tokens } from './tokens';
-import './zest';
+import { onFocusedSelectClose } from './zest';
 
 /**
  * The floating chord bar. Shows over the bottom of the piano roll while chords are selected
@@ -85,7 +87,14 @@ export class MaddieChordBar extends MaddieElement {
 
   @state() private scaled?: ScaledT;
   @state() private chordError = '';
-  @state() private pickerPosition = { left: 0, top: 0 };
+  @state() private pickerPosition = { left: 0, top: 0, height: 0 };
+  private patternSession?: {
+    editor: Editor;
+    trackId: string;
+    source: readonly ChordRegion[];
+    selection: Editor['selection'];
+    pending?: { edit: ChordTrackEdit; label: string };
+  };
 
   protected attach(editor: Editor, _engine: Engine) {
     const update = () => this.requestUpdate();
@@ -96,8 +105,22 @@ export class MaddieChordBar extends MaddieElement {
       void loadScaled().then((loaded) => { this.scaled = loaded; }, (error: Error) => { this.chordError = error.message; });
     };
     loadChordTools();
-    this.track(editor.on('selection', update), editor.on('change', update), editor.on('tracks', () => { update(); loadChordTools(); }),
-      editor.on('view', update));
+    const updateSelection = () => {
+      if (this.patternSession && !this.hasPatternSession(editor)) {
+        this.closePicker(editor);
+      }
+      update();
+    };
+    this.track(editor.on('selection', updateSelection), editor.on('change', updateSelection),
+      editor.on('tracks', () => { updateSelection(); loadChordTools(); }),
+      editor.on('view', ({ view }) => {
+        if (view.patternPicker !== 'selection') this.discardPatternPreview();
+        update();
+      }));
+  }
+
+  protected detached() {
+    this.discardPatternPreview();
   }
 
   protected willUpdate() {
@@ -114,10 +137,7 @@ export class MaddieChordBar extends MaddieElement {
       if (!edit) return;
       const selectedIds = ed.selectedChordRegions.map((region) => region.id);
       ed.chordTrack.commit(edit, 'Style chords', selectedIds);
-      // A new shape (inversion, voicing) plays for half a second, without the pattern.
-      // A new pattern doesn't: holding it in the picker was the preview.
-      const isPatternChange = style.templateId !== undefined;
-      if (isPatternChange) return;
+      // A new shape plays for half a second.
       const updatedFirst = ed.selectedChordRegions.slice(0, 1);
       ed.chordTrack.auditionPitches(updatedFirst);
     } catch (error) {
@@ -135,70 +155,118 @@ export class MaddieChordBar extends MaddieElement {
 
   private openPicker(ed: Editor, trigger: HTMLElement) {
     const isOpen = ed.view.patternPicker === 'selection';
-    if (isOpen) return ed.setView({ patternPicker: null });
+    if (isOpen) {
+      const picker = this.renderRoot.querySelector('maddie-pattern-picker');
+      if (picker) picker.dismiss(true);
+      else this.closePicker(ed, true);
+      return;
+    }
+    const source = ed.chordRegions;
+    if (!source || !ed.selectedChordRegions.length) return;
     // Center on the visible bar, not the host (which spans the whole roll).
     const barElement = this.renderRoot.querySelector('.bar') ?? trigger;
     const barBox = barElement.getBoundingClientRect();
     const width = Math.min(540, window.innerWidth - 16);
-    const height = Math.min(470, window.innerHeight - 16);
     const centered = barBox.left + barBox.width / 2 - width / 2;
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, centered));
-    const top = Math.max(8, barBox.top - height - 8);
-    this.pickerPosition = { left, top };
+    const roomAbove = barBox.top - 16;
+    const roomBelow = window.innerHeight - barBox.bottom - 16;
+    const isAbove = roomAbove >= 470 || roomAbove >= roomBelow;
+    const height = Math.min(470, isAbove ? roomAbove : roomBelow);
+    const top = isAbove ? barBox.top - height - 8 : barBox.bottom + 8;
+    this.pickerPosition = { left, top, height };
+    this.patternSession = { editor: ed, trackId: ed.activeTrackId, source, selection: ed.selection };
     ed.setView({ patternPicker: 'selection' });
   }
 
-  private capturePatternReset(ed: Editor) {
-    const trackId = ed.activeTrackId;
-    const originals = new Map(ed.selectedChordRegions.map(({ id, performance }) => [id, performance]));
-    const changed = () => {
-      if (ed.activeTrackId !== trackId) return [];
-      const selected = ed.selectedChordRegions;
-      if (selected.length !== originals.size || !selected.every(({ id }) => originals.has(id))) return [];
-      return selected.filter(({ id, performance }) => performance !== originals.get(id));
-    };
-    return {
-      originalIds: [...new Set([...originals.values()].map((performance) => performance?.templateId ?? ''))],
-      canRestore: () => changed().length > 0,
-      restore: () => {
-        this.chordError = '';
-        try {
-          const regions = changed().map((region) => ({ ...region, performance: originals.get(region.id) }));
-          ed.chordTrack.commitChanged(regions, 'Reset chord patterns');
-        } catch (error) {
-          this.engine?.toast((error as Error).message, 'error');
-        }
-      },
-    };
+  private hasPatternSession(ed: Editor) {
+    const session = this.patternSession;
+    return session?.editor === ed && session.trackId === ed.activeTrackId &&
+      session.source === ed.chordRegions && session.selection === ed.selection;
+  }
+
+  private discardPatternPreview() {
+    const session = this.patternSession;
+    this.patternSession = undefined;
+    if (session?.pending) session.editor.setChordPreview();
+  }
+
+  private focusRoll = () => {
+    const scope = this.getRootNode();
+    const target = scope instanceof ShadowRoot
+      ? scope.querySelector('maddie-piano-roll') ?? scope.host
+      : this.closest('maddie-root, maddie-editor');
+    if (target instanceof HTMLElement) target.focus({ preventScroll: true });
+  };
+
+  private observeVoicingMenu = (element?: Element) => onFocusedSelectClose(element, this.focusRoll);
+
+  private closePicker(ed: Editor, restoreFocus = false) {
+    this.discardPatternPreview();
+    if (ed.view.patternPicker === 'selection') ed.setView({ patternPicker: null });
+    if (restoreFocus) this.focusRoll();
+  }
+
+  private stagePattern(ed: Editor, { templateId, patternSpeed }: PatternChoice) {
+    const session = this.patternSession;
+    if (!session || !this.hasPatternSession(ed)) return false;
+    try {
+      const changed = templateId !== undefined || patternSpeed !== undefined;
+      const edit = changed ? ed.chordTrack.previewStyle({ templateId: templateId === '' ? null : templateId, patternSpeed }) : undefined;
+      if (changed && !edit) return false;
+      const label = templateId === undefined ? 'Change chord pattern speed' : templateId ? 'Apply chord pattern' : 'Remove chord pattern';
+      session.pending = edit && { edit, label };
+      ed.setChordPreview(edit);
+      return true;
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+      return false;
+    }
+  }
+
+  private commitPattern(ed: Editor) {
+    const pending = this.patternSession?.pending;
+    if (!pending || !this.hasPatternSession(ed)) return false;
+    try {
+      return ed.chordTrack.commit(pending.edit, pending.label, [...ed.selection]);
+    } catch (error) {
+      this.engine?.toast((error as Error).message, 'error');
+      return false;
+    }
   }
 
   private renderPicker(ed: Editor) {
     const isOpen = ed.view.patternPicker === 'selection';
     const selected = ed.selectedChordRegions;
     const region = selected[0];
-    if (!isOpen || !region) return nothing;
-    const bar = formatBBT(region.start, ed.meta.timeSignature, ed.ppq).split('.')[0];
-    const preview = (templateId: string) => {
-      try {
-        const rootMidi = region.rootMidi ?? Math.min(...region.pitches);
-        const octave = Math.max(1, Math.min(6, Math.floor(rootMidi / 12) - 1));
-        const draft = ed.chordTrack.draft({ symbol: region.symbol, root: region.root, intervals: region.intervals },
-          { octave, inversion: region.inversion ?? 0, voicing: region.voicing ?? 'rootPosition', templateId });
-        return ed.chordTrack.auditionDraft(draft, true) ?? (() => {});
-      } catch (error) {
-        this.engine?.toast((error as Error).message, 'error');
-        return;
-      }
+    if (!isOpen || !region || !this.hasPatternSession(ed)) return nothing;
+    const appliedId = region.performance?.templateId ?? '';
+    const sharesPattern = selected.every((item) => (item.performance?.templateId ?? '') === appliedId);
+    const speed = region.patternSpeed ?? 1;
+    const sharesSpeed = selected.every((item) => (item.patternSpeed ?? 1) === speed);
+    const preview = () => {
+      if (!this.hasPatternSession(ed)) return;
+      if (ed.transport.playing) ed.transport.stop();
+      const notes = (this.patternSession?.pending?.edit.notes ?? ed.notes()).filter((note) =>
+        note.chordRegionId && ed.selection.has(note.chordRegionId));
+      return (ed.isTrackAudible(ed.activeTrackId) && ed.auditionNotes(notes, region.start)) || (() => {});
     };
-    const apply = (templateId: string) => this.applyChordStyle(ed, { templateId: templateId || null });
-    const close = () => ed.setView({ patternPicker: null });
+    const togglePlayback = () => {
+      const { transport } = ed;
+      if (transport.playing) return transport.stop();
+      const start = selected.some((item) => item.start <= transport.marker && transport.marker < item.start + item.duration)
+        ? transport.marker : region.start;
+      void transport.jump(start);
+    };
     const projectIds = ed.doc.tracks.flatMap((track) => track.chordRegions ?? []).flatMap((item) => item.performance?.templateId ?? []);
     const uniqueIds = [...new Set(projectIds)];
-    const style = `left: ${this.pickerPosition.left}px; top: ${this.pickerPosition.top}px`;
-    const selectionKey = JSON.stringify([ed.activeTrackId, ...selected.map(({ id }) => id).sort()]);
-    return keyed(selectionKey, html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${region.performance?.templateId ?? ''}
-      .targetPrefix=${'Changing'} .targetName=${`${region.symbol} · bar ${bar}`} .projectIds=${uniqueIds}
-      .captureReset=${() => this.capturePatternReset(ed)} .preview=${preview} .apply=${apply} .close=${close}></maddie-pattern-picker>`);
+    const { left, top, height } = this.pickerPosition;
+    const style = `left: ${left}px; top: ${top}px; height: ${height}px`;
+    return html`<maddie-pattern-picker style=${style} .scaled=${this.scaled} .appliedId=${sharesPattern ? appliedId : undefined}
+      .projectIds=${uniqueIds} .appliedSpeed=${sharesSpeed ? speed : undefined}
+      .preview=${preview} .stage=${(choice: PatternChoice) => this.stagePattern(ed, choice)}
+      .togglePlayback=${togglePlayback} .commit=${() => this.commitPattern(ed)}
+      .close=${(restoreFocus?: boolean) => this.closePicker(ed, restoreFocus)}></maddie-pattern-picker>`;
   }
 
   private renderChordSettings(ed: Editor) {
@@ -241,7 +309,7 @@ export class MaddieChordBar extends MaddieElement {
         <button type="button" aria-label="Raise inversion" ?disabled=${!canRaise}
           @click=${() => this.applyChordStyle(ed, { inversion: inversion + 1 })}>${icons.back}</button>
       </span>
-      <z-select class="voicing" size="sm" aria-label="Voicing" value-prefix="Voicing: "
+      <z-select ${ref(this.observeVoicingMenu)} class="voicing" size="sm" aria-label="Voicing" value-prefix="Voicing: "
         placeholder=${`Voicing: ${voicingLabel}`} ?is-disabled=${!scaled} .options=${voicings} .value=${live(voicing)}
         @change=${(event: CustomEvent<{ value: ScaledT.VoicingNameT }>) => this.applyChordStyle(ed, { voicing: event.detail.value })}></z-select>
       <z-tooltip content="Copy shape and pattern to Chords panel" placement="top-end">

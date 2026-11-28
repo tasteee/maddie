@@ -102,8 +102,20 @@ class ShortcutMenuControl extends ControlElement {
     focus?.focus({ preventScroll: true });
   }
 
+  protected initialMenuFocus(): HTMLElement | null | undefined {
+    return this.menu?.querySelector<HTMLElement>('[data-initial-focus]');
+  }
+
   protected onMenuToggle = (event: CustomEvent<{ open: boolean }>) => {
-    if (event.target !== event.currentTarget || event.detail.open) return;
+    if (event.target !== event.currentTarget) return;
+    if (event.detail.open) {
+      const menu = this.menu;
+      // Zest focuses its first focusable item when the surface opens.
+      requestAnimationFrame(() => {
+        if (menu?.isOpen && this.isConnected) this.initialMenuFocus()?.focus({ preventScroll: true });
+      });
+      return;
+    }
     this.pendingKey = undefined;
     this.returnFocus = undefined;
   };
@@ -126,7 +138,7 @@ class ShortcutMenuControl extends ControlElement {
   }
 }
 
-const shortcutLabel = (label: string, key: string) => html`<span class="shortcut-label">${label}<kbd aria-hidden="true">${key}</kbd></span>`;
+const shortcutLabel = (label: string) => html`<span class="shortcut-label"><span class="mnemonic">${label[0]}</span>${label.slice(1)}</span>`;
 
 const tip = (label: string, shortcut?: string) => (shortcut ? `${label}   ${shortcut}` : label);
 
@@ -255,6 +267,14 @@ export class MaddieGridSelect extends ShortcutMenuControl {
   /** The division to return to when Auto is turned off. */
   private lastFixedGrid: GridValue = '1/16';
 
+  protected initialMenuFocus() {
+    const grid = this.ed?.view.grid;
+    if (!grid) return;
+    if (grid === 'auto') return this.menu?.querySelector<HTMLElement>('z-switch[aria-label="Auto Division"]');
+    const division = CSS.escape(getStraightGrid(grid));
+    return this.menu?.querySelector<HTMLElement>(`[aria-label="Division"] z-toggle-button-group-item[value="${division}"]`);
+  }
+
   private setAuto(ed: Editor, isOn: boolean) {
     if (isOn) {
       this.lastFixedGrid = ed.view.grid;
@@ -266,7 +286,9 @@ export class MaddieGridSelect extends ShortcutMenuControl {
     const ed = this.ed;
     if (!ed) return;
     this.handleMenuKey(event, 'g', {
-      d: () => this.cycleChoice(ed, 'Division', actions.cycleGridDivision, getStraightGrid),
+      d: () => {
+        if (ed.view.grid !== 'auto') this.cycleChoice(ed, 'Division', actions.cycleGridDivision, getStraightGrid);
+      },
       f: () => this.cycleChoice(ed, 'Feel', actions.cycleGridFeel, getGridModifier),
       a: () => this.setAuto(ed, ed.view.grid !== 'auto'),
       s: () => actions.toggleSnap(ed),
@@ -290,6 +312,7 @@ export class MaddieGridSelect extends ShortcutMenuControl {
     const ed = this.ed;
     const hasEditor = Boolean(ed);
     if (!hasEditor || !ed) return nothing;
+    const isAuto = ed.view.grid === 'auto';
     const size = getStraightGrid(ed.view.grid);
     const feel = getGridModifier(ed.view.grid);
     const isTriplet = feel === 'triplet';
@@ -300,8 +323,9 @@ export class MaddieGridSelect extends ShortcutMenuControl {
     // Straight renders nothing, so it adds no gap before the chevron.
     const hasSuffix = suffix !== '';
     const suffixBadge = hasSuffix ? html`<span class="accent-icon">${suffix}</span>` : nothing;
-    const triggerText = ed.view.grid === 'auto' ? 'Auto' : size;
+    const triggerText = isAuto ? 'Auto' : size;
     const pickSize = (value: string) => {
+      if (ed.view.grid === 'auto') return;
       const division = GRID_DIVISIONS.find((option) => option.value === value)?.value;
       if (!division) return;
       ed.setView({ grid: setGridModifier(division, feel) });
@@ -315,12 +339,12 @@ export class MaddieGridSelect extends ShortcutMenuControl {
       ...option,
       isDisabled: option.value !== 'straight' && !canHaveModifier(size),
     }));
-    const divisions = renderChoices('Division', GRID_DIVISIONS, size, pickSize, GRID_DIVISIONS.length);
+    const divisionChoices = isAuto ? GRID_DIVISIONS.map((option) => ({ ...option, isDisabled: true })) : GRID_DIVISIONS;
+    const divisions = renderChoices('Division', divisionChoices, size, pickSize, GRID_DIVISIONS.length);
     const modifiers = renderChoices('Feel', feels, feel, pickFeel, feels.length);
     const snap = switchRow('Snap to grid', 'Hold Alt while dragging to bypass', ed.view.snap,
       (isChecked) => ed.setView({ snap: isChecked }), false, 'S');
-    const isAuto = ed.view.grid === 'auto';
-    const auto = switchRow('Auto', 'Grid follows zoom', isAuto, (isOn) => this.setAuto(ed, isOn), false, 'A');
+    const auto = switchRow('Auto Division', 'Grid follows zoom', isAuto, (isOn) => this.setAuto(ed, isOn), false, 'A');
     const toggle = iconToggle({
       label: 'Snap to grid',
       tip: 'Snap to grid',
@@ -338,8 +362,8 @@ export class MaddieGridSelect extends ShortcutMenuControl {
         </z-tooltip>
         <div class="panel standard-panel">
           <strong>Grid</strong>
-          <div class="field"><span class="hint">${shortcutLabel('Division', 'D')}</span>${divisions}</div>
-          <div class="field"><span class="hint">${shortcutLabel('Feel', 'F')}</span>${modifiers}</div>
+          <div class="field"><span class="hint">${shortcutLabel('Division')}</span>${divisions}</div>
+          <div class="field"><span class="hint">${shortcutLabel('Feel')}</span>${modifiers}</div>
           <z-separator></z-separator>${auto}${snap}
         </div>
       </z-popover>
@@ -497,6 +521,8 @@ export class MaddieScaleLock extends ControlElement {
 
 @customElement('maddie-fold-select')
 export class MaddieFoldSelect extends ShortcutMenuControl {
+  @property({ type: Boolean }) compact = false;
+
   private pick(ed: Editor, fold: FoldMode) {
     if (fold === 'scale' && !ed.key) return;
     ed.setView({ fold }, { animate: true });
@@ -506,7 +532,13 @@ export class MaddieFoldSelect extends ShortcutMenuControl {
   private onMenuKey = (event: KeyboardEvent) => {
     const ed = this.ed;
     if (!ed) return;
-    this.handleMenuKey(event, 'f', { o: () => this.pick(ed, 'none'), n: () => this.pick(ed, 'used'), k: () => this.pick(ed, 'scale') });
+    this.handleMenuKey(event, 'f', {
+      o: () => this.pick(ed, 'none'),
+      t: () => this.pick(ed, 'track'),
+      p: () => this.pick(ed, 'used'),
+      n: () => this.pick(ed, 'used'),
+      k: () => this.pick(ed, 'scale'),
+    });
     if (event.type !== 'keydown' || !this.menu?.isOpen || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
     const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.fold-option:not(:disabled)'));
     const index = options.indexOf(event.composedPath()[0] as HTMLButtonElement);
@@ -525,24 +557,29 @@ export class MaddieFoldSelect extends ShortcutMenuControl {
     const isFolded = fold !== 'none' && (fold !== 'scale' || hasKey);
     const selected = isFolded ? fold : 'none';
     const mode = FOLD_CHOICES.find((choice) => choice.value === fold);
-    const label = isFolded ? mode?.label : nothing;
+    const label = isFolded ? mode?.label : undefined;
     const descriptions: Record<FoldMode, string> = {
       none: 'Show every pitch',
-      used: 'Only rows with notes',
+      track: 'Only pitches used on this track',
+      used: 'Pitches used across all tracks',
       scale: ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first',
     };
-    const shortcuts: Record<FoldMode, string> = { none: 'O', used: 'N', scale: 'K' };
-    const button = html`<z-toggle-button class="fold" kind="ghost" size="sm" tone="secondary" ?is-icon=${!isFolded}
-      aria-label="Fold rows" .isPressed=${live(isFolded)}>${icons.fold}${label}</z-toggle-button>`;
+    const name = this.compact && label ? `Fold rows · ${label}` : 'Fold rows';
+    const button = html`<z-toggle-button class="fold" kind="ghost" size="sm" tone="secondary" ?is-icon=${this.compact || !isFolded}
+      aria-label=${name} .isPressed=${live(isFolded)}>${icons.fold}${this.compact ? nothing : label}</z-toggle-button>`;
 
-    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" label="Fold rows"
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement=${this.compact ? 'bottom-start' : 'bottom-end'} offset="6" label="Fold rows"
       @keydown=${this.onMenuKey} @keyup=${this.onMenuKey} @toggle=${this.onMenuToggle}>
-      <z-tooltip slot="trigger" content=${tip('Fold rows', 'F')} placement="bottom">${button}</z-tooltip>
+      <z-tooltip slot="trigger" content=${tip(name, 'F')} placement="bottom">${button}</z-tooltip>
       <div class="panel fold-options" role="group" aria-label="Fold rows">
-        ${FOLD_CHOICES.map(({ value, label }) => html`<button type="button" class="fold-option" aria-pressed=${value === selected}
-          ?disabled=${value === 'scale' && !hasKey} @click=${() => this.pick(ed, value)}>
-          ${shortcutLabel(label, shortcuts[value])}<span class="hint">${descriptions[value]}</span>
-        </button>`)}
+        ${FOLD_CHOICES.map(({ value, label }) => {
+          const isDisabled = value === 'scale' && !hasKey;
+          return html`<button type="button" class="fold-option" aria-pressed=${value === selected} ?data-initial-focus=${value === selected}
+            aria-keyshortcuts=${isDisabled ? nothing : label[0].toUpperCase()}
+            ?disabled=${isDisabled} @click=${() => this.pick(ed, value)}>
+            ${isDisabled ? html`<span>${label}</span>` : shortcutLabel(label)}<span class="hint">${descriptions[value]}</span>
+          </button>`;
+        })}
       </div>
     </z-popover>`;
   };
@@ -686,8 +723,8 @@ const switchRow = (label: string, hint: string, on: boolean, onToggle: (on: bool
   const change = (event: CustomEvent<{ checked: boolean }>) => onToggle(event.detail.checked);
 
   return html`<div class="switch-row">
-    <span class="switch-copy" aria-hidden="true">${shortcut ? shortcutLabel(label, shortcut) : html`<span>${label}</span>`}<span class="hint">${hint}</span></span>
-    <z-switch size="sm" tone="secondary" aria-label=${label} description=${hint}
+    <span class="switch-copy" aria-hidden="true">${shortcut ? shortcutLabel(label) : html`<span>${label}</span>`}<span class="hint">${hint}</span></span>
+    <z-switch size="sm" tone="secondary" aria-label=${label} aria-keyshortcuts=${shortcut ?? nothing} description=${hint}
       .isChecked=${live(on)} ?is-disabled=${isDisabled} @change=${change}></z-switch>
   </div>`;
 };
@@ -1302,6 +1339,8 @@ export class MaddieTopbar extends MaddieElement {
 
 @customElement('maddie-editbar')
 export class MaddieEditbar extends MaddieElement {
+  @property({ type: Boolean, attribute: 'hide-fold' }) hideFold = false;
+
   static styles = [
     tokens,
     barStyles,
@@ -1318,14 +1357,15 @@ export class MaddieEditbar extends MaddieElement {
     <div class="group" part="group grid-tools">
       <maddie-grid-select></maddie-grid-select>
       <maddie-key-select></maddie-key-select>
-      <z-separator is-vertical></z-separator>
-      <maddie-fold-select></maddie-fold-select>
+      ${this.hideFold ? nothing : html`<z-separator is-vertical></z-separator><maddie-fold-select></maddie-fold-select>`}
     </div>
   `;
 }
 
 @customElement('maddie-toolbar')
 export class MaddieToolbar extends MaddieElement {
+  @property({ type: Boolean, attribute: 'hide-fold' }) hideFold = false;
+
   static styles = [
     tokens,
     unsafeCSS(toolbarCss),
@@ -1333,7 +1373,7 @@ export class MaddieToolbar extends MaddieElement {
 
   render = () => html`
     <maddie-topbar part="topbar"><slot name="start" slot="start"></slot><slot name="end" slot="end"></slot></maddie-topbar>
-    <maddie-editbar part="editbar"><slot name="tracks" slot="tracks"></slot></maddie-editbar>
+    <maddie-editbar part="editbar" .hideFold=${this.hideFold}><slot name="tracks" slot="tracks"></slot></maddie-editbar>
   `;
 }
 

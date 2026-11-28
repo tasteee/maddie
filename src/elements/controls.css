@@ -129,20 +129,13 @@ z-button.grid-value {
 .switch-row z-switch { flex: none; }
 .fold { color: var(--accent); }
 .fold[is-pressed] { --on-accent: var(--accent); }
-.shortcut-label { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.shortcut-label kbd {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  min-width: 1.25rem;
-  min-height: 1.25rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-default);
-  color: var(--text-secondary);
-  font: 500 var(--font-size-xs) var(--font-mono);
+.switch-copy .shortcut-label,
+.fold-option .shortcut-label { color: var(--_text-muted); }
+.mnemonic {
+  color: var(--_text);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
-.switch-row:has(.shortcut-label) .switch-copy { flex: 1; }
 .panel.fold-options { width: min(216px, 75vw); gap: var(--space-0-5); }
 .fold-option {
   display: grid;

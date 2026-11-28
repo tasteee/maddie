@@ -457,7 +457,7 @@ export class MaddiePianoRoll extends CanvasElement {
     if (!ed || !region) return;
     event.preventDefault();
     const box = this.getBoundingClientRect();
-    const rect = this.regionRect(region, { ...ed.view, scrollRow: ed.view.scrollRow ?? 0 });
+    const rect = this.regionRect(region, this.engine!.displayView(performance.now()));
     this.openChordMenu(region, box.left + clamp(rect.x, 0, this.width), box.top + rect.y);
   };
 
@@ -647,14 +647,19 @@ export class MaddiePianoRoll extends CanvasElement {
 
   private hitRegion(x: number, y: number, owner?: string) {
     const ed = this.ed!;
-    for (const region of ed.chordRegions ?? []) {
-      const rect = this.regionRect(region, { ...ed.view, scrollRow: ed.view.scrollRow ?? 0 });
-      if (owner !== region.id && (owner || x < rect.x || x >= rect.x + rect.w || y < rect.y || y >= rect.y + rect.h)) continue;
-      const edge = Math.min(7, rect.w / 4);
-      const zone: Zone = x > rect.x + rect.w - edge ? 'end' : x < rect.x + edge ? 'start' : 'body';
-      return { region, edge: zone };
+    const engine = this.engine!;
+    const view = engine.displayView(performance.now());
+    const notes = engine.visibleNotes(view.scrollTick, view.scrollTick + this.width / view.pxPerTick);
+    let hit: { region: ChordRegion; edge: Zone } | null = null;
+    for (const { region, box } of this.regionBoxes(ed.chordRegions ?? [], view, notes)) {
+      const inside = x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
+      if (!inside && owner !== region.id) continue;
+      const edge = Math.min(7, box.w / 4);
+      const zone: Zone = x > box.x + box.w - edge ? 'end' : x < box.x + edge ? 'start' : 'body';
+      hit = { region, edge: zone };
+      if (owner === region.id) break;
     }
-    return null;
+    return hit;
   }
 
   private regionGesture(down: PointerEvent, region: ChordRegion, edge: Zone): Gesture {
@@ -1038,9 +1043,7 @@ export class MaddiePianoRoll extends CanvasElement {
 
   // ── Drawing ─────────────────────────────────────────────────────
 
-  private drawRegions(ctx: CanvasRenderingContext2D, ed: Editor, engine: Engine, view: DisplayView, p: Palette, color: string, notes: readonly Note[]) {
-    const regions = engine.preview.regions ?? ed.chordRegions;
-    if (!regions) return;
+  private *regionBoxes(regions: readonly ChordRegion[], view: DisplayView, notes: readonly Note[]) {
     const pitchesByRegion = new Map<string, Set<number>>();
     for (const note of notes) {
       if (!note.chordRegionId) continue;
@@ -1048,14 +1051,21 @@ export class MaddiePianoRoll extends CanvasElement {
       pitches.add(note.pitch);
       pitchesByRegion.set(note.chordRegionId, pitches);
     }
+    for (const region of regions) {
+      const x = (region.start - view.scrollTick) * view.pxPerTick;
+      if (x >= this.width || x + Math.max(3, region.duration * view.pxPerTick) <= 0) continue;
+      const pitches = [...region.pitches, ...pitchesByRegion.get(region.id) ?? []];
+      yield { region, box: this.regionRect(region, view, pitches) };
+    }
+  }
+
+  private drawRegions(ctx: CanvasRenderingContext2D, ed: Editor, engine: Engine, view: DisplayView, p: Palette, color: string, notes: readonly Note[]) {
+    const regions = engine.preview.regions ?? ed.chordRegions;
+    if (!regions) return;
     ctx.save();
     ctx.font = `600 11px ${p.font}`;
     ctx.textBaseline = 'middle';
-    for (const region of regions) {
-      const x = (region.start - view.scrollTick) * view.pxPerTick;
-      if (x >= this.width || x + region.duration * view.pxPerTick < 0) continue;
-      const pitches = [...region.pitches, ...pitchesByRegion.get(region.id) ?? []];
-      const box = this.regionRect(region, view, pitches);
+    for (const { region, box } of this.regionBoxes(regions, view, notes)) {
       const selected = ed.selection.has(region.id);
       const opacity = region.muted ? 0.5 : 1;
       ctx.fillStyle = withAlpha(color, (selected ? 0.22 : 0.10) * opacity);

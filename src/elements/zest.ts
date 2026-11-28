@@ -46,6 +46,15 @@ const connectShadow = (element: Element | undefined, apply: (root: ShadowRoot, h
   requestAnimationFrame(attach);
 };
 
+export const onFocusedSelectClose = (element: Element | undefined, onClose: () => void) => connectShadow(element, (root, host) => {
+  const trigger = root.querySelector('[role="combobox"]');
+  if (!trigger) return;
+  // Zest restores focus to its trigger after choosing an option, even when the value stays the same.
+  new MutationObserver(() => {
+    if (host.isConnected && trigger.getAttribute('aria-expanded') === 'false' && root.activeElement === trigger) onClose();
+  }).observe(trigger, { attributes: true, attributeFilter: ['aria-expanded'] });
+});
+
 // Zest keeps a closing popover in the top layer while it fades.
 export const allowClicksThroughClosingPopover = (element?: Element) => connectShadow(element, (root, host) => {
   const update = (event: Event) => {
