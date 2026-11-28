@@ -1,36 +1,82 @@
+/* Flat scrollbars on the roll's bottom and right edges, with the zoom steps at
+   their ends and Fit in the corner where they meet. The host covers the roll;
+   only the bars take pointer events. */
 :host {
-  --_cell: 36px;
+  --_bar: 14px;
   display: grid;
-  grid-template-columns: auto var(--_cell);
-  grid-template-rows: auto var(--_cell);
-  grid-template-areas: '. rows' 'time corner';
+  grid-template-columns: minmax(0, 1fr) var(--_bar);
+  grid-template-rows: minmax(0, 1fr) var(--_bar);
+  grid-template-areas: '. y' 'x corner';
+  pointer-events: none;
 }
-/* Flat strips flush to the grid's right and bottom edges: surface fill and
-   hairline borders, no radius or shadow, so they read as part of the frame. */
-.rows,
-.time,
-.corner {
+.scroll-x,
+.scroll-y,
+.zoom-corner {
+  pointer-events: auto;
+  background: var(--_bg);
+  box-sizing: border-box;
+}
+.scroll-x {
+  grid-area: x;
   display: flex;
-  background: var(--_surface);
-  border-left: 1px solid var(--_border);
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 4px;
   border-top: 1px solid var(--_border);
 }
-.rows { grid-area: rows; flex-direction: column; }
-.time { grid-area: time; flex-direction: row; }
-.corner { grid-area: corner; }
-z-tooltip { display: flex; }
-.cell {
-  display: grid;
-  place-items: center;
-  width: var(--_cell);
-  height: var(--_cell);
+.scroll-y {
+  grid-area: y;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0 2px;
+  border-left: 1px solid var(--_border);
+}
+.scroll-track {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  cursor: default;
+}
+.scroll-thumb {
+  position: absolute;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+}
+.scroll-thumb:hover {
+  background: var(--_text-faint);
+}
+.scroll-x .scroll-thumb { top: 4px; height: 5px; min-width: 12px; }
+.scroll-y .scroll-thumb { left: 4px; width: 5px; min-height: 12px; }
+.zoom-step,
+.zoom-corner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   padding: 0;
   border: 0;
-  background: transparent;
   color: var(--_text-muted);
   cursor: pointer;
 }
-.cell svg { width: 16px; height: 16px; }
-.cell:hover { background: var(--_surface-2); color: var(--_text); }
-.cell:disabled { color: var(--_text-faint); background: transparent; cursor: default; }
-.cell:focus-visible { outline: 2px solid var(--_focus); outline-offset: -2px; }
+.zoom-step {
+  width: 14px;
+  height: 12px;
+  border-radius: 3px;
+  background: transparent;
+}
+.scroll-y .zoom-step { width: 12px; height: 14px; }
+.zoom-corner {
+  grid-area: corner;
+  border-top: 1px solid var(--_border);
+  border-left: 1px solid var(--_border);
+}
+.zoom-step svg,
+.zoom-corner svg { width: 10px; height: 10px; }
+.zoom-step:hover,
+.zoom-corner:hover { background: var(--_surface-2); color: var(--_text); }
+.zoom-step:disabled,
+.zoom-corner:disabled { color: var(--_text-faint); background: transparent; cursor: default; }
+.zoom-step:focus-visible,
+.zoom-corner:focus-visible { outline: 2px solid var(--_focus); outline-offset: -2px; }

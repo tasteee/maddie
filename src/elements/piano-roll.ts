@@ -3,6 +3,7 @@ import { confirmPlainChordPlacement } from './zest';
 import { showEditorToast } from './zest';
 import { customElement } from 'lit/decorators.js';
 import {
+  CHORD_SETTING_LABELS,
   clampPitch,
   createId,
   degreeOf,
@@ -18,6 +19,7 @@ import {
   type ChordRegion,
   type ChordDraft,
   type ChordTrackEdit,
+  type ChordSettingsKind,
   type Editor,
   type Note,
   type NoteId,
@@ -34,6 +36,11 @@ import type { Palette } from './tokens';
 import './zest';
 
 const CHORD_ZONE_PX = 10;
+const PASTE_CHORD_SETTINGS = [
+  { isHeading: true, label: 'Paste chord settings' },
+  ...Object.entries(CHORD_SETTING_LABELS).map(([value, label]) => ({ value, label })),
+];
+const stopMenuPointer = (event: Event) => event.stopPropagation();
 
 type ChordDropPlanT =
   | { kind: 'place'; start: number; draft: ChordDraft; label: string }
@@ -136,12 +143,23 @@ export class MaddiePianoRoll extends CanvasElement {
   private marquee!: HTMLElement;
   private lastPointer: PointerEvent | null = null;
   private autoScrollRaf = 0;
+  private chordMenuTarget?: { editor: Editor; trackId: string; id: string; clientX: number; clientY: number };
 
   protected renderOverlay() {
+    const chordMenu = [
+      { value: 'copy', label: 'Copy chord settings' },
+      { value: 'paste', label: 'Paste chord settings…', isDisabled: !this.ed?.chordTrack.hasCopiedSettings },
+    ];
     return html`<div class="marquee" part="marquee"></div>
       <div class="drop" part="drop" aria-hidden="true">
         <z-badge size="md" kind="soft" tone="primary"><span slot="prefix">${icons.upload}</span>Drop MIDI files to add tracks</z-badge>
-      </div>`;
+      </div>
+      <z-context-menu .items=${chordMenu} @pointerdown=${stopMenuPointer} @wheel=${stopMenuPointer} @select=${this.onChordMenuSelect}>
+        <span id="chord-menu-anchor"></span>
+      </z-context-menu>
+      <z-context-menu .items=${PASTE_CHORD_SETTINGS} @pointerdown=${stopMenuPointer} @wheel=${stopMenuPointer} @select=${this.onChordSettingsPaste}>
+        <span id="chord-paste-anchor"></span>
+      </z-context-menu>`;
   }
 
   connectedCallback() {
@@ -153,7 +171,8 @@ export class MaddiePianoRoll extends CanvasElement {
     this.addEventListener('pointermove', this.onHoverMove);
     this.addEventListener('pointerleave', this.onLeave);
     this.addEventListener('wheel', this.onWheel, { passive: false });
-    this.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.addEventListener('contextmenu', this.onContextMenu);
+    this.addEventListener('keydown', this.onContextMenuKey);
     this.addEventListener('dblclick', this.onDoubleClick);
     this.addEventListener('dragenter', this.onDragEnter);
     this.addEventListener('dragover', this.onDragOver);
@@ -199,7 +218,7 @@ export class MaddiePianoRoll extends CanvasElement {
   };
 
   private showToast = (toast: Toast) => {
-    showEditorToast(toast.message, toast.kind === 'capture');
+    showEditorToast(toast.message, toast.kind);
   };
 
   protected firstUpdated() {
@@ -421,6 +440,80 @@ export class MaddiePianoRoll extends CanvasElement {
 
   // ── Pointer ─────────────────────────────────────────────────────
 
+  private onContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    if (!this.ed?.chordRegions || this.gesture || e.composedPath().some((node) => node instanceof Element && node.localName === 'z-context-menu')) return;
+    const { x, y } = this.local(e);
+    const pitchedHit = this.hitTest(x, y)?.note.chordRegionId;
+    const chord = this.hitRegion(x, y, pitchedHit);
+    if (chord) this.openChordMenu(chord.region, e.clientX, e.clientY);
+    else this.dismissChordMenus();
+  };
+
+  private onContextMenuKey = (event: KeyboardEvent) => {
+    if (event.target !== this || event.defaultPrevented || (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))) return;
+    const ed = this.ed;
+    const region = ed?.selectedChordRegions[0];
+    if (!ed || !region) return;
+    event.preventDefault();
+    const box = this.getBoundingClientRect();
+    const rect = this.regionRect(region, { ...ed.view, scrollRow: ed.view.scrollRow ?? 0 });
+    this.openChordMenu(region, box.left + clamp(rect.x, 0, this.width), box.top + rect.y);
+  };
+
+  private openChordMenu(region: ChordRegion, clientX: number, clientY: number) {
+    const editor = this.ed;
+    if (!editor) return;
+    this.dismissChordMenus();
+    if (!editor.selection.has(region.id)) editor.select([region.id]);
+    this.focus({ preventScroll: true });
+    const target = { editor, trackId: editor.activeTrackId, id: region.id, clientX, clientY };
+    this.chordMenuTarget = target;
+    this.requestUpdate();
+    void this.updateComplete.then(() => {
+      if (target === this.chordMenuTarget) this.showChordMenu('chord-menu-anchor');
+    });
+  }
+
+  private dismissChordMenus() {
+    this.chordMenuTarget = undefined;
+    for (const menu of this.renderRoot.querySelectorAll('z-context-menu')) {
+      menu.shadowRoot?.querySelector<HTMLElement>(':popover-open')?.hidePopover();
+    }
+  }
+
+  private showChordMenu(anchor: string) {
+    const target = this.chordMenuTarget;
+    if (!target || target.editor !== this.ed || target.trackId !== target.editor.activeTrackId) return;
+    this.renderRoot.querySelector(`#${anchor}`)?.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: target.clientX, clientY: target.clientY,
+    }));
+  }
+
+  private onChordMenuSelect = (event: CustomEvent<{ value: string }>) => {
+    event.stopPropagation();
+    const target = this.chordMenuTarget;
+    if (!target || target.editor !== this.ed || target.trackId !== target.editor.activeTrackId) return;
+    if (event.detail.value === 'copy') {
+      if (target.editor.chordTrack.copySettings(target.id)) this.engine?.toast('Chord settings copied');
+    } else if (event.detail.value === 'paste' && target.editor.chordTrack.hasCopiedSettings) {
+      const panel = (event.currentTarget as HTMLElement).shadowRoot?.querySelector('[popover]');
+      const openPasteMenu = () => {
+        if (target === this.chordMenuTarget) this.showChordMenu('chord-paste-anchor');
+      };
+      // The original menu stays in the top layer through its closing animation.
+      if (panel?.matches(':popover-open')) panel.addEventListener('toggle', openPasteMenu, { once: true });
+      else openPasteMenu();
+    }
+  };
+
+  private onChordSettingsPaste = (event: CustomEvent<{ value: ChordSettingsKind }>) => {
+    event.stopPropagation();
+    const target = this.chordMenuTarget;
+    if (!target || target.editor !== this.ed || target.trackId !== target.editor.activeTrackId) return;
+    void target.editor.chordTrack.pasteSettings(event.detail.value).catch((error: Error) => this.engine?.toast(error.message, 'error'));
+  };
+
   private onPointerDown = (e: PointerEvent) => {
     const ed = this.ed;
     if (!ed || this.gesture) return;
@@ -437,8 +530,6 @@ export class MaddiePianoRoll extends CanvasElement {
     if (e.button !== 0) return;
 
     const hit = this.hitTest(x, y);
-    const clicked = this.snap(this.tickAt(x), e, 'floor');
-    ed.setView({ cursor: clicked });
 
     if (ed.chordRegions) {
       const chord = this.hitRegion(x, y, hit?.note.chordRegionId);
@@ -524,7 +615,7 @@ export class MaddiePianoRoll extends CanvasElement {
       if (!dx) return;
       const v = ed.view;
       ed.setView({
-        scrollTick: clamp(v.scrollTick + dx / v.pxPerTick, 0, maxScrollTick(ed)),
+        scrollTick: Math.min(v.scrollTick + dx / v.pxPerTick, maxScrollTick(ed)),
       });
       this.gesture.move(e);
       this.autoScrollRaf = requestAnimationFrame(step);
@@ -562,6 +653,9 @@ export class MaddiePianoRoll extends CanvasElement {
     const wasSelected = ed.selection.has(region.id);
     if (!wasSelected) ed.select([region.id], add ? 'add' : 'replace');
     const selected = ed.selectedChordRegions;
+    // Holding a chord's body plays it on a loop, pattern and all, until the mouse comes up.
+    const isBody = edge === 'body';
+    const stopLoop = isBody ? ed.chordTrack.auditionLoop(region) : undefined;
     let dragging = false;
     let edit: ChordTrackEdit | undefined;
     let lastPosition = '';
@@ -570,6 +664,8 @@ export class MaddiePianoRoll extends CanvasElement {
       if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
       const p = this.local(event);
       if (!dragging && Math.hypot(p.x - origin.x, p.y - origin.y) < DRAG_THRESHOLD) return;
+      // The held-chord preview is for listening; once the chord moves, it stops.
+      if (!dragging) stopLoop?.();
       dragging = true;
       const raw = this.tickAt(p.x) - this.tickAt(origin.x) + (edge === 'end' ? region.start + region.duration : region.start);
       const tick = this.snap(raw, event);
@@ -594,17 +690,19 @@ export class MaddiePianoRoll extends CanvasElement {
     return {
       move,
       up: (event) => {
+        stopLoop?.();
         if (ed.activeTrackId !== track || ed.chordRegions !== source) return;
         if (!dragging) {
           if (wasSelected) ed.select([region.id], add ? 'toggle' : 'replace');
-          ed.chordTrack.auditionPitches([region]);
           return;
         }
         move(event);
         if (edit) ed.chordTrack.commit(edit, edge === 'body' ? 'Move chords' : 'Resize chord');
         else if (error) engine.toast(error, 'error');
       },
-      cancel() {},
+      cancel() {
+        stopLoop?.();
+      },
     };
   }
 
@@ -774,9 +872,10 @@ export class MaddiePianoRoll extends CanvasElement {
         ed.select([...initial, ...inside]);
       },
       up: () => {
-        if (dragging) return;
-        // A plain click on empty grid only clears the selection. The ruler sets the play marker.
-        if (!initial.length) ed.clearSelection();
+        if (dragging || down.shiftKey || down.metaKey || down.ctrlKey) return;
+        ed.clearSelection();
+        this.engine?.pauseFollow();
+        ed.setInsertMarker(this.snap(this.tickAt(origin.x), down, 'floor'));
       },
       cancel: () => ed.select(initial),
     };
@@ -815,7 +914,7 @@ export class MaddiePianoRoll extends CanvasElement {
       move: (e) => {
         const v = ed.view;
         ed.setView({
-          scrollTick: clamp(start.tick - (e.clientX - start.x) / v.pxPerTick, 0, maxScrollTick(ed)),
+          scrollTick: Math.min(start.tick - (e.clientX - start.x) / v.pxPerTick, maxScrollTick(ed)),
           scrollRow: clampScrollRow(ed, start.row - (e.clientY - start.y) / v.rowHeight),
         });
       },
@@ -893,8 +992,10 @@ export class MaddiePianoRoll extends CanvasElement {
       const pitches = [...region.pitches, ...pitchesByRegion.get(region.id) ?? []];
       const box = this.regionRect(region, view, pitches);
       const selected = ed.selection.has(region.id);
-      ctx.fillStyle = withAlpha(color, selected ? 0.22 : 0.10);
-      ctx.strokeStyle = withAlpha(color, selected ? 0.95 : 0.55);
+      const opacity = region.muted ? 0.5 : 1;
+      ctx.fillStyle = withAlpha(color, (selected ? 0.22 : 0.10) * opacity);
+      ctx.strokeStyle = withAlpha(color, (selected ? 0.95 : 0.55) * opacity);
+      ctx.setLineDash(region.muted ? [4, 3] : []);
       roundRect(ctx, box.x + 0.5, box.y + 0.5, Math.max(1, box.w - 1), box.h - 1, 4);
       ctx.fill();
       ctx.stroke();
@@ -902,7 +1003,7 @@ export class MaddiePianoRoll extends CanvasElement {
       ctx.beginPath();
       ctx.rect(box.x + 2, box.y + 1, Math.max(0, box.w - 4), 16);
       ctx.clip();
-      ctx.fillStyle = p.text;
+      ctx.fillStyle = region.muted ? withAlpha(p.text, 0.65) : p.text;
       ctx.fillText(region.symbol, box.x + 6, box.y + 9);
       ctx.restore();
     }

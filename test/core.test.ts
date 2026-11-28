@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   barsInRange,
   buildRowMap,
@@ -8,6 +8,7 @@ import {
   formatBBT,
   fromMidiVelocity,
   gridTicks,
+  gridTicksInRange,
   nearestInScale,
   parseKey,
   remapVelocities,
@@ -39,6 +40,15 @@ describe('music', () => {
     expect(snapTick(130, 240)).toBe(240);
     expect(snapTick(110, 240)).toBe(0);
     expect(snapTick(239, 240, [], 'floor')).toBe(0);
+  });
+
+  it('keeps dotted grid positions aligned with snapping across a bar line', () => {
+    const grid = gridTicks('1/4.', PPQ)!;
+    const sigs = [{ tick: 0, numerator: 4, denominator: 4 }, { tick: PPQ * 8, numerator: 6, denominator: 8 }];
+    const secondBar = [...gridTicksInRange(PPQ * 4, PPQ * 8, grid, sigs[0].tick)];
+    expect(secondBar).toEqual([4320, 5760, 7200]);
+    expect(secondBar.map((tick) => snapTick(tick, grid, sigs))).toEqual(secondBar);
+    expect([...gridTicksInRange(PPQ * 8, PPQ * 11, grid, sigs[1].tick)]).toEqual([7680, 9120]);
   });
 
   it('parses keys and moves by scale degree', () => {
@@ -207,7 +217,10 @@ describe('computer keyboard', () => {
     expect(stepOctave(12, -1)).toBe(84);
     expect(KEY_OFFSETS.get('KeyZ')).toBe(0);
     expect(KEY_OFFSETS.get('KeyX')).toBe(1);
-    expect(KEY_OFFSETS.get('KeyA')).toBe(10); // row above continues where Z row ended
+    expect(KEY_OFFSETS.get('KeyA')).toBe(7); // row above continues where Z row ended
+    expect(KEY_OFFSETS.get('KeyQ')).toBe(16);
+    expect([...KEY_OFFSETS.keys()]).toHaveLength(26);
+    expect([...KEY_OFFSETS.keys()].every((code) => /^Key[A-Z]$/.test(code))).toBe(true);
   });
 });
 
@@ -344,6 +357,68 @@ describe('detectKey', () => {
 });
 
 describe('transport', () => {
+  it('pastes at the insert marker and resumes from the last stop without moving it', async () => {
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0 };
+    const ed = createEditor({ audioContext: audioContext as unknown as AudioContext });
+    ed.transport.setMetronome({ enabled: false });
+    try {
+      const [note] = ed.commands.add([{ pitch: 60, start: 0, duration: PPQ * 16, velocity: 0.8 }]);
+      ed.select([note.id]);
+      ed.commands.copy();
+      ed.setInsertMarker(PPQ);
+      await ed.transport.play();
+      ed.setInsertMarker(PPQ * 4);
+      expect(ed.commands.paste()[0].start).toBe(PPQ * 4);
+      audioContext.currentTime = 1.5;
+      const stoppedAt = ed.transport.position;
+      expect(stoppedAt).toBeLessThan(ed.transport.marker);
+      ed.transport.toggle();
+      await ed.transport.resume();
+      expect(ed.transport.position).toBe(stoppedAt);
+      expect(ed.transport.marker).toBe(PPQ * 4);
+      ed.transport.toggle();
+      ed.transport.toggle();
+      expect(ed.transport.position).toBe(PPQ * 4);
+    } finally {
+      ed.transport.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('jumps from stopped or playing and chases only the remaining audible notes', async () => {
+    vi.useFakeTimers();
+    const audioContext = { currentTime: 1, state: 'running', outputLatency: 0 };
+    const played: { pitch: number; duration: number | undefined }[] = [];
+    const ed = createEditor({
+      audioContext: audioContext as unknown as AudioContext,
+      doc: { tempo: [{ tick: 0, bpm: 120 }] },
+      output: { noteOn: ({ note, duration }) => played.push({ pitch: note.pitch, duration }), noteOff: () => {}, allNotesOff: () => {} },
+    });
+    ed.transport.setMetronome({ enabled: false });
+    try {
+      ed.commands.add([
+        { pitch: 60, start: 0, duration: PPQ * 4, velocity: 0.8 },
+        { pitch: 62, start: 0, duration: PPQ * 2, velocity: 0.8 },
+        { pitch: 64, start: 0, duration: PPQ * 4, velocity: 0.8, muted: true },
+        { pitch: 65, start: PPQ * 2, duration: PPQ, velocity: 0.8 },
+      ]);
+      ed.setInsertMarker(PPQ);
+      await ed.transport.jump(PPQ * 2);
+      expect(ed.transport.position).toBe(PPQ * 2);
+      expect(played).toEqual([{ pitch: 60, duration: 1 }, { pitch: 65, duration: 0.5 }]);
+      played.length = 0;
+      await ed.transport.jump(PPQ * 3);
+      expect(ed.transport.position).toBe(PPQ * 3);
+      expect(played).toEqual([{ pitch: 60, duration: 0.5 }]);
+      expect(ed.transport.marker).toBe(PPQ);
+      expect(ed.view.cursor).toBe(PPQ);
+    } finally {
+      ed.transport.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('plays notes that start exactly on the play marker', async () => {
     const { vi } = await import('vitest');
     vi.useFakeTimers();
@@ -482,26 +557,231 @@ describe('arrow keys without a selection', () => {
 });
 
 describe('mute keys', () => {
-  it('0 mutes and unmutes selected notes, like M', async () => {
-    const { handleKey } = await import('../src/engine/keymap');
+  const key = (value: string) => ({ key: value, code: value === '0' ? 'Digit0' : `Key${value.toUpperCase()}` }) as KeyboardEvent;
+
+  it('0 mutes selected notes and M mutes the active track', async () => {
+    const { defaultKeymap, handleKey } = await import('../src/engine/keymap');
     const ed = createEditor();
     ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
-    const press = (key: string, code: string) => handleKey(ed, { key, code } as KeyboardEvent);
-    expect(press('0', 'Digit0')).toBe(true);
+    expect(defaultKeymap['n+m']).toBeUndefined();
+    expect(handleKey(ed, key('0'))).toBe(true);
     expect(ed.notes()[0].muted).toBe(true);
-    expect(press('0', 'Digit0')).toBe(true);
+    expect(handleKey(ed, key('0'))).toBe(true);
     expect(ed.notes()[0].muted).toBe(false);
-    press('m', 'KeyM');
-    expect(ed.notes()[0].muted).toBe(true);
+    expect(ed.trackList[0].muted).toBeFalsy();
+    const other = ed.commands.addTrack({ activate: false });
+    expect(handleKey(ed, key('m'))).toBe(true);
+    expect(ed.notes()[0].muted).toBe(false);
+    expect(ed.trackList.find((track) => track.id === ed.activeTrackId)?.muted).toBe(true);
+    expect(ed.trackList.find((track) => track.id === other.id)?.muted).toBeFalsy();
   });
 
-  it('0 does nothing without a selection', async () => {
+  it('0 without selected notes leaves notes and track mute unchanged', async () => {
     const { handleKey } = await import('../src/engine/keymap');
     const ed = createEditor();
     ed.commands.add([{ pitch: 60, start: 0, duration: 240, velocity: 0.8 }]);
     ed.select([]);
-    handleKey(ed, { key: '0', code: 'Digit0' } as KeyboardEvent);
+    handleKey(ed, key('0'));
     expect(ed.notes()[0].muted).toBeFalsy();
+    expect(ed.trackList[0].muted).toBeFalsy();
+  });
+});
+
+describe('held keyboard shortcuts', () => {
+  beforeEach(() => vi.stubGlobal('requestAnimationFrame', () => 0));
+  afterEach(() => vi.unstubAllGlobals());
+
+  const keyEvent = (key: string, options: Partial<KeyboardEvent> = {}) =>
+    ({ key, code: key === '/' ? 'Slash' : 'Key' + key.toUpperCase(), ...options }) as KeyboardEvent;
+
+  it('toggles snap once when S, T, and G overlap in either order without soloing the track', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const openPalette = vi.fn();
+    const shortcuts = new HeldShortcuts(ed, () => ({ ...defaultKeymap, t: openPalette }));
+    const wasSnapping = ed.view.snap;
+    for (const key of ['s', 't', 'g']) shortcuts.keyDown(keyEvent(key));
+    expect(ed.view.snap).toBe(!wasSnapping);
+    shortcuts.keyDown(keyEvent('g', { repeat: true }));
+    expect(ed.view.snap).toBe(!wasSnapping);
+    for (const key of ['s', 't', 'g']) shortcuts.keyUp(keyEvent(key));
+    for (const key of ['g', 't', 's']) shortcuts.keyDown(keyEvent(key));
+    expect(ed.view.snap).toBe(wasSnapping);
+    for (const key of ['g', 't', 's']) shortcuts.keyUp(keyEvent(key));
+    expect(ed.trackList[0].solo).toBeFalsy();
+    expect(openPalette).not.toHaveBeenCalled();
+    shortcuts.keyDown(keyEvent('t'));
+    expect(openPalette).not.toHaveBeenCalled();
+    shortcuts.keyUp(keyEvent('t'));
+    expect(openPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves Follow and Loop unchanged for bare F and L and keeps the loop-selection command', async () => {
+    const { actions, handleKey, modKeyLabel } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const [note] = ed.commands.add([{ pitch: 60, start: 240, duration: 480, velocity: 0.8 }]);
+    ed.select([note.id]);
+
+    expect(handleKey(ed, keyEvent('f'))).toBe(false);
+    expect(handleKey(ed, keyEvent('l'))).toBe(false);
+    expect(ed.view.follow).toBe(false);
+    expect(ed.transport.loop.enabled).toBe(false);
+    actions.toggleLoop(ed);
+    const range = ed.transport.loop;
+    expect(range.enabled).toBe(true);
+    expect(range.end).toBeGreaterThan(range.start);
+    actions.toggleLoop(ed);
+    expect(ed.transport.loop).toEqual({ ...range, enabled: false });
+    expect(ed.selection.has(note.id)).toBe(true);
+    handleKey(ed, keyEvent('l', modKeyLabel === '⌘' ? { metaKey: true } : { ctrlKey: true }));
+    expect(ed.transport.loop).toEqual({ start: 240, end: 720, enabled: true });
+  });
+
+  it('does not run letter shortcuts or letter chords when QWERTY note input is on', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const openPalette = vi.fn();
+    const shortcuts = new HeldShortcuts(ed, () => ({ ...defaultKeymap, t: openPalette }));
+    const snap = ed.view.snap;
+    shortcuts.keyDown(keyEvent('t'));
+    ed.setView({ computerKeyboard: true });
+    shortcuts.keyUp(keyEvent('t'));
+    for (const key of ['s', 't', 'g', 'l']) shortcuts.keyDown(keyEvent(key));
+    for (const key of ['s', 't', 'g', 'l']) shortcuts.keyUp(keyEvent(key));
+    expect(openPalette).not.toHaveBeenCalled();
+    expect(ed.view.snap).toBe(snap);
+    expect(ed.trackList[0].solo).toBeFalsy();
+    expect(ed.transport.loop.enabled).toBe(false);
+  });
+
+  it('solos the active track on S release and cancels a pending tap when shortcuts are cleared', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const other = ed.commands.addTrack();
+    const shortcuts = new HeldShortcuts(ed, () => defaultKeymap);
+    shortcuts.keyDown(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBeFalsy();
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList.find((track) => track.id === other.id)?.solo).toBe(true);
+    expect(ed.trackList[0].solo).toBeFalsy();
+    shortcuts.keyDown(keyEvent('s'));
+    shortcuts.clear();
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBe(true);
+    shortcuts.keyDown(keyEvent('s'));
+    shortcuts.keyUp(keyEvent('s'));
+    expect(ed.trackList[1].solo).toBe(false);
+  });
+
+  it('fires registered singles on release and cancels only the keys used by a combination', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    const fired: string[] = [];
+    const keymap = {
+      ...defaultKeymap,
+      j: () => fired.push('j'),
+      k: () => fired.push('k'),
+      'j+k': () => fired.push('j+k'),
+    };
+    const shortcuts = new HeldShortcuts(ed, () => keymap);
+    shortcuts.keyDown(keyEvent('m'));
+    shortcuts.keyDown(keyEvent('k'));
+    shortcuts.keyDown(keyEvent('j'));
+    expect(fired).toEqual(['j+k']);
+    expect(ed.trackList[0].muted).toBeFalsy();
+    shortcuts.keyDown(keyEvent('j', { repeat: true }));
+    for (const key of ['k', 'j', 'm']) shortcuts.keyUp(keyEvent(key));
+    expect(fired).toEqual(['j+k']);
+    expect(ed.trackList[0].muted).toBe(true);
+    shortcuts.keyDown(keyEvent('j'));
+    expect(fired).toEqual(['j+k']);
+    shortcuts.keyUp(keyEvent('j'));
+    expect(fired).toEqual(['j+k', 'j']);
+  });
+
+  it('cycles grid division and feel independently and reports each selection', async () => {
+    const { actions, defaultKeymap } = await import('../src/engine/keymap');
+    const { Engine } = await import('../src/engine/engine');
+    const ed = createEditor();
+    const toasts: string[] = [];
+    Engine.for(ed).onToast((toast) => toasts.push(toast.message));
+    expect(defaultKeymap['g+d']).toBeUndefined();
+    expect(defaultKeymap['g+f']).toBeUndefined();
+
+    ed.setView({ grid: '1/64T' });
+    actions.cycleGridDivision(ed);
+    expect(ed.view.grid).toBe('1/4T');
+    actions.cycleGridFeel(ed);
+    expect(ed.view.grid).toBe('1/4.');
+    actions.cycleGridFeel(ed);
+    expect(ed.view.grid).toBe('1/4');
+    actions.cycleGridFeel(ed);
+    expect(ed.view.grid).toBe('1/4T');
+    ed.setView({ grid: 'auto' });
+    actions.cycleGridFeel(ed);
+    expect(ed.view.grid).toBe('auto');
+    actions.cycleGridDivision(ed);
+    expect(ed.view.grid).toBe('1/4');
+    expect(ed.view.follow).toBe(false);
+    expect(toasts).toEqual([
+      'Grid Division · 1/4', 'Grid Feel · Dotted', 'Grid Feel · Straight', 'Grid Feel · Triplet',
+      'Grid Feel · Select a note division to change the feel', 'Grid Division · 1/4',
+    ]);
+  });
+
+  it('cycles the fold choices and skips Key when no key is set', async () => {
+    const { actions, defaultKeymap } = await import('../src/engine/keymap');
+    const { Engine } = await import('../src/engine/engine');
+    const ed = createEditor();
+    expect(defaultKeymap['f+k']).toBeUndefined();
+    const toasts: string[] = [];
+    Engine.for(ed).onToast((toast) => toasts.push(toast.message));
+    const cycle = () => {
+      actions.cycleFold(ed);
+      return ed.view.fold;
+    };
+
+    expect([cycle(), cycle()]).toEqual(['used', 'none']);
+    ed.transact('Key', (tx) => tx.setMeta('key', { root: 0, scale: 'major' }));
+    expect([cycle(), cycle(), cycle()]).toEqual(['used', 'scale', 'none']);
+    expect(toasts).toEqual(['Fold · Notes', 'Fold · Off', 'Fold · Notes', 'Fold · Key', 'Fold · Off']);
+  });
+
+  it('uses slash as a modifier for panels even with MIDI enabled', async () => {
+    const { defaultKeymap, HeldShortcuts } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ computerKeyboard: true, chordsPanel: false, suggestionsOpen: true, velocityLaneOpen: true });
+    const openPanels = vi.fn();
+    const shortcuts = new HeldShortcuts(ed, () => ({ ...defaultKeymap, '/': openPanels }));
+    expect(defaultKeymap.h).toBeUndefined();
+    const notes: string[] = [];
+    const down = (key: string, options?: Partial<KeyboardEvent>) =>
+      shortcuts.keyDown(keyEvent(key, options), () => {
+        if (key === '/') return false;
+        notes.push(key);
+        return true;
+      });
+    down('s');
+    shortcuts.keyUp(keyEvent('s'));
+    expect(down('/')).toBe(true);
+    for (const key of ['c', 's', 'v']) {
+      expect(down(key)).toBe(true);
+      if (key !== 'v') shortcuts.keyUp(keyEvent(key));
+    }
+    shortcuts.keyUp(keyEvent('/'));
+    expect(down('v', { repeat: true })).toBe(true);
+    shortcuts.keyUp(keyEvent('v'));
+    down('v');
+    expect(notes).toEqual(['s', 'v']);
+    expect(ed.view.chordsPanel).toBe(true);
+    expect(ed.view.suggestionsOpen).toBe(false);
+    expect(ed.view.velocityLaneOpen).toBe(false);
+    expect(ed.trackList[0].solo).toBeFalsy();
+    expect(openPanels).not.toHaveBeenCalled();
+    down('/');
+    expect(openPanels).not.toHaveBeenCalled();
+    shortcuts.keyUp(keyEvent('/'));
+    expect(openPanels).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -613,3 +893,31 @@ describe('grid modifier', () => {
   });
 });
 
+
+describe('precise nudges', () => {
+  it('step by half, then a quarter, of the finest visible line spacing', async () => {
+    const { vi } = await import('vitest');
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const { actions } = await import('../src/engine/keymap');
+    const { visibleLineTicks } = await import('../src/core');
+    const ed = createEditor();
+    // Zoomed out on the auto grid: quarter notes are the finest lines drawn.
+    ed.setView({ grid: 'auto', snap: true, pxPerTick: 20 / PPQ });
+    const visible = visibleLineTicks('auto', PPQ, ed.view.pxPerTick);
+    expect(visible).toBe(PPQ);
+    ed.commands.add([{ pitch: 60, start: PPQ * 4, duration: PPQ, velocity: 0.8 }]);
+    actions.nudgeFinerRight(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 + PPQ / 2);
+    actions.nudgeFinestLeft(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ * 4 + PPQ / 4);
+  });
+
+  it('never goes finer than 1/64', async () => {
+    const { actions } = await import('../src/engine/keymap');
+    const ed = createEditor();
+    ed.setView({ grid: '1/64', snap: true, pxPerTick: 1 });
+    ed.commands.add([{ pitch: 60, start: PPQ, duration: PPQ, velocity: 0.8 }]);
+    actions.nudgeFinestRight(ed);
+    expect(ed.selectedNotes[0].start).toBe(PPQ + PPQ / 16);
+  });
+});

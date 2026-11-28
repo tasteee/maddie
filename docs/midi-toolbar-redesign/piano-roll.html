@@ -1,0 +1,1985 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Spec — piano roll</title>
+<script>window.__resources = {
+  "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js": "./assets/react.production.min.js",
+  "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js": "./assets/react-dom.production.min.js"
+};</script>
+<script src="./assets/dc-runtime.js"></script>
+<style>/*
+ * Zest design tokens: custom properties only. No element selectors, so this
+ * file never changes the page it is loaded into. Custom properties cross
+ * shadow boundaries, so every z element reads these through var(--token).
+ * Import it once at the document level, not inside a shadow root.
+ *
+ * Page-level behaviour (body colours, scrollbars, selection, the theme fade)
+ * lives in document.css. `ink.css` is both files together.
+ * Fonts are not loaded here; see fonts.css.
+ *
+ * ---------------------------------------------------------------------------
+ * Vocabulary
+ * ---------------------------------------------------------------------------
+ * Colour has three tiers. Components read only the second.
+ *
+ *   Palette   --color-neutral-0..9. Private to the theme: step N plays a
+ *             different part in light and dark. Never read by a component.
+ *             --neutral-0..9 is its short name for app code and docs.
+ *             --{tone}-0..9 (primary, secondary, tertiary, success,
+ *             warning, danger) are reference ramps derived from each tone.
+ *   Roles     --{group}-{role}[-{variant}], noun first. One name per meaning,
+ *             named for the job, never for the hue or the lightness.
+ *   Local     --tone and the --z-* component properties.
+ *
+ *   surface-*   page, default, subtle, strong, overlay, inverse, selection, scrim
+ *   text-*      primary, secondary, tertiary, strong, inverse, selection
+ *   border-*    default, strong, focus
+ *   accent-*    primary, secondary, tertiary  (the three tones), on-accent
+ *   status-*    success, warning, danger
+ *   space-N     0 to 40, N x 4px          font-size-2xs..7xl  one type scale
+ *   radius-xs..xl, full                     line-height-none..relaxed
+ *   chart-1..5  series order is genuinely ordinal
+ *   syntax-*    code highlighting
+ *
+ * A surface always pairs with a text-* and a border-* token. Text on a solid
+ * fill uses on-accent; text on surface-inverse uses text-inverse.
+ *
+ * --tone is the one contextual variable: the colour the current component or
+ * region is painting with. It defaults to accent-primary, and a component
+ * overrides it for its own tone variants (primary, secondary, tertiary,
+ * success, warning, danger). Everything inside inherits it.
+ *
+ * ---------------------------------------------------------------------------
+ * Depth
+ * ---------------------------------------------------------------------------
+ * Zest is flat. Resting UI (cards, fields, buttons, switches) is a surface plus
+ * a 1px border, with no shadow. A shadow exists only for things that float
+ * above arbitrary content and must separate from it:
+ *
+ *   --shadow-overlay   menus, popovers, tooltips, toasts   (surface-overlay)
+ *   --shadow-modal     dialogs, sheets, drawers
+ *
+ * They are theme-specific: black shadows barely read on dark surfaces, so dark
+ * uses a higher alpha and leans on the border. Pressed and selected states
+ * change surface, never elevation. Focus is a ring (border-focus), not a shadow.
+ *
+ * ---------------------------------------------------------------------------
+ * Layers, in source order
+ * ---------------------------------------------------------------------------
+ *   1. Inputs     Scale and static values, declared once on :root. Nothing
+ *                 derives from them at a theme boundary, so a value set on
+ *                 :root survives inside every themed region.
+ *   2. Dark       The dark palette: the neutral ramp and every value that
+ *                 differs per theme (accents, status, selection, syntax,
+ *                 shadows).
+ *   3. Derived    Everything computed from layers 1 and 2: scales and roles.
+ *   4. Light      The light palette, authored by hand. It declares only what
+ *                 the dark palette declares, so it never ties with layer 3.
+ *
+ * Why derivation targets `:root, [data-theme], [data-zest-scope]`
+ * ---------------------------------------------------------------
+ * A custom property is substituted where it is declared, not where it is
+ * used. After `--text-primary: var(--color-neutral-8)` resolves on <html>,
+ * descendants inherit the resulting colour, not the expression. Changing
+ * `--color-neutral-8` further down the tree does nothing to them.
+ *
+ * So any element that changes an input (a theme's palette, --base-radius,
+ * --base-spacing, --base-font-size) must also re-run the derivations. Two
+ * kinds of element do that:
+ *
+ *   [data-theme]       a themed region. Sets a palette and re-derives.
+ *   [data-zest-scope]  a region that only changes the scale inputs. It keeps
+ *                      the inherited palette and re-derives against its own
+ *                      --base-* values.
+ *
+ * Without one of those attributes, a container that sets --base-radius
+ * changes the input but inherits the radius already computed on <html>.
+ *
+ * Contract for contributors:
+ *  - Components read roles, never the numbered neutrals.
+ *  - Values that differ per theme belong in a palette layer, never in the
+ *    derived layer. A scope element re-declares everything in the derived
+ *    layer, which would reset a theme's value back to the dark one.
+ *  - Palette overrides go on the theme: `[data-theme="light"] { ... }`.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. Inputs
+ * :where() keeps specificity at zero, so any rule a consumer writes wins
+ * regardless of stylesheet order.
+ * ------------------------------------------------------------------------- */
+:where(:root) {
+	/* Type families. Themes re-face by overriding these names; the fallback
+     stacks in --font-sans / --font-mono / --font-serif stay intact. */
+	--base-sans-font-family: "Google Sans";
+	--base-mono-font-family: "DM Mono";
+	--base-serif-font-family: "DM Serif Display";
+
+	/* Scale dials. Each one drives a whole scale below; set it on :root, or on a
+     [data-zest-scope] element to rescale that region only. */
+	--base-spacing: 0.25rem;
+	--base-radius: 0.625rem;
+	--base-font-size: 16px;
+
+	/* Tint of the neutral ramp, as plain numbers so every browser resolves the
+     ramp identically. */
+	--base-neutral-hue: 146.4;
+	--base-neutral-chroma: 0.0137;
+
+	/* Heading face: the one type tier a theme may re-face. Only z-display and
+     z-heading read these. */
+	--font-heading-weight: 700;
+	--font-heading-settings: normal;
+	/* Multiplies the heading scale's negative tracking. High-contrast serifs
+     need much less than a geometric sans. */
+	--font-heading-tracking-scale: 1;
+
+	--font-weight-regular: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+
+	/* Unitless, so they follow whatever font size an element ends up with.
+     none: icons and single-line chips. tight: headings. snug: dense UI text.
+     normal: body copy. relaxed: long-form reading. */
+	--line-height-none: 1;
+	--line-height-tight: 1.2;
+	--line-height-snug: 1.4;
+	--line-height-normal: 1.6;
+	--line-height-relaxed: 1.75;
+
+	/* Control metrics: one height scale for every interactive control, so an
+     input, select, button and toggle side by side agree. Padding stays
+     per-component. */
+	--control-height-sm: 2rem;
+	--control-height-md: 2.5rem;
+	--control-height-lg: 3rem;
+	--control-disabled-opacity: 0.5;
+
+	/* Field composition: label, gap, control. Fixing the first two makes every
+     labelled control in a row the same total height. */
+	--field-label-height: 1.25rem;
+	--field-gap: 0.25rem;
+
+	/* Motion. Durations step by surface size: micro feedback, floating panels,
+     edge-anchored sheets. Exits run at about 70% of their entrance. */
+	--motion-instant: 80ms;
+	--motion-fast: 140ms;
+	--motion-base: 200ms;
+	--motion-slow: 280ms;
+	--motion-exit-fast: 100ms;
+	--motion-exit-base: 140ms;
+	--motion-exit-slow: 200ms;
+	--ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-exit: cubic-bezier(0.3, 0, 0.7, 0.4);
+	--ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+	--motion-distance-sm: 4px;
+	--motion-distance-md: 8px;
+	--motion-scale-from: 0.97;
+	--motion-stagger: 30ms;
+	/* Components multiply their travel offsets by this. */
+	--motion-travel: 1;
+
+	/* Theme change: content fades out, the theme swaps, content fades back in.
+     Out is slow enough to confirm the click; in is brisk. shared/theme.ts reads
+     the fade-out value to time the swap. A zero fade-out applies the theme
+     immediately. */
+	--theme-fade-out-duration: 0.2s;
+	--theme-fade-in-duration: 0.35s;
+
+	/* Stacking for floating UI that escapes its parent. Local stacking inside a
+     component (button-group overlap, range thumbs) stays a plain integer.
+     Modals use the top layer and need no z-index. */
+	--z-toolbar: 40;
+	--z-menu: 50;
+	--z-overlay: 60;
+	--z-toast: 1000;
+}
+
+/* Reduced motion drops travel and scale. The theme fade is also retimed to
+   zero, which applies the theme immediately. Opacity is not movement, but a
+   full-page fade is the most visible animation zest runs, and a consumer who
+   wants it back sets the two durations. */
+@media (prefers-reduced-motion: reduce) {
+	:where(:root) {
+		--motion-travel: 0;
+		--motion-scale-from: 1;
+		--theme-fade-out-duration: 0s;
+		--theme-fade-in-duration: 0s;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Dark palette (the default)
+ * ------------------------------------------------------------------------- */
+:where(:root),
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Neutral ramp. Lightness climbs 0 to 9: 0 is the page floor, 1 and 2 are
+     surfaces above it, 3 and 4 are lines, 5 to 9 step up into ink. */
+	--color-neutral-0: oklch(0.1609 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-1: oklch(0.21 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-2: oklch(0.25 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-3: oklch(0.31 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-4: oklch(0.4 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-5: oklch(0.55 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-6: oklch(0.68 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-7: oklch(0.8 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-8: oklch(0.9 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-9: #fff;
+
+	/* The chrome is neutral on purpose: the user's content supplies the colour,
+     so secondary and tertiary are opt-in tones, never the default look. */
+	--accent-secondary: lab(60 40.17 -57.68);
+	--accent-tertiary: lch(62.44 70.29 0.86 / 1);
+	/* Spark tones: bright, decorative hues for shimmer and glow
+     effects (z-spinner). Not for text; too light to read on neutral-0. */
+	--accent-spark-1: oklch(0.74 0.17 288);
+	--accent-spark-2: oklch(0.74 0.2 350);
+	--accent-spark-3: oklch(0.82 0.17 70);
+	--accent-spark-4: oklch(0.8 0.19 155);
+	--accent-spark-5: oklch(0.8 0.15 220);
+	--status-success: lch(62 58 145 / 1);
+	--status-warning: lch(72 78 76 / 1);
+	--status-danger: lch(58 72 37 / 1);
+
+	/* Text on a solid accent or status fill, and the lightness/chroma used to
+     derive a readable label from a tone colour (z-button). */
+	--on-accent: var(--color-neutral-0);
+	--on-tone-lightness: 0.2;
+	--on-tone-chroma: 0.5;
+
+	/* Selection: a pale band with near-black ink instead of the browser blue. */
+	--surface-selection: var(--color-neutral-7);
+	--text-selection: var(--color-neutral-1);
+
+	/* Floating shadows, tinted with the neutral hue rather than pure black. */
+	--shadow-overlay: 0 8px 24px -8px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.7);
+	--shadow-modal: 0 24px 64px -16px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.85);
+
+	/* Syntax highlighting for z-code-block, tuned for the near-black code
+     surface (--color-neutral-1). Override any token to retheme code. */
+	--syntax-comment: var(--color-neutral-5);
+	--syntax-keyword: oklch(from var(--accent-secondary) 0.84 0.16 h);
+	--syntax-string: oklch(0.79 0.13 152);
+	--syntax-number: oklch(0.82 0.12 78);
+	--syntax-constant: oklch(0.76 0.16 48);
+	--syntax-function: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-class: oklch(0.83 0.11 200);
+	--syntax-property: oklch(0.86 0.07 222);
+	--syntax-operator: var(--color-neutral-6);
+	--syntax-tag: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-variable: var(--color-neutral-8);
+	--syntax-regex: oklch(0.79 0.13 168);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Derived tokens
+ * Re-run at every theme and scope boundary. Declares nothing that a palette
+ * layer sets per theme.
+ * ------------------------------------------------------------------------- */
+:root,
+[data-theme],
+[data-zest-scope] {
+	/* Type scale: one named scale, 2xs to 7xl. Every step follows
+     --base-font-size, so one dial rescales all text. rem keeps the user's
+     browser font-size setting in play. */
+	--font-size-2xs: calc(0.6875rem * (var(--base-font-size) / 16px));
+	--font-size-xs: calc(0.75rem * (var(--base-font-size) / 16px));
+	--font-size-sm: calc(0.875rem * (var(--base-font-size) / 16px));
+	--font-size-md: calc(1rem * (var(--base-font-size) / 16px));
+	--font-size-lg: calc(1.125rem * (var(--base-font-size) / 16px));
+	--font-size-xl: calc(1.25rem * (var(--base-font-size) / 16px));
+	--font-size-2xl: calc(1.5rem * (var(--base-font-size) / 16px));
+	--font-size-3xl: calc(2rem * (var(--base-font-size) / 16px));
+	--font-size-4xl: calc(2.5rem * (var(--base-font-size) / 16px));
+	--font-size-5xl: calc(3rem * (var(--base-font-size) / 16px));
+	--font-size-6xl: calc(3.5rem * (var(--base-font-size) / 16px));
+	--font-size-7xl: calc(4rem * (var(--base-font-size) / 16px));
+
+
+	--font-sans: var(--base-sans-font-family), "Google Sans Fallback", system-ui, sans-serif;
+	--font-mono: var(--base-mono-font-family), "Geist Mono", "Fira Code", monospace;
+	--font-serif:
+		var(--base-serif-font-family), "Iowan Old Style", Georgia, "Times New Roman", serif;
+	--font-heading: var(--font-sans);
+
+	/* Spacing: one numeric scale, --space-N = N x --base-spacing (4px), with -5 half steps. The
+     size keywords on layout elements (gap="md") resolve to steps of it. */
+	--space-0: 0;
+	--space-0-5: calc(var(--base-spacing) * 0.5);
+	--space-1: calc(var(--base-spacing) * 1);
+	--space-1-5: calc(var(--base-spacing) * 1.5);
+	--space-2: calc(var(--base-spacing) * 2);
+	--space-2-5: calc(var(--base-spacing) * 2.5);
+	--space-3: calc(var(--base-spacing) * 3);
+	--space-3-5: calc(var(--base-spacing) * 3.5);
+	--space-4: calc(var(--base-spacing) * 4);
+	--space-5: calc(var(--base-spacing) * 5);
+	--space-6: calc(var(--base-spacing) * 6);
+	--space-7: calc(var(--base-spacing) * 7);
+	--space-8: calc(var(--base-spacing) * 8);
+	--space-9: calc(var(--base-spacing) * 9);
+	--space-10: calc(var(--base-spacing) * 10);
+	--space-11: calc(var(--base-spacing) * 11);
+	--space-12: calc(var(--base-spacing) * 12);
+	--space-14: calc(var(--base-spacing) * 14);
+	--space-16: calc(var(--base-spacing) * 16);
+	--space-20: calc(var(--base-spacing) * 20);
+	--space-24: calc(var(--base-spacing) * 24);
+	--space-28: calc(var(--base-spacing) * 28);
+	--space-32: calc(var(--base-spacing) * 32);
+	--space-36: calc(var(--base-spacing) * 36);
+	--space-40: calc(var(--base-spacing) * 40);
+
+	/* Radius scale */
+	--radius: var(--base-radius);
+	--radius-xs: max(0px, calc(var(--radius) - 8px));
+	--radius-sm: max(0px, calc(var(--radius) - 4px));
+	--radius-md: max(0px, calc(var(--radius) - 2px));
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--radius-full: 9999px;
+
+	/* Surfaces */
+	--surface-page: var(--color-neutral-0);
+	--surface-default: var(--color-neutral-1);
+	--surface-subtle: var(--color-neutral-2);
+	--surface-strong: var(--color-neutral-3);
+	--surface-overlay: var(--color-neutral-1);
+	--surface-inverse: var(--color-neutral-8);
+	--surface-scrim: color-mix(in oklch, var(--surface-page) 55%, transparent);
+
+	/* Text. --text-strong (full white in dark) is reserved for the few elements
+     that opt into it, such as display type. */
+	--text-primary: var(--color-neutral-8);
+	--text-secondary: var(--color-neutral-6);
+	--text-tertiary: var(--color-neutral-5);
+	--text-strong: var(--color-neutral-9);
+	--text-inverse: var(--color-neutral-0);
+
+	/* Borders */
+	--border-default: var(--color-neutral-3);
+	--border-strong: var(--color-neutral-4);
+	--border-focus: color-mix(in oklab, var(--text-primary) 80%, transparent);
+
+	/* Tones. accent-primary is neutral; secondary and tertiary are opt-in. */
+	--accent-primary: var(--color-neutral-8);
+	--tone: var(--accent-primary);
+
+	/* z-chart series */
+	--chart-1: var(--accent-secondary);
+	--chart-2: var(--accent-tertiary);
+	--chart-3: var(--color-neutral-7);
+	--chart-4: var(--color-neutral-5);
+	--chart-5: var(--color-neutral-4);
+
+	/* Reference ramps, for app code and docs. Components still read
+     roles. --neutral-N is the short name for the palette; themes keep
+     setting --color-neutral-N, which also stays as a legacy name.
+     Tone ramps blend each tone toward black (0–4) and white (6–9);
+     step 5 is the tone itself. */
+	--neutral-0: var(--color-neutral-0);
+	--neutral-1: var(--color-neutral-1);
+	--neutral-2: var(--color-neutral-2);
+	--neutral-3: var(--color-neutral-3);
+	--neutral-4: var(--color-neutral-4);
+	--neutral-5: var(--color-neutral-5);
+	--neutral-6: var(--color-neutral-6);
+	--neutral-7: var(--color-neutral-7);
+	--neutral-8: var(--color-neutral-8);
+	--neutral-9: var(--color-neutral-9);
+
+	--primary-0: color-mix(in oklab, var(--accent-primary) 0%, black);
+	--primary-1: color-mix(in oklab, var(--accent-primary) 20%, black);
+	--primary-2: color-mix(in oklab, var(--accent-primary) 40%, black);
+	--primary-3: color-mix(in oklab, var(--accent-primary) 60%, black);
+	--primary-4: color-mix(in oklab, var(--accent-primary) 80%, black);
+	--primary-5: var(--accent-primary);
+	--primary-6: color-mix(in oklab, var(--accent-primary) 75%, white);
+	--primary-7: color-mix(in oklab, var(--accent-primary) 50%, white);
+	--primary-8: color-mix(in oklab, var(--accent-primary) 25%, white);
+	--primary-9: color-mix(in oklab, var(--accent-primary) 0%, white);
+
+	--secondary-0: color-mix(in oklab, var(--accent-secondary) 0%, black);
+	--secondary-1: color-mix(in oklab, var(--accent-secondary) 20%, black);
+	--secondary-2: color-mix(in oklab, var(--accent-secondary) 40%, black);
+	--secondary-3: color-mix(in oklab, var(--accent-secondary) 60%, black);
+	--secondary-4: color-mix(in oklab, var(--accent-secondary) 80%, black);
+	--secondary-5: var(--accent-secondary);
+	--secondary-6: color-mix(in oklab, var(--accent-secondary) 75%, white);
+	--secondary-7: color-mix(in oklab, var(--accent-secondary) 50%, white);
+	--secondary-8: color-mix(in oklab, var(--accent-secondary) 25%, white);
+	--secondary-9: color-mix(in oklab, var(--accent-secondary) 0%, white);
+
+	--tertiary-0: color-mix(in oklab, var(--accent-tertiary) 0%, black);
+	--tertiary-1: color-mix(in oklab, var(--accent-tertiary) 20%, black);
+	--tertiary-2: color-mix(in oklab, var(--accent-tertiary) 40%, black);
+	--tertiary-3: color-mix(in oklab, var(--accent-tertiary) 60%, black);
+	--tertiary-4: color-mix(in oklab, var(--accent-tertiary) 80%, black);
+	--tertiary-5: var(--accent-tertiary);
+	--tertiary-6: color-mix(in oklab, var(--accent-tertiary) 75%, white);
+	--tertiary-7: color-mix(in oklab, var(--accent-tertiary) 50%, white);
+	--tertiary-8: color-mix(in oklab, var(--accent-tertiary) 25%, white);
+	--tertiary-9: color-mix(in oklab, var(--accent-tertiary) 0%, white);
+
+	--success-0: color-mix(in oklab, var(--status-success) 0%, black);
+	--success-1: color-mix(in oklab, var(--status-success) 20%, black);
+	--success-2: color-mix(in oklab, var(--status-success) 40%, black);
+	--success-3: color-mix(in oklab, var(--status-success) 60%, black);
+	--success-4: color-mix(in oklab, var(--status-success) 80%, black);
+	--success-5: var(--status-success);
+	--success-6: color-mix(in oklab, var(--status-success) 75%, white);
+	--success-7: color-mix(in oklab, var(--status-success) 50%, white);
+	--success-8: color-mix(in oklab, var(--status-success) 25%, white);
+	--success-9: color-mix(in oklab, var(--status-success) 0%, white);
+
+	--warning-0: color-mix(in oklab, var(--status-warning) 0%, black);
+	--warning-1: color-mix(in oklab, var(--status-warning) 20%, black);
+	--warning-2: color-mix(in oklab, var(--status-warning) 40%, black);
+	--warning-3: color-mix(in oklab, var(--status-warning) 60%, black);
+	--warning-4: color-mix(in oklab, var(--status-warning) 80%, black);
+	--warning-5: var(--status-warning);
+	--warning-6: color-mix(in oklab, var(--status-warning) 75%, white);
+	--warning-7: color-mix(in oklab, var(--status-warning) 50%, white);
+	--warning-8: color-mix(in oklab, var(--status-warning) 25%, white);
+	--warning-9: color-mix(in oklab, var(--status-warning) 0%, white);
+
+	--danger-0: color-mix(in oklab, var(--status-danger) 0%, black);
+	--danger-1: color-mix(in oklab, var(--status-danger) 20%, black);
+	--danger-2: color-mix(in oklab, var(--status-danger) 40%, black);
+	--danger-3: color-mix(in oklab, var(--status-danger) 60%, black);
+	--danger-4: color-mix(in oklab, var(--status-danger) 80%, black);
+	--danger-5: var(--status-danger);
+	--danger-6: color-mix(in oklab, var(--status-danger) 75%, white);
+	--danger-7: color-mix(in oklab, var(--status-danger) 50%, white);
+	--danger-8: color-mix(in oklab, var(--status-danger) 25%, white);
+	--danger-9: color-mix(in oklab, var(--status-danger) 0%, white);
+}
+
+/* More contrast on request: hairlines step up so borders and dividers hold at
+   3:1 against the surface. Placed after the derived layer so it wins. */
+@media (prefers-contrast: more) {
+
+	:root,
+	[data-theme],
+	[data-zest-scope] {
+		--border-default: var(--color-neutral-5);
+		--border-strong: var(--color-neutral-6);
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. Light palette: "haze"
+ * A quiet paper canvas with opaque raised surfaces. Type and control geometry
+ * match dark, so switching schemes never reflows the interface.
+ *
+ * The ramp is authored by hand because its direction differs from dark. Its
+ * steps follow surface roles, not lightness: 0 is the page, 1 lifts above it
+ * (raised surfaces read lighter on paper), 2 recedes below it, 3 and 4 are
+ * lines, 5 to 9 descend into ink. That is why components read roles.
+ * Anything a palette leaves out is inherited from the surrounding theme, not
+ * from dark.
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+	color-scheme: light;
+
+	--color-neutral-0: oklch(0.966 0.006 146);
+	--color-neutral-1: oklch(0.988 0.004 146);
+	--color-neutral-2: oklch(0.951 0.008 146);
+	--color-neutral-3: oklch(0.876 0.011 146);
+	--color-neutral-4: oklch(0.818 0.014 146);
+	--color-neutral-5: oklch(0.628 0.017 146);
+	/* neutral-6 is --text-secondary. 0.528 measured 4.4:1 as small text on the
+     8%-tinted alert and toast surfaces; 0.5 clears 4.5:1 on all of them. */
+	--color-neutral-6: oklch(0.5 0.02 146);
+	--color-neutral-7: oklch(0.408 0.02 146);
+	--color-neutral-8: oklch(0.286 0.02 146);
+	--color-neutral-9: oklch(0.176 0.022 146);
+
+	/* Accents sit a few steps darker than in dark. On paper one colour has to be
+     legible as text and also carry white text as a solid fill, and only the
+     darker end of each hue clears both. Picked against measured contrast on
+     --color-neutral-0, not by eye. */
+	--accent-secondary: oklch(0.525 0.195 288);
+	--accent-tertiary: oklch(0.565 0.2 12);
+	--accent-spark-1: oklch(0.58 0.26 288);
+	--accent-spark-2: oklch(0.62 0.26 355);
+	--accent-spark-3: oklch(0.74 0.19 60);
+	--accent-spark-4: oklch(0.66 0.21 155);
+	--accent-spark-5: oklch(0.64 0.18 235);
+	--status-success: oklch(0.522 0.128 155);
+	--status-warning: oklch(0.55 0.125 70);
+	--status-danger: oklch(0.555 0.195 27);
+
+	--on-accent: #fff;
+	--on-tone-lightness: 1;
+	--on-tone-chroma: 0;
+
+	/* A pale highlighter band tinted with the neutral hue, with ink dark enough
+     to stay comfortable inside it. */
+	--surface-selection: oklch(0.87 0.072 146);
+	--text-selection: oklch(0.22 0.03 146);
+
+	--shadow-overlay:
+		0 8px 24px -8px oklch(0.25 0.02 146 / 0.22), 0 1px 2px oklch(0.25 0.02 146 / 0.06);
+	--shadow-modal: 0 24px 64px -16px oklch(0.25 0.02 146 / 0.32);
+
+	/* Code gets its own light palette rather than the dark one dimmed: held near
+     L 0.5 so every token clears text contrast on the pale code surface while
+     the hues stay recognisably the same language. */
+	--syntax-comment: oklch(0.578 0.019 146);
+	--syntax-keyword: oklch(0.5 0.18 288);
+	--syntax-string: oklch(0.475 0.125 152);
+	--syntax-number: oklch(0.52 0.125 62);
+	--syntax-constant: oklch(0.52 0.16 40);
+	--syntax-function: oklch(0.53 0.185 8);
+	--syntax-class: oklch(0.5 0.115 215);
+	--syntax-property: oklch(0.475 0.09 235);
+	--syntax-operator: oklch(0.55 0.018 146);
+	--syntax-tag: oklch(0.53 0.185 8);
+	--syntax-variable: oklch(0.3 0.02 146);
+	--syntax-regex: oklch(0.475 0.125 168);
+}</style>
+<style>body{margin:0;-webkit-font-smoothing:antialiased}
+/* Editor aliases onto Zest roles. Needs zest tokens.css, with data-theme on the same element. */
+.theme-light{--canvas:var(--surface-default);--surface:var(--surface-page);--surface-2:var(--surface-subtle);--surface-3:var(--surface-strong);--border:var(--border-default);--text:var(--text-primary);--text-muted:var(--text-secondary);--text-faint:var(--text-tertiary);--text-disabled:var(--color-neutral-4);--accent:var(--accent-secondary);--accent-hover:color-mix(in oklch,var(--accent-secondary) 88%,black);--accent-soft:color-mix(in oklch,var(--accent-secondary) 12%,transparent);--accent-text:var(--accent-secondary);--record:var(--status-danger);--record-soft:color-mix(in oklch,var(--status-danger) 12%,transparent);--mute:var(--status-warning);--mute-text:var(--on-accent);--success:var(--status-success);--radius-s:var(--radius-sm);--radius-m:var(--radius-md);--radius-l:var(--radius-lg);--line-faint:color-mix(in oklch,var(--border-default) 45%,transparent);--line-soft:color-mix(in oklch,var(--border-default) 75%,transparent);--hover-wash:color-mix(in oklch,var(--text-primary) 5%,transparent);--hairline-wash:color-mix(in oklch,var(--text-primary) 10%,transparent);--root-row:color-mix(in oklch,var(--accent-secondary) 7%,transparent);--black-key:var(--color-neutral-7);font-family:var(--font-sans);color:var(--text-primary);background:var(--surface-page)}
+button,select,input{font-family:inherit}
+
+/* spec sheet layout */
+.spec-board{display:flex;flex-direction:column;gap:32px;width:1440px;box-sizing:border-box;padding:56px;background:var(--surface)}
+.spec-board-header{display:flex;flex-direction:column;gap:8px;max-width:880px}
+.spec-eyebrow{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--accent-text)}
+.spec-board-title{margin:0;font-size:30px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
+.spec-board-lead{margin:0;font-size:14.5px;line-height:1.6;color:var(--text-muted)}
+.spec-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;align-items:start}
+.spec-grid.isCols2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.spec-grid.isCols4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.spec-card{display:flex;flex-direction:column;gap:18px;padding:24px;box-sizing:border-box;background:var(--canvas);border:1px solid var(--border);border-radius:12px;min-width:0}
+.spec-card.isSpan2{grid-column:span 2}
+.spec-card.isSpan3{grid-column:span 3}
+.spec-card-title{margin:0;font-size:15px;font-weight:600;color:var(--text)}
+.spec-card-lead{margin:4px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-muted)}
+.spec-stage{display:flex;flex-wrap:wrap;align-items:flex-start;gap:20px;padding:20px;border-radius:10px;background:var(--surface)}
+.spec-stage.isWhite{background:var(--canvas);border:1px solid var(--border)}
+.spec-stage.isColumn{flex-direction:column}
+.spec-state{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.spec-caption{font-size:11.5px;font-weight:500;color:var(--text-faint)}
+.spec-rules{display:flex;flex-direction:column;gap:7px;margin:0;padding-left:18px;font-size:12.5px;line-height:1.55;color:var(--text-muted)}
+.spec-rules strong{font-weight:600;color:var(--text)}
+.spec-subhead{margin:0;font-size:12px;font-weight:600;color:var(--text)}
+.spec-table{display:grid;grid-template-columns:auto 1fr;column-gap:16px;row-gap:8px;font-size:12.5px;line-height:1.5;color:var(--text-muted)}
+.spec-table-key{font-weight:600;color:var(--text);white-space:nowrap}
+.spec-pill{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:999px;background:var(--surface-2);color:var(--text-muted);font-size:11px;font-weight:600;white-space:nowrap}
+.spec-pill.isAccent{background:var(--accent-soft);color:var(--accent-text)}
+.kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border:1px solid var(--border-strong);border-radius:4px;background:var(--canvas);color:var(--text);font-size:11px;font-weight:600}
+.swatch-row{display:flex;flex-wrap:wrap;gap:12px}
+.swatch{display:flex;flex-direction:column;gap:6px;width:96px}
+.swatch-chip{height:40px;border-radius:8px;border:1px solid var(--border)}
+.swatch-name{font-size:11.5px;font-weight:600;color:var(--text)}
+.swatch-value{font-size:11px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.measure{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted)}
+.measure-box{flex:none;border:1px dashed var(--accent);border-radius:4px;background:var(--accent-soft)}
+
+/* bars */
+.app-bar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:16px;height:52px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border)}
+.bar-row{display:flex;align-items:center;gap:6px}
+.tool-group{display:flex;align-items:center;gap:2px}
+.toolbar-divider{width:1px;height:20px;margin:0 6px;background:var(--border)}
+
+/* buttons */
+.icon-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);cursor:pointer}
+.icon-button.isHover{background:var(--surface-2);color:var(--text)}
+.icon-button.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.icon-button.isRecord{color:var(--record)}
+.icon-button.isRecord.isActive{background:var(--record-soft);color:var(--record)}
+.icon-button.isTiny{width:22px;height:22px;border-radius:var(--radius-s)}
+.icon-button:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.capture-button{position:relative}
+.capture-badge{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--record)}
+.ghost-button{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;font-weight:500;cursor:pointer}
+.ghost-button.isOpen,.ghost-button.isHover{background:var(--surface-2)}
+.outline-button{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.project-mark{width:18px;height:18px;border-radius:5px;background:var(--text)}
+.chevron{display:flex;color:var(--text-faint)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.status-dot.isOff{background:var(--border-strong)}
+
+/* transport */
+.transport{display:flex;align-items:center;gap:2px;height:38px;padding:0 5px;background:var(--canvas);border:1px solid var(--border);border-radius:var(--radius-l)}
+.play-button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:var(--accent);color:var(--on-accent);cursor:pointer}
+.transport-divider{width:1px;height:18px;margin:0 6px;background:var(--border)}
+.readout{display:flex;align-items:baseline;gap:10px;padding:0 6px;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.readout-primary{min-width:54px;font-size:14px;font-weight:600;color:var(--text)}
+.readout-sep{padding:0 1px;font-weight:500;color:var(--text-faint)}
+.readout-secondary{min-width:44px;font-size:12px;color:var(--text-faint)}
+.tempo-field{display:flex;align-items:center;gap:4px;height:28px;padding:0 6px;border-radius:var(--radius-m)}
+.tempo-field.isHover{background:var(--surface)}
+.tempo-field.isFocus{background:var(--surface);outline:2px solid var(--accent);outline-offset:1px}
+.tempo-input{width:3.2ch;padding:0;border:0;background:transparent;color:var(--text);font:500 14px var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.tempo-unit{font-size:11px;font-weight:500;color:var(--text-faint)}
+
+/* fields */
+.slider{position:relative;flex:1 1 auto;height:20px;min-width:120px}
+.slider-track{position:absolute;top:8px;left:0;right:0;height:4px;border-radius:2px;background:var(--surface-3)}
+.slider-fill{position:absolute;top:8px;left:0;height:4px;border-radius:2px;background:var(--text-muted)}
+.slider-thumb{position:absolute;top:4px;width:12px;height:12px;box-sizing:border-box;margin-left:-6px;border:1.5px solid var(--text-muted);border-radius:50%;background:var(--canvas)}
+.slider.isDimmed .slider-fill{background:var(--border-strong)}
+.slider.isDimmed .slider-thumb{border-color:var(--border-strong)}
+.slider-row{display:flex;align-items:center;gap:8px}
+.value-label{font-size:12px;font-weight:500;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.text-field{width:100%;height:30px;box-sizing:border-box;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:13px;font-weight:500}
+.text-field.isPlaceholder{color:var(--text-faint);font-weight:400}
+.select-field{position:relative;display:flex;align-items:center;width:100%;height:30px;box-sizing:border-box;padding:0 30px 0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500}
+.select-chevron{position:absolute;top:0;right:10px;bottom:0;display:flex;align-items:center;color:var(--text-faint)}
+.native-list{display:flex;flex-direction:column;width:100%;box-sizing:border-box;padding:4px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);font-size:12.5px}
+.native-group{padding:6px 8px 2px;font-size:11px;font-weight:600;color:var(--text-faint)}
+.native-option{display:flex;align-items:center;justify-content:space-between;height:26px;padding:0 8px;border-radius:var(--radius-s);color:var(--text)}
+.native-option.isSelected{background:var(--surface-2);font-weight:500}
+
+/* popovers */
+.popover{display:flex;flex-direction:column;gap:14px;width:272px;box-sizing:border-box;padding:14px;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-md);box-shadow:var(--shadow-overlay);text-align:left}
+.popover.isWide{width:304px}
+.popover.isMenu{gap:0;width:232px;padding:4px}
+.popover.isMenu.isRoomy{width:288px}
+.popover-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.popover-title{font-size:13px;font-weight:600;color:var(--text)}
+.popover-section{display:flex;flex-direction:column;gap:8px}
+.popover-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--text-faint)}
+.section-label{font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.section-header{display:flex;align-items:center;justify-content:space-between}
+.popover-divider{height:1px;margin:0 -14px;background:var(--border)}
+.sub-settings{display:flex;flex-direction:column;gap:12px;padding:12px;border-radius:8px;background:var(--surface)}
+.menu-header{display:flex;flex-direction:column;gap:6px;padding:8px 8px 10px}
+.menu-header.isRow{flex-direction:row;align-items:center;gap:4px;padding:6px 6px 8px}
+.save-status{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-faint)}
+.save-status-icon{display:flex;color:var(--success)}
+.save-status-icon.isWarning{color:var(--record)}
+.menu-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;text-align:left;cursor:pointer}
+.menu-item.isHover{background:var(--surface)}
+.menu-item:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.menu-item-lead{display:flex;align-items:center;gap:10px}
+.menu-item-stack{display:flex;flex-direction:column;gap:1px;padding:6px 0}
+.menu-item-hint{font-size:11.5px;color:var(--text-faint)}
+.menu-item:disabled .menu-item-hint{color:var(--text-disabled)}
+.menu-item-icon{display:flex;color:var(--text-faint)}
+.menu-item-check{display:flex;color:var(--accent-text)}
+.menu-divider{height:1px;margin:4px 0;background:var(--border)}
+.menu-label{padding:8px 10px 4px;font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.project-search{padding:0 6px 6px}
+.tag{padding:2px 6px;border-radius:var(--radius-s);background:var(--surface-2);color:var(--text-muted);font-size:11px;font-weight:500}
+.empty-note{padding:12px 10px;font-size:12px;color:var(--text-faint)}
+.scale-list{max-height:132px;margin:0 -14px;padding:0 14px;overflow:hidden;position:relative}
+
+/* segmented + switch */
+.segmented{display:grid;gap:2px;padding:2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m)}
+.segmented.isCols2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.segmented.isCols3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.segmented.isCols5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.segmented.isCols6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.segmented-option{height:26px;padding:0 6px;border:1px solid transparent;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.segmented-option.isHover{background:var(--surface-2);color:var(--text)}
+.segmented-option.isSelected{background:var(--canvas);border-color:var(--border-strong);color:var(--text)}
+.segmented-option.isLeft{padding:0 8px;text-align:left}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.switch-copy{display:flex;flex-direction:column;gap:2px}
+.switch-label{font-size:13px;font-weight:500;color:var(--text)}
+.switch-hint{font-size:11.5px;color:var(--text-faint)}
+.switch{position:relative;flex-shrink:0;width:30px;height:18px;padding:0;border:0;border-radius:999px;background:var(--border-strong);cursor:pointer}
+.switch.isOn{background:var(--accent)}
+.switch:disabled{opacity:.45;cursor:default}
+.switch-thumb{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--on-accent)}
+.switch.isOn .switch-thumb{left:15px}
+.text-button{padding:0;border:0;background:transparent;color:var(--accent-text);font-size:12px;font-weight:500;cursor:pointer}
+.stepper{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas)}
+.stepper-value{min-width:44px;font-size:12px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums;text-align:center}
+.zoom-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* chips */
+.split-chip{display:inline-flex;align-items:stretch;height:30px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);overflow:hidden}
+.split-chip.isOpen,.split-chip.isHover{border-color:var(--border-strong)}
+.split-chip-toggle{display:inline-flex;align-items:center;justify-content:center;width:30px;padding:0;border:0;border-right:1px solid var(--border);background:transparent;color:var(--text-faint);cursor:pointer}
+.split-chip-toggle.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.split-chip-main{display:inline-flex;align-items:center;gap:6px;padding:0 8px 0 10px;border:0;background:transparent;color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.split-chip.isOpen .split-chip-main{background:var(--surface)}
+.chip{display:inline-flex;align-items:center;gap:7px;height:30px;box-sizing:border-box;padding:0 8px 0 10px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.chip.isHover{border-color:var(--border-strong)}
+.chip.isOpen{border-color:var(--border-strong);background:var(--surface)}
+.chip.isEmpty{color:var(--text-muted)}
+.chip-icon{display:flex;color:var(--text-faint)}
+.chip-value{white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip-suffix{margin-left:1px;color:var(--accent-text)}
+.chip-badge{display:flex;color:var(--accent-text)}
+.view-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);font-size:12.5px;font-weight:500;cursor:pointer}
+.view-chip.isOpen,.view-chip.isHover{background:var(--surface-2);color:var(--text)}
+.view-chip.isActive{background:var(--accent-soft);color:var(--accent-text)}
+
+/* tracks */
+.track-tab{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 5px 0 6px;border-radius:8px}
+.track-tab::after{content:'';position:absolute;inset:0;border-radius:inherit;background:transparent;pointer-events:none}
+.track-tab.isHover::after{background:var(--hover-wash)}
+.track-lead{position:relative;display:flex;align-items:center;justify-content:center;width:18px;height:18px}
+.track-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%}
+.track-dot.isChord{border-radius:2px}
+.track-tab.isSilent .track-dot{opacity:.35}
+.track-tab-close{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);opacity:0}
+.track-tab.isHover .track-tab-close{opacity:1}
+.track-tab.isHover .track-dot{opacity:0}
+.track-tab-name{position:relative;z-index:1;padding:0 2px;border:0;background:transparent;color:var(--text-muted);font-size:13px;font-weight:500;white-space:nowrap}
+.track-tab.isActive .track-tab-name{color:var(--text)}
+.track-tab.isSilent .track-tab-name{color:var(--text-faint)}
+.track-toggles{position:relative;z-index:1;display:flex;align-items:center;gap:4px;height:20px;margin-left:4px;padding-left:8px;border-left:1px solid var(--hairline-wash)}
+.ms-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--radius-s);background:color-mix(in oklch,var(--surface-default) 80%,transparent);color:var(--text-muted);font-size:10.5px;font-weight:600}
+.track-tab .ms-toggle.isMuteOn{background:color-mix(in oklab,var(--status-warning) 38%,var(--surface-default));color:color-mix(in oklab,var(--status-warning) 70%,black);font-weight:700}
+.track-tab .ms-toggle.isSoloOn{background:color-mix(in oklab,var(--accent-secondary) 34%,var(--surface-default));color:color-mix(in oklab,var(--accent-secondary) 75%,black);font-weight:700}
+
+/* roll illustrations */
+.mini-roll{display:flex;width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--canvas)}
+.mini-keys{flex:none;width:44px;border-right:1px solid var(--border)}
+.mini-key{position:relative;display:flex;align-items:center;justify-content:flex-end;height:16px;box-sizing:border-box;padding-right:5px;border-bottom:1px solid var(--line-soft);color:var(--text-faint);font-size:9.5px;font-weight:500}
+.mini-key-black{position:absolute;top:0;bottom:0;left:0;width:24px;border-radius:0 2px 2px 0;background:var(--black-key)}
+.mini-key-label{position:relative}
+.mini-grid{position:relative;flex:1 1 auto}
+.mini-row{height:16px;box-sizing:border-box;border-bottom:1px solid var(--line-faint)}
+.mini-row.isTinted{background:var(--surface)}
+.mini-row.isRoot{background:var(--root-row)}
+.mini-note{position:absolute;height:12px;border-radius:3px;box-sizing:border-box}
+.mini-note.isGhost{background:transparent;border:1px solid;opacity:.45}
+.mini-ruler{position:relative;height:24px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border)}
+.mini-ruler-bar{position:absolute;top:0;bottom:0;padding:5px 0 0 5px;border-left:1px solid var(--border-strong);color:var(--text-muted);font-size:10.5px;font-weight:500}
+.mini-playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent)}
+.mini-playhead-head{position:absolute;bottom:0;width:9px;height:9px;margin-left:-4px;background:var(--accent);clip-path:polygon(0 0,100% 0,50% 100%)}
+.loop-band{position:absolute;top:0;bottom:0;left:0;width:50%;box-sizing:border-box;background:var(--accent-soft);border-top:2px solid var(--accent)}
+.zoom-pad{display:grid;grid-template-columns:24px 28px 24px;grid-template-rows:repeat(3,24px);gap:2px;padding:3px;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-lg);box-shadow:var(--shadow-overlay)}
+.zoom-pad.isIdle{opacity:.8}
+.zoom-pad-button{display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:6px;background:transparent;color:var(--text-muted)}
+.zoom-pad-button.isHover{background:var(--surface-2);color:var(--text)}
+.zoom-pad-button.isStart{grid-column:1;grid-row:1 / span 3}
+.zoom-pad-button.isEnd{grid-column:3;grid-row:1 / span 3}
+.zoom-pad-button.isMiddle{grid-column:2}
+.toast{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:var(--radius-md);background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);color:var(--text-primary);font-size:12.5px;font-weight:500;white-space:nowrap}
+.toast-dot{width:6px;height:6px;border-radius:50%;background:var(--record)}
+.cursor-tag{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:6px;background:var(--text);color:var(--on-accent);font-size:11px;font-weight:500}
+</style>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTU7PB1QTsUX8KYthSQBLyM.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/dm-mono-400.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTR7PB1QTsUX8KYvumzEY2tbZX9.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/dm-mono-500.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>body{margin:0}</style>
+</helmet>
+<div class="theme-light spec-board" style="min-height: 2050px" data-theme="light">
+
+<header class="spec-board-header">
+<span class="spec-eyebrow">Spec 5 of 5</span>
+<h1 class="spec-board-title">Piano roll — gestures, shading, zoom</h1>
+<p class="spec-board-lead">The grid has controls you can't see: dragging the ruler and the keyboard column, row shading driven by the key, ghost notes, and a floating zoom pad. Note editing itself (draw, select, move, resize) is out of scope here.</p>
+</header>
+
+<div class="spec-grid">
+
+<section class="spec-card isSpan2">
+<div><h2 class="spec-card-title">Anatomy</h2><p class="spec-card-lead">Keyboard column on the left, the ruler across the top, the grid underneath. Only the ruler and grid scroll sideways, together.</p></div>
+<div class="mini-roll">
+<div class="mini-keys">
+<div style="height: 24px; background: var(--surface-page); border-bottom: 1px solid var(--border-default)"></div>
+<div class="mini-key"><span class="mini-key-label"></span></div>
+<div class="mini-key"><span class="mini-key-black"></span></div>
+<div class="mini-key"><span class="mini-key-label"></span></div>
+<div class="mini-key"><span class="mini-key-black"></span></div>
+<div class="mini-key"><span class="mini-key-label"></span></div>
+<div class="mini-key"><span class="mini-key-black"></span></div>
+<div class="mini-key" style="border-bottom-color: var(--border-strong)"><span class="mini-key-label">C4</span></div>
+<div class="mini-key"><span class="mini-key-label"></span></div>
+</div>
+<div class="mini-grid">
+<div class="mini-ruler"><div class="loop-band"></div><div class="mini-ruler-bar" style="left: 0%">1</div><div class="mini-ruler-bar" style="left: 25%">2</div><div class="mini-ruler-bar" style="left: 50%">3</div><div class="mini-ruler-bar" style="left: 75%">4</div><div class="mini-playhead-head" style="left: 31%"></div></div>
+<div style="position: relative">
+<div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row isRoot" style="border-bottom-color: var(--border-default)"></div><div class="mini-row isTinted"></div>
+<div class="mini-note" style="left: 2%; width: 10%; top: 34px; background: var(--accent-spark-1)"></div>
+<div class="mini-note" style="left: 14%; width: 6%; top: 18px; background: var(--accent-spark-1)"></div>
+<div class="mini-note" style="left: 26%; width: 14%; top: 66px; background: var(--accent-spark-1)"></div>
+<div class="mini-note isGhost" style="left: 4%; width: 18%; top: 114px; border-color: var(--accent-spark-2)"></div>
+<div class="mini-note" style="left: 52%; width: 9%; top: 50px; background: var(--accent-spark-1)"></div>
+<div class="mini-playhead" style="left: 31%"></div>
+</div>
+</div>
+</div>
+<div class="spec-table">
+<span class="spec-table-key">Keyboard column</span><span>56px wide, canvas, 1px right border. Black keys are 30px dark bars (--color-neutral-7) from the left edge, with the right corners rounded 3px. Labels (10/500, faint) are right-aligned and only on C rows, unless rows are folded.</span>
+<span class="spec-table-key">Ruler</span><span>28px, surface, 1px bottom border. Bar numbers 11/500 muted, 6px inset from each bar line. 6px beat ticks along the bottom.</span>
+<span class="spec-table-key">Rows</span><span>20px default (10–32px). 1px bottom line, border-default at 45%. The line under each C row (octave edge) is stronger (border).</span>
+<span class="spec-table-key">Playhead</span><span>1px accent line through the grid, plus a 9px accent triangle at the bottom of the ruler.</span>
+</div>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Grid lines</h2><p class="spec-card-lead">Three strengths, drawn in order, so the stronger lines sit on top.</p></div>
+<div class="spec-table">
+<span class="spec-table-key"><span style="display: inline-block; width: 28px; height: 3px; background: var(--line-faint); vertical-align: middle"></span></span><span>Subdivision · border-default 45% · spacing set by Grid division × feel</span>
+<span class="spec-table-key"><span style="display: inline-block; width: 28px; height: 3px; background: var(--line-soft); vertical-align: middle"></span></span><span>Beat · border-default 75% · every quarter note</span>
+<span class="spec-table-key"><span style="display: inline-block; width: 28px; height: 3px; background: var(--border-strong); vertical-align: middle"></span></span><span>Bar · border-strong · every bar</span>
+</div>
+<ul class="spec-rules"><li>Lines are 1px. If subdivision lines would be closer than 4px at the current zoom, skip them. <span class="spec-pill isAccent">suggested</span></li></ul>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Ruler gestures</h2><p class="spec-card-lead">The ruler shows a ns-resize cursor. Its tooltip teaches both gestures.</p></div>
+<div class="spec-stage isColumn" style="gap: 12px">
+<span class="cursor-tag">Click → move playhead</span>
+<span class="cursor-tag">Drag ↑ → zoom in on time</span>
+<span class="cursor-tag">Drag ↓ → zoom out</span>
+</div>
+<ul class="spec-rules">
+<li><strong>Mouse down</strong> moves the playhead right away to the nearest 1/16 under the pointer, whether or not it's playing.</li>
+<li><strong>Dragging up or down</strong> from there zooms time: 2% per pixel, from 50% to 400%. Sideways movement does nothing.</li>
+<li>Zoom keeps the point under the pointer still. <span class="spec-pill isAccent">suggested</span></li>
+<li><strong>Tooltip:</strong> "Click to move the playhead, drag up or down to zoom."</li>
+</ul>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Keyboard column gestures</h2><p class="spec-card-lead">The same idea as the ruler, for pitch.</p></div>
+<div class="spec-stage isColumn" style="gap: 12px">
+<span class="cursor-tag">Drag ↑ → taller rows</span>
+<span class="cursor-tag">Drag ↓ → shorter rows</span>
+<span class="cursor-tag">Click a key → preview that note</span>
+</div>
+<ul class="spec-rules">
+<li><strong>Dragging</strong> changes row height by 1px for every 8px moved, from 10px to 32px. ns-resize cursor.</li>
+<li><strong>Clicking a key</strong> without dragging plays that pitch through the current Output. <span class="spec-pill isAccent">suggested</span></li>
+<li>Vertical scroll stays mouse wheel / trackpad.</li>
+</ul>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Zoom pad</h2><p class="spec-card-lead">Floats 16px in from the bottom-right of the grid, above the notes.</p></div>
+<div class="spec-stage" style="gap: 28px; align-items: center">
+<div class="spec-state">
+<div class="zoom-pad isIdle">
+<button class="zoom-pad-button isStart" aria-label="Zoom out in time"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 8h4.5M4 6l2 2-2 2"></path><path d="M14.5 8H10M12 6l-2 2 2 2"></path></svg></button>
+<button class="zoom-pad-button isMiddle" aria-label="Taller rows"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6.5V1.5M6 3.5l2-2 2 2"></path><path d="M8 9.5v5M6 12.5l2 2 2-2"></path></svg></button>
+<button class="zoom-pad-button isMiddle" aria-label="Zoom to fit"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"></path></svg></button>
+<button class="zoom-pad-button isMiddle" aria-label="Shorter rows"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v4.5M6 4l2 2 2-2"></path><path d="M8 14.5V10M6 12l2-2 2 2"></path></svg></button>
+<button class="zoom-pad-button isEnd" aria-label="Zoom in on time"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 8h-5M3.5 6l-2 2 2 2"></path><path d="M9.5 8h5M12.5 6l2 2-2 2"></path></svg></button>
+</div>
+<span class="spec-caption">Idle · 80% opacity</span>
+</div>
+<div class="spec-state">
+<div class="zoom-pad">
+<button class="zoom-pad-button isStart" aria-label="Zoom out in time"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 8h4.5M4 6l2 2-2 2"></path><path d="M14.5 8H10M12 6l-2 2 2 2"></path></svg></button>
+<button class="zoom-pad-button isMiddle" aria-label="Taller rows"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6.5V1.5M6 3.5l2-2 2 2"></path><path d="M8 9.5v5M6 12.5l2 2 2-2"></path></svg></button>
+<button class="zoom-pad-button isMiddle isHover" aria-label="Zoom to fit"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"></path></svg></button>
+<button class="zoom-pad-button isMiddle" aria-label="Shorter rows"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v4.5M6 4l2 2 2-2"></path><path d="M8 14.5V10M6 12l2-2 2 2"></path></svg></button>
+<button class="zoom-pad-button isEnd" aria-label="Zoom in on time"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 8h-5M3.5 6l-2 2 2 2"></path><path d="M9.5 8h5M12.5 6l2 2-2 2"></path></svg></button>
+</div>
+<span class="spec-caption">Hover · 100%, button fills</span>
+</div>
+</div>
+</section>
+
+<section class="spec-card isSpan2">
+<div><h2 class="spec-card-title">Zoom pad — behavior</h2><p class="spec-card-lead">Five buttons laid out like a D-pad: left and right are tall, the middle column has three stacked.</p></div>
+<div class="spec-table">
+<span class="spec-table-key">Left (tall)</span><span>Zoom out on time, −25%, down to 50%. Arrows pointing in. Tooltip "Zoom out in time — or drag the ruler down."</span>
+<span class="spec-table-key">Right (tall)</span><span>Zoom in on time, +25%, up to 400%. Arrows pointing out.</span>
+<span class="spec-table-key">Middle top</span><span>Taller rows, +2px, up to 32px. Vertical arrows pointing out.</span>
+<span class="spec-table-key">Middle center</span><span>Zoom to fit: time back to 100%, and row height chosen so every visible row fits the grid's height (10–32px).</span>
+<span class="spec-table-key">Middle bottom</span><span>Shorter rows, −2px, down to 10px. Vertical arrows pointing in.</span>
+<span class="spec-table-key">Container</span><span>It floats, so it uses Zest's floating surface: surface-overlay, 1px border-default, radius-lg, shadow-overlay. 3px padding, 2px gaps. Columns 24 / 28 / 24px, three 24px rows. Buttons are z-button is-icon kind="ghost" (a Zest addition).</span>
+<span class="spec-table-key">Opacity</span><span>80% at rest, 100% on hover or keyboard focus, with a 150ms fade.</span>
+<span class="spec-table-key">Limits</span><span>A button at its limit is disabled (text-disabled color, no hover).</span>
+</div>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Notes</h2><p class="spec-card-lead">How a note looks depends on its track's state.</p></div>
+<div class="spec-stage isColumn" style="gap: 14px; background: var(--surface-default); border: 1px solid var(--border-default)">
+<div class="bar-row" style="gap: 14px"><div style="width: 96px; height: 18px; border-radius: 3px; background: var(--accent-spark-1)"></div><span class="spec-caption">Active track · solid color</span></div>
+<div class="bar-row" style="gap: 14px"><div style="width: 96px; height: 18px; border-radius: 3px; border: 1px solid var(--accent-spark-2); opacity: .45; box-sizing: border-box"></div><span class="spec-caption">Other tracks · ghost outline, 45%</span></div>
+<div class="bar-row" style="gap: 14px"><div style="width: 96px; height: 18px; border-radius: 3px; background: var(--accent-spark-1); opacity: .3"></div><span class="spec-caption">Silent (muted or not soloed) · 30%</span></div>
+</div>
+<ul class="spec-rules">
+<li><strong>Size:</strong> row height − 2px tall, 1px from the row's top. Width is its length minus 2px, so notes back to back stay separate. Radius 3.</li>
+<li><strong>Drawing order:</strong> ghost notes first, so active notes always sit on top.</li>
+<li>Only active-track notes can be edited. <span class="spec-pill">to decide</span></li>
+</ul>
+</section>
+
+<section class="spec-card isSpan2">
+<div><h2 class="spec-card-title">Row shading</h2><p class="spec-card-lead">The rows tell you about pitch at a glance. Which shading you get depends on the key and on Highlight key.</p></div>
+<div class="spec-grid isCols2" style="gap: 20px">
+<div class="spec-state" style="align-items: stretch">
+<div class="mini-roll">
+<div class="mini-keys"><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key" style="border-bottom-color: var(--border-strong)"><span class="mini-key-label">C4</span></div></div>
+<div class="mini-grid"><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row isRoot"></div></div>
+</div>
+<span class="spec-caption">Key set + Highlight on (C minor)</span>
+<ul class="spec-rules"><li><strong>Root rows:</strong> accent-secondary at 7% over surface-default, a faint violet.</li><li><strong>In-key rows:</strong> canvas white.</li><li><strong>Out-of-key rows:</strong> surface grey.</li></ul>
+</div>
+<div class="spec-state" style="align-items: stretch">
+<div class="mini-roll">
+<div class="mini-keys"><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key"></div><div class="mini-key"><span class="mini-key-black"></span></div><div class="mini-key" style="border-bottom-color: var(--border-strong)"><span class="mini-key-label">C4</span></div></div>
+<div class="mini-grid"><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div><div class="mini-row isTinted"></div><div class="mini-row"></div></div>
+</div>
+<span class="spec-caption">No key, or Highlight off</span>
+<ul class="spec-rules"><li><strong>Black-key rows:</strong> surface grey. White-key rows: canvas.</li><li>This is the standard piano-roll look, so the grid is never blank.</li></ul>
+</div>
+</div>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Follow and loop in the grid</h2><p class="spec-card-lead">How the transport toggles show up in the grid.</p></div>
+<ul class="spec-rules">
+<li><strong>Follow on + playing:</strong> when the playhead gets within 40px of the right edge, the grid jumps so the playhead sits 40px from the left. If you scroll by hand while playing, follow pauses until the next play. <span class="spec-pill isAccent">suggested</span></li>
+<li><strong>Loop on:</strong> the loop band covers its bars in the ruler. Playback wraps from its end back to its start. Dragging the band's edges resizes it. <span class="spec-pill">to decide</span></li>
+<li><strong>Loop off:</strong> no band; playback runs to the end and stops.</li>
+</ul>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Fold — before and after</h2><p class="spec-card-lead">Fold → Notes, with only the rows that hold notes left.</p></div>
+<div class="mini-roll">
+<div class="mini-keys"><div class="mini-key"><span class="mini-key-label">B♭4</span></div><div class="mini-key"><span class="mini-key-label">G4</span></div><div class="mini-key"><span class="mini-key-label">E♭4</span></div><div class="mini-key"><span class="mini-key-label">C4</span></div><div class="mini-key"><span class="mini-key-label">C3</span></div></div>
+<div class="mini-grid" style="position: relative"><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row isRoot"></div><div class="mini-row isRoot"></div>
+<div class="mini-note" style="left: 6%; width: 18%; top: 2px; background: var(--accent-spark-1)"></div><div class="mini-note" style="left: 28%; width: 22%; top: 18px; background: var(--accent-spark-1)"></div><div class="mini-note" style="left: 54%; width: 14%; top: 34px; background: var(--accent-spark-1)"></div><div class="mini-note" style="left: 72%; width: 20%; top: 50px; background: var(--accent-spark-1)"></div><div class="mini-note isGhost" style="left: 4%; width: 40%; top: 66px; border-color: var(--accent-spark-2)"></div></div>
+</div>
+<ul class="spec-rules"><li>Every remaining row gets its note name. Black-key bars still draw for accidentals.</li></ul>
+</section>
+
+<section class="spec-card">
+<div><h2 class="spec-card-title">Toast</h2><p class="spec-card-lead">Short confirmations, centered 16px above the bottom of the grid.</p></div>
+<div class="spec-stage isColumn" style="gap: 10px">
+<div class="toast"><span class="toast-dot" aria-hidden="true"></span>Captured 12 notes to Keys</div>
+<div class="toast">Opened Night drive idea</div>
+</div>
+<ul class="spec-rules">
+<li><strong>Build:</strong> Zest's toaster. Call toaster.show({ id: 'editor', title }) with a <code>&lt;z-toaster position="bottom-center"&gt;</code> on the page. Using one id means a new toast replaces the current one instead of stacking.</li>
+<li><strong>Look:</strong> Zest's floating surface (surface-overlay, border, shadow-overlay). The red dot is only used for capture; use tone="danger" or a leading dot.</li>
+<li><strong>Timing:</strong> about 2.4s (duration: 2400). Zest pauses the countdown on hover.</li>
+<li><strong>Accessibility:</strong> role="status" so screen readers announce it. Never put a button or undo inside it.</li>
+</ul>
+</section>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:2050}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+
+
+</body></html>

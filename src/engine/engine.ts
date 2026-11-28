@@ -55,7 +55,7 @@ export type GhostNoteT = {
 
 export interface Toast {
   message: string;
-  kind: 'info' | 'error' | 'capture';
+  kind: 'info' | 'error' | 'capture' | 'warning';
 }
 
 const engines = new WeakMap<Editor, Engine>();
@@ -127,6 +127,7 @@ export class Engine {
     });
     editor.on('view', ({ view, prev, animate }) => {
       const now = performance.now();
+      if (view.follow && !prev.follow) this.resumeFollow();
       this.view.set(this.targetView(), animate ? this.motion.slow : 0, now);
       if (view.fold !== prev.fold) this.reflowRows(this.motion.slow, now);
       if (view.grid !== prev.grid) this.gridChangedAt = now;
@@ -288,6 +289,10 @@ export class Engine {
     this.isFollowPaused = this.editor.transport.playing;
   };
 
+  resumeFollow() {
+    this.isFollowPaused = false;
+  }
+
   private followPlayhead = () => {
     const editor = this.editor;
     const shouldFollow = editor.transport.playing && editor.view.follow && !this.isFollowPaused && this.viewport.width > 80;
@@ -297,7 +302,7 @@ export class Engine {
     const x = (position - view.scrollTick) * view.pxPerTick;
     const shouldJump = x >= this.viewport.width - 40 || x < 0;
     if (!shouldJump) return;
-    editor.setView({ scrollTick: Math.max(0, position - 40 / view.pxPerTick) });
+    editor.setView({ scrollTick: position - 40 / view.pxPerTick });
   };
 
   /** Scroll to the start and center the rows on the notes (or middle C). */
@@ -316,7 +321,7 @@ export class Engine {
     const rh = editor.view.rowHeight;
     const row = editor.rowMap.virtual[Math.round(pitch)] - h / rh / 2;
     editor.setView(
-      { scrollRow: Math.max(0, Math.min(this.maxScrollRow(rh), row)), ...(resetTime ? { scrollTick: 0 } : {}) },
+      { scrollRow: Math.max(0, Math.min(this.maxScrollRow(rh), row)), ...(resetTime ? { scrollTick: Number.NEGATIVE_INFINITY } : {}) },
       { animate },
     );
   }

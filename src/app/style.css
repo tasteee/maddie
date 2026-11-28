@@ -3,6 +3,7 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior-x: none;
   background: var(--surface-page);
 }
 maddie-editor {
@@ -34,7 +35,7 @@ maddie-editor {
   --maddie-toolbar-height: 52px;
   --maddie-editbar-height: 48px;
   --maddie-ruler-height: 28px;
-  --maddie-keyboard-width: 56px;
+  --maddie-keyboard-width: 64px;
   --maddie-chords-width: min(370px, 48cqw);
 }
 

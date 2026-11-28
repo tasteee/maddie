@@ -2,9 +2,15 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { ScaledT } from '@tasteee/scaled/types';
 import { icons } from './icons';
-import { tokens } from './tokens';
+import { themeRegion, tokens } from './tokens';
 
 type TemplateT = ScaledT.PerformanceTemplateT;
+
+type PatternReset = {
+  originalIds: readonly string[];
+  canRestore: () => boolean;
+  restore: () => void;
+};
 
 const FAVORITES_KEY = 'maddie.patternFavorites.v1';
 const ALL = 'all';
@@ -67,14 +73,24 @@ export const patternRhythm = (template: TemplateT): boolean[] => {
 export class MaddiePatternPicker extends LitElement {
   static styles = [
     tokens,
+    ...themeRegion,
     css`
       :host {
         position: fixed;
         z-index: 20;
-        display: flex;
-        flex-direction: column;
+        display: block;
+        /* The chord bar's host sets pointer-events: none so its empty span doesn't block the roll.
+           Children inherit that, so the picker must opt back in or clicks pass through. */
+        pointer-events: auto;
         width: min(540px, calc(100vw - 16px));
         height: min(470px, calc(100vh - 16px));
+      }
+      /* Always dark, like the chord bar. The theme region re-declares the tokens inside it. */
+      .shell {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
         box-sizing: border-box;
         background: var(--surface-overlay);
         border: 1px solid var(--border-default);
@@ -89,6 +105,20 @@ export class MaddiePatternPicker extends LitElement {
       .title { font-weight: 600; }
       .target { color: var(--_text-muted); }
       .target strong { color: var(--_text); font-weight: 600; }
+      .reset-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+      .opening-pattern {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-2);
+        min-width: 0;
+        white-space: nowrap;
+      }
+      .opening-pattern strong { overflow: hidden; text-overflow: ellipsis; }
       .search {
         width: 100%;
         height: var(--control-height-sm);
@@ -201,6 +231,8 @@ export class MaddiePatternPicker extends LitElement {
   @property({ attribute: false }) preview?: (templateId: string) => (() => void) | undefined;
   @property({ attribute: false }) apply?: (templateId: string) => void;
   @property({ attribute: false }) close?: () => void;
+  /** Optionally capture a reset for multiple chords or for a pattern with saved timing. */
+  @property({ attribute: false }) captureReset?: () => PatternReset;
 
   @state() private list = ALL;
   @state() private query = '';
@@ -208,6 +240,7 @@ export class MaddiePatternPicker extends LitElement {
   @state() private playingId = '';
   @state() private isNoticeFlashing = false;
   private stopPreview?: () => void;
+  private openingPattern?: PatternReset;
   private scrollByList = new Map<string, number>();
 
   connectedCallback() {
@@ -221,6 +254,36 @@ export class MaddiePatternPicker extends LitElement {
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('pointerdown', this.onOutside, true);
     this.stopPreview?.();
+  }
+
+  protected willUpdate() {
+    if (this.openingPattern) return;
+    const id = this.appliedId;
+    this.openingPattern = this.captureReset?.() ?? {
+      originalIds: [id],
+      canRestore: () => this.appliedId !== id,
+      restore: () => this.apply?.(id),
+    };
+  }
+
+  private resetPattern = () => {
+    if (!this.openingPattern?.canRestore()) return;
+    this.cancel();
+    this.openingPattern.restore();
+  };
+
+  private renderReset() {
+    const reset = this.openingPattern;
+    if (!reset) return nothing;
+    const [id, other] = reset.originalIds;
+    const label = other !== undefined ? 'Mixed patterns'
+      : id ? this.templates.find((template) => template.id === id)?.name ?? 'Unavailable pattern'
+      : 'No pattern';
+    return html`<div class="reset-row">
+      <span class="opening-pattern target"><span>At open</span><strong title=${label}>${label}</strong></span>
+      <z-button type="button" size="xs" kind="outline" aria-label="Reset to opening pattern"
+        ?is-disabled=${!reset.canRestore()} @click=${this.resetPattern}>Reset</z-button>
+    </div>`;
   }
 
   private onKey = (event: KeyboardEvent) => {
@@ -356,7 +419,7 @@ export class MaddiePatternPicker extends LitElement {
 
   render() {
     const hasTemplates = this.templates.length > 0;
-    if (!hasTemplates) return html`<div class="empty" role="status">Loading patterns…</div>`;
+    if (!hasTemplates) return html`<div class="shell" data-theme="dark"><div class="empty" role="status">Loading patterns…</div></div>`;
     const categories = [...new Set(this.templates.map((item) => item.category))].sort();
     const listed = this.listed();
     const shown = listed.templates.slice(0, ROW_LIMIT);
@@ -366,11 +429,13 @@ export class MaddiePatternPicker extends LitElement {
     const projectCount = this.projectIds.length;
 
     return html`
+      <div class="shell" data-theme="dark">
       <div class="head">
         <div class="title-row">
           <span class="title">Patterns</span>
           ${hasTarget ? html`<span class="target">${this.targetPrefix} <strong>${this.targetName}</strong></span>` : nothing}
         </div>
+        ${this.renderReset()}
         <input class="search" type="search" placeholder=${`Search ${this.templates.length} patterns`} aria-label="Search patterns"
           .value=${this.query} @input=${(event: InputEvent) => { this.query = (event.target as HTMLInputElement).value; }}>
         ${hasTarget ? nothing : html`<div class=${noticeClass} role="status">Pick a chord to hear patterns.</div>`}
@@ -391,6 +456,7 @@ export class MaddiePatternPicker extends LitElement {
         </div>
       </div>
       <div class="foot"><span>Hold a pattern to hear it. Let go to use it.</span><span>Esc to close</span></div>
+      </div>
     `;
   }
 }

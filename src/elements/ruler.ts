@@ -14,7 +14,7 @@ const LOOP_STRIP = 10;
 const LOOP_HANDLE = 6;
 
 /**
- * Bars and beats. Click to set the play marker (the only place that sets it with the mouse),
+ * Bars and beats. Click to set the insert marker, Shift-click to jump playback,
  * drag to draw a loop, click the loop bar to toggle it.
  */
 @customElement('maddie-ruler')
@@ -26,7 +26,7 @@ export class MaddieRuler extends CanvasElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.title = 'Click to set where playback starts. Drag left or right to draw a loop, or up or down to zoom.';
+    this.title = 'Click to set the insert marker. Shift-click to jump playback. Drag horizontally to draw a loop or vertically to zoom.';
     this.addEventListener('pointerdown', this.onDown);
     this.addEventListener('pointermove', this.onHover);
     this.addEventListener('wheel', this.onWheel, { passive: false });
@@ -93,7 +93,7 @@ export class MaddieRuler extends CanvasElement {
       }
       if (gesture === 'zoom') {
         const pxPerTick = clamp(view.pxPerTick * Math.exp(-dy * 0.02), ...ZOOM_LIMITS.pxPerTick);
-        ed.setView({ pxPerTick, scrollTick: Math.max(0, anchor - point.x / pxPerTick) });
+        ed.setView({ pxPerTick, scrollTick: anchor - point.x / pxPerTick });
         return;
       }
       const edge = hit === 'start' ? loop.start : hit === 'end' ? loop.end : anchor;
@@ -112,12 +112,14 @@ export class MaddieRuler extends CanvasElement {
       move(next);
       this.onHover(next);
       if (gesture) return;
-      if (hit) {
+      if (event.shiftKey) {
+        this.engine?.resumeFollow();
+        void ed.transport.jump(snapMarker(anchor, next.altKey));
+      } else if (hit) {
         ed.transport.setLoop({ enabled: !loop.enabled });
       } else {
-        const markerTick = snapMarker(anchor, next.altKey);
-        ed.transport.setMarker(markerTick);
-        ed.setView({ cursor: markerTick });
+        this.engine?.pauseFollow();
+        ed.setInsertMarker(snapMarker(anchor, next.altKey));
       }
     };
     this.addEventListener('pointermove', move);

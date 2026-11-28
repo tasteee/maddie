@@ -31,6 +31,7 @@ import '@tasteee/zest/z-checkbox';
 import '@tasteee/zest/z-sortable';
 
 import { toaster } from '@tasteee/zest/z-toaster';
+import type { Toast } from '../engine/engine';
 
 const connectShadow = (element: Element | undefined, apply: (root: ShadowRoot, host: Element) => void) => {
   if (!element) return;
@@ -73,7 +74,11 @@ export const styleEditorToast = (element?: Element) => connectShadow(element, (r
     const close = root.querySelector<HTMLElement>('.close');
     if (close) close.style.display = 'none';
     const toast = root.querySelector<HTMLElement>('.toast');
-    if (toast) toast.style.inlineSize = 'max-content';
+    if (toast) {
+      toast.style.inlineSize = 'max-content';
+      // Zest's tint gradient has no accent on neutral toasts.
+      toast.style.backgroundColor = 'var(--surface-overlay)';
+    }
     const title = root.querySelector<HTMLElement>('.title');
     if (!title) return;
     const isCapture = host.hasAttribute('data-capture');
@@ -95,10 +100,10 @@ export const styleEditorToast = (element?: Element) => connectShadow(element, (r
   invert();
 });
 
-export const showEditorToast = (title: string, isCapture = false) => {
+export const showEditorToast = (title: string, kind?: Toast['kind']) => {
   const editors = document.querySelectorAll('maddie-editor');
-  for (const editor of editors) editor.shadowRoot?.querySelector('z-toaster')?.toggleAttribute('data-capture', isCapture);
-  toaster.show({ id: 'editor', title, duration: 2400 });
+  for (const editor of editors) editor.shadowRoot?.querySelector('z-toaster')?.toggleAttribute('data-capture', kind === 'capture');
+  toaster.show({ id: 'editor', title, tone: kind === 'warning' ? 'warning' : 'neutral', duration: 2400 });
 };
 
 const PLAIN_CHORD_WARNING_KEY = 'maddie-skip-plain-chord-warning';

@@ -1,0 +1,2940 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>MIDI editor — redesigned toolbar</title>
+<script>window.__resources = {
+  "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js": "./assets/react.production.min.js",
+  "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js": "./assets/react-dom.production.min.js"
+};</script>
+<script src="./assets/dc-runtime.js"></script>
+<style>/*
+ * Zest design tokens: custom properties only. No element selectors, so this
+ * file never changes the page it is loaded into. Custom properties cross
+ * shadow boundaries, so every z element reads these through var(--token).
+ * Import it once at the document level, not inside a shadow root.
+ *
+ * Page-level behaviour (body colours, scrollbars, selection, the theme fade)
+ * lives in document.css. `ink.css` is both files together.
+ * Fonts are not loaded here; see fonts.css.
+ *
+ * ---------------------------------------------------------------------------
+ * Vocabulary
+ * ---------------------------------------------------------------------------
+ * Colour has three tiers. Components read only the second.
+ *
+ *   Palette   --color-neutral-0..9. Private to the theme: step N plays a
+ *             different part in light and dark. Never read by a component.
+ *             --neutral-0..9 is its short name for app code and docs.
+ *             --{tone}-0..9 (primary, secondary, tertiary, success,
+ *             warning, danger) are reference ramps derived from each tone.
+ *   Roles     --{group}-{role}[-{variant}], noun first. One name per meaning,
+ *             named for the job, never for the hue or the lightness.
+ *   Local     --tone and the --z-* component properties.
+ *
+ *   surface-*   page, default, subtle, strong, overlay, inverse, selection, scrim
+ *   text-*      primary, secondary, tertiary, strong, inverse, selection
+ *   border-*    default, strong, focus
+ *   accent-*    primary, secondary, tertiary  (the three tones), on-accent
+ *   status-*    success, warning, danger
+ *   space-N     0 to 40, N x 4px          font-size-2xs..7xl  one type scale
+ *   radius-xs..xl, full                     line-height-none..relaxed
+ *   chart-1..5  series order is genuinely ordinal
+ *   syntax-*    code highlighting
+ *
+ * A surface always pairs with a text-* and a border-* token. Text on a solid
+ * fill uses on-accent; text on surface-inverse uses text-inverse.
+ *
+ * --tone is the one contextual variable: the colour the current component or
+ * region is painting with. It defaults to accent-primary, and a component
+ * overrides it for its own tone variants (primary, secondary, tertiary,
+ * success, warning, danger). Everything inside inherits it.
+ *
+ * ---------------------------------------------------------------------------
+ * Depth
+ * ---------------------------------------------------------------------------
+ * Zest is flat. Resting UI (cards, fields, buttons, switches) is a surface plus
+ * a 1px border, with no shadow. A shadow exists only for things that float
+ * above arbitrary content and must separate from it:
+ *
+ *   --shadow-overlay   menus, popovers, tooltips, toasts   (surface-overlay)
+ *   --shadow-modal     dialogs, sheets, drawers
+ *
+ * They are theme-specific: black shadows barely read on dark surfaces, so dark
+ * uses a higher alpha and leans on the border. Pressed and selected states
+ * change surface, never elevation. Focus is a ring (border-focus), not a shadow.
+ *
+ * ---------------------------------------------------------------------------
+ * Layers, in source order
+ * ---------------------------------------------------------------------------
+ *   1. Inputs     Scale and static values, declared once on :root. Nothing
+ *                 derives from them at a theme boundary, so a value set on
+ *                 :root survives inside every themed region.
+ *   2. Dark       The dark palette: the neutral ramp and every value that
+ *                 differs per theme (accents, status, selection, syntax,
+ *                 shadows).
+ *   3. Derived    Everything computed from layers 1 and 2: scales and roles.
+ *   4. Light      The light palette, authored by hand. It declares only what
+ *                 the dark palette declares, so it never ties with layer 3.
+ *
+ * Why derivation targets `:root, [data-theme], [data-zest-scope]`
+ * ---------------------------------------------------------------
+ * A custom property is substituted where it is declared, not where it is
+ * used. After `--text-primary: var(--color-neutral-8)` resolves on <html>,
+ * descendants inherit the resulting colour, not the expression. Changing
+ * `--color-neutral-8` further down the tree does nothing to them.
+ *
+ * So any element that changes an input (a theme's palette, --base-radius,
+ * --base-spacing, --base-font-size) must also re-run the derivations. Two
+ * kinds of element do that:
+ *
+ *   [data-theme]       a themed region. Sets a palette and re-derives.
+ *   [data-zest-scope]  a region that only changes the scale inputs. It keeps
+ *                      the inherited palette and re-derives against its own
+ *                      --base-* values.
+ *
+ * Without one of those attributes, a container that sets --base-radius
+ * changes the input but inherits the radius already computed on <html>.
+ *
+ * Contract for contributors:
+ *  - Components read roles, never the numbered neutrals.
+ *  - Values that differ per theme belong in a palette layer, never in the
+ *    derived layer. A scope element re-declares everything in the derived
+ *    layer, which would reset a theme's value back to the dark one.
+ *  - Palette overrides go on the theme: `[data-theme="light"] { ... }`.
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. Inputs
+ * :where() keeps specificity at zero, so any rule a consumer writes wins
+ * regardless of stylesheet order.
+ * ------------------------------------------------------------------------- */
+:where(:root) {
+	/* Type families. Themes re-face by overriding these names; the fallback
+     stacks in --font-sans / --font-mono / --font-serif stay intact. */
+	--base-sans-font-family: "Google Sans";
+	--base-mono-font-family: "DM Mono";
+	--base-serif-font-family: "DM Serif Display";
+
+	/* Scale dials. Each one drives a whole scale below; set it on :root, or on a
+     [data-zest-scope] element to rescale that region only. */
+	--base-spacing: 0.25rem;
+	--base-radius: 0.625rem;
+	--base-font-size: 16px;
+
+	/* Tint of the neutral ramp, as plain numbers so every browser resolves the
+     ramp identically. */
+	--base-neutral-hue: 146.4;
+	--base-neutral-chroma: 0.0137;
+
+	/* Heading face: the one type tier a theme may re-face. Only z-display and
+     z-heading read these. */
+	--font-heading-weight: 700;
+	--font-heading-settings: normal;
+	/* Multiplies the heading scale's negative tracking. High-contrast serifs
+     need much less than a geometric sans. */
+	--font-heading-tracking-scale: 1;
+
+	--font-weight-regular: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--font-weight-bold: 700;
+
+	/* Unitless, so they follow whatever font size an element ends up with.
+     none: icons and single-line chips. tight: headings. snug: dense UI text.
+     normal: body copy. relaxed: long-form reading. */
+	--line-height-none: 1;
+	--line-height-tight: 1.2;
+	--line-height-snug: 1.4;
+	--line-height-normal: 1.6;
+	--line-height-relaxed: 1.75;
+
+	/* Control metrics: one height scale for every interactive control, so an
+     input, select, button and toggle side by side agree. Padding stays
+     per-component. */
+	--control-height-sm: 2rem;
+	--control-height-md: 2.5rem;
+	--control-height-lg: 3rem;
+	--control-disabled-opacity: 0.5;
+
+	/* Field composition: label, gap, control. Fixing the first two makes every
+     labelled control in a row the same total height. */
+	--field-label-height: 1.25rem;
+	--field-gap: 0.25rem;
+
+	/* Motion. Durations step by surface size: micro feedback, floating panels,
+     edge-anchored sheets. Exits run at about 70% of their entrance. */
+	--motion-instant: 80ms;
+	--motion-fast: 140ms;
+	--motion-base: 200ms;
+	--motion-slow: 280ms;
+	--motion-exit-fast: 100ms;
+	--motion-exit-base: 140ms;
+	--motion-exit-slow: 200ms;
+	--ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-exit: cubic-bezier(0.3, 0, 0.7, 0.4);
+	--ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+	--motion-distance-sm: 4px;
+	--motion-distance-md: 8px;
+	--motion-scale-from: 0.97;
+	--motion-stagger: 30ms;
+	/* Components multiply their travel offsets by this. */
+	--motion-travel: 1;
+
+	/* Theme change: content fades out, the theme swaps, content fades back in.
+     Out is slow enough to confirm the click; in is brisk. shared/theme.ts reads
+     the fade-out value to time the swap. A zero fade-out applies the theme
+     immediately. */
+	--theme-fade-out-duration: 0.2s;
+	--theme-fade-in-duration: 0.35s;
+
+	/* Stacking for floating UI that escapes its parent. Local stacking inside a
+     component (button-group overlap, range thumbs) stays a plain integer.
+     Modals use the top layer and need no z-index. */
+	--z-toolbar: 40;
+	--z-menu: 50;
+	--z-overlay: 60;
+	--z-toast: 1000;
+}
+
+/* Reduced motion drops travel and scale. The theme fade is also retimed to
+   zero, which applies the theme immediately. Opacity is not movement, but a
+   full-page fade is the most visible animation zest runs, and a consumer who
+   wants it back sets the two durations. */
+@media (prefers-reduced-motion: reduce) {
+	:where(:root) {
+		--motion-travel: 0;
+		--motion-scale-from: 1;
+		--theme-fade-out-duration: 0s;
+		--theme-fade-in-duration: 0s;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Dark palette (the default)
+ * ------------------------------------------------------------------------- */
+:where(:root),
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Neutral ramp. Lightness climbs 0 to 9: 0 is the page floor, 1 and 2 are
+     surfaces above it, 3 and 4 are lines, 5 to 9 step up into ink. */
+	--color-neutral-0: oklch(0.1609 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-1: oklch(0.21 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-2: oklch(0.25 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-3: oklch(0.31 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-4: oklch(0.4 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-5: oklch(0.55 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-6: oklch(0.68 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-7: oklch(0.8 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-8: oklch(0.9 var(--base-neutral-chroma) var(--base-neutral-hue));
+	--color-neutral-9: #fff;
+
+	/* The chrome is neutral on purpose: the user's content supplies the colour,
+     so secondary and tertiary are opt-in tones, never the default look. */
+	--accent-secondary: lab(60 40.17 -57.68);
+	--accent-tertiary: lch(62.44 70.29 0.86 / 1);
+	/* Spark tones: bright, decorative hues for shimmer and glow
+     effects (z-spinner). Not for text; too light to read on neutral-0. */
+	--accent-spark-1: oklch(0.74 0.17 288);
+	--accent-spark-2: oklch(0.74 0.2 350);
+	--accent-spark-3: oklch(0.82 0.17 70);
+	--accent-spark-4: oklch(0.8 0.19 155);
+	--accent-spark-5: oklch(0.8 0.15 220);
+	--status-success: lch(62 58 145 / 1);
+	--status-warning: lch(72 78 76 / 1);
+	--status-danger: lch(58 72 37 / 1);
+
+	/* Text on a solid accent or status fill, and the lightness/chroma used to
+     derive a readable label from a tone colour (z-button). */
+	--on-accent: var(--color-neutral-0);
+	--on-tone-lightness: 0.2;
+	--on-tone-chroma: 0.5;
+
+	/* Selection: a pale band with near-black ink instead of the browser blue. */
+	--surface-selection: var(--color-neutral-7);
+	--text-selection: var(--color-neutral-1);
+
+	/* Floating shadows, tinted with the neutral hue rather than pure black. */
+	--shadow-overlay: 0 8px 24px -8px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.7);
+	--shadow-modal: 0 24px 64px -16px oklch(0.06 var(--base-neutral-chroma) var(--base-neutral-hue) / 0.85);
+
+	/* Syntax highlighting for z-code-block, tuned for the near-black code
+     surface (--color-neutral-1). Override any token to retheme code. */
+	--syntax-comment: var(--color-neutral-5);
+	--syntax-keyword: oklch(from var(--accent-secondary) 0.84 0.16 h);
+	--syntax-string: oklch(0.79 0.13 152);
+	--syntax-number: oklch(0.82 0.12 78);
+	--syntax-constant: oklch(0.76 0.16 48);
+	--syntax-function: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-class: oklch(0.83 0.11 200);
+	--syntax-property: oklch(0.86 0.07 222);
+	--syntax-operator: var(--color-neutral-6);
+	--syntax-tag: oklch(from var(--accent-tertiary) 0.87 0.16 h);
+	--syntax-variable: var(--color-neutral-8);
+	--syntax-regex: oklch(0.79 0.13 168);
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Derived tokens
+ * Re-run at every theme and scope boundary. Declares nothing that a palette
+ * layer sets per theme.
+ * ------------------------------------------------------------------------- */
+:root,
+[data-theme],
+[data-zest-scope] {
+	/* Type scale: one named scale, 2xs to 7xl. Every step follows
+     --base-font-size, so one dial rescales all text. rem keeps the user's
+     browser font-size setting in play. */
+	--font-size-2xs: calc(0.6875rem * (var(--base-font-size) / 16px));
+	--font-size-xs: calc(0.75rem * (var(--base-font-size) / 16px));
+	--font-size-sm: calc(0.875rem * (var(--base-font-size) / 16px));
+	--font-size-md: calc(1rem * (var(--base-font-size) / 16px));
+	--font-size-lg: calc(1.125rem * (var(--base-font-size) / 16px));
+	--font-size-xl: calc(1.25rem * (var(--base-font-size) / 16px));
+	--font-size-2xl: calc(1.5rem * (var(--base-font-size) / 16px));
+	--font-size-3xl: calc(2rem * (var(--base-font-size) / 16px));
+	--font-size-4xl: calc(2.5rem * (var(--base-font-size) / 16px));
+	--font-size-5xl: calc(3rem * (var(--base-font-size) / 16px));
+	--font-size-6xl: calc(3.5rem * (var(--base-font-size) / 16px));
+	--font-size-7xl: calc(4rem * (var(--base-font-size) / 16px));
+
+
+	--font-sans: var(--base-sans-font-family), "Google Sans Fallback", system-ui, sans-serif;
+	--font-mono: var(--base-mono-font-family), "Geist Mono", "Fira Code", monospace;
+	--font-serif:
+		var(--base-serif-font-family), "Iowan Old Style", Georgia, "Times New Roman", serif;
+	--font-heading: var(--font-sans);
+
+	/* Spacing: one numeric scale, --space-N = N x --base-spacing (4px), with -5 half steps. The
+     size keywords on layout elements (gap="md") resolve to steps of it. */
+	--space-0: 0;
+	--space-0-5: calc(var(--base-spacing) * 0.5);
+	--space-1: calc(var(--base-spacing) * 1);
+	--space-1-5: calc(var(--base-spacing) * 1.5);
+	--space-2: calc(var(--base-spacing) * 2);
+	--space-2-5: calc(var(--base-spacing) * 2.5);
+	--space-3: calc(var(--base-spacing) * 3);
+	--space-3-5: calc(var(--base-spacing) * 3.5);
+	--space-4: calc(var(--base-spacing) * 4);
+	--space-5: calc(var(--base-spacing) * 5);
+	--space-6: calc(var(--base-spacing) * 6);
+	--space-7: calc(var(--base-spacing) * 7);
+	--space-8: calc(var(--base-spacing) * 8);
+	--space-9: calc(var(--base-spacing) * 9);
+	--space-10: calc(var(--base-spacing) * 10);
+	--space-11: calc(var(--base-spacing) * 11);
+	--space-12: calc(var(--base-spacing) * 12);
+	--space-14: calc(var(--base-spacing) * 14);
+	--space-16: calc(var(--base-spacing) * 16);
+	--space-20: calc(var(--base-spacing) * 20);
+	--space-24: calc(var(--base-spacing) * 24);
+	--space-28: calc(var(--base-spacing) * 28);
+	--space-32: calc(var(--base-spacing) * 32);
+	--space-36: calc(var(--base-spacing) * 36);
+	--space-40: calc(var(--base-spacing) * 40);
+
+	/* Radius scale */
+	--radius: var(--base-radius);
+	--radius-xs: max(0px, calc(var(--radius) - 8px));
+	--radius-sm: max(0px, calc(var(--radius) - 4px));
+	--radius-md: max(0px, calc(var(--radius) - 2px));
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+	--radius-full: 9999px;
+
+	/* Surfaces */
+	--surface-page: var(--color-neutral-0);
+	--surface-default: var(--color-neutral-1);
+	--surface-subtle: var(--color-neutral-2);
+	--surface-strong: var(--color-neutral-3);
+	--surface-overlay: var(--color-neutral-1);
+	--surface-inverse: var(--color-neutral-8);
+	--surface-scrim: color-mix(in oklch, var(--surface-page) 55%, transparent);
+
+	/* Text. --text-strong (full white in dark) is reserved for the few elements
+     that opt into it, such as display type. */
+	--text-primary: var(--color-neutral-8);
+	--text-secondary: var(--color-neutral-6);
+	--text-tertiary: var(--color-neutral-5);
+	--text-strong: var(--color-neutral-9);
+	--text-inverse: var(--color-neutral-0);
+
+	/* Borders */
+	--border-default: var(--color-neutral-3);
+	--border-strong: var(--color-neutral-4);
+	--border-focus: color-mix(in oklab, var(--text-primary) 80%, transparent);
+
+	/* Tones. accent-primary is neutral; secondary and tertiary are opt-in. */
+	--accent-primary: var(--color-neutral-8);
+	--tone: var(--accent-primary);
+
+	/* z-chart series */
+	--chart-1: var(--accent-secondary);
+	--chart-2: var(--accent-tertiary);
+	--chart-3: var(--color-neutral-7);
+	--chart-4: var(--color-neutral-5);
+	--chart-5: var(--color-neutral-4);
+
+	/* Reference ramps, for app code and docs. Components still read
+     roles. --neutral-N is the short name for the palette; themes keep
+     setting --color-neutral-N, which also stays as a legacy name.
+     Tone ramps blend each tone toward black (0–4) and white (6–9);
+     step 5 is the tone itself. */
+	--neutral-0: var(--color-neutral-0);
+	--neutral-1: var(--color-neutral-1);
+	--neutral-2: var(--color-neutral-2);
+	--neutral-3: var(--color-neutral-3);
+	--neutral-4: var(--color-neutral-4);
+	--neutral-5: var(--color-neutral-5);
+	--neutral-6: var(--color-neutral-6);
+	--neutral-7: var(--color-neutral-7);
+	--neutral-8: var(--color-neutral-8);
+	--neutral-9: var(--color-neutral-9);
+
+	--primary-0: color-mix(in oklab, var(--accent-primary) 0%, black);
+	--primary-1: color-mix(in oklab, var(--accent-primary) 20%, black);
+	--primary-2: color-mix(in oklab, var(--accent-primary) 40%, black);
+	--primary-3: color-mix(in oklab, var(--accent-primary) 60%, black);
+	--primary-4: color-mix(in oklab, var(--accent-primary) 80%, black);
+	--primary-5: var(--accent-primary);
+	--primary-6: color-mix(in oklab, var(--accent-primary) 75%, white);
+	--primary-7: color-mix(in oklab, var(--accent-primary) 50%, white);
+	--primary-8: color-mix(in oklab, var(--accent-primary) 25%, white);
+	--primary-9: color-mix(in oklab, var(--accent-primary) 0%, white);
+
+	--secondary-0: color-mix(in oklab, var(--accent-secondary) 0%, black);
+	--secondary-1: color-mix(in oklab, var(--accent-secondary) 20%, black);
+	--secondary-2: color-mix(in oklab, var(--accent-secondary) 40%, black);
+	--secondary-3: color-mix(in oklab, var(--accent-secondary) 60%, black);
+	--secondary-4: color-mix(in oklab, var(--accent-secondary) 80%, black);
+	--secondary-5: var(--accent-secondary);
+	--secondary-6: color-mix(in oklab, var(--accent-secondary) 75%, white);
+	--secondary-7: color-mix(in oklab, var(--accent-secondary) 50%, white);
+	--secondary-8: color-mix(in oklab, var(--accent-secondary) 25%, white);
+	--secondary-9: color-mix(in oklab, var(--accent-secondary) 0%, white);
+
+	--tertiary-0: color-mix(in oklab, var(--accent-tertiary) 0%, black);
+	--tertiary-1: color-mix(in oklab, var(--accent-tertiary) 20%, black);
+	--tertiary-2: color-mix(in oklab, var(--accent-tertiary) 40%, black);
+	--tertiary-3: color-mix(in oklab, var(--accent-tertiary) 60%, black);
+	--tertiary-4: color-mix(in oklab, var(--accent-tertiary) 80%, black);
+	--tertiary-5: var(--accent-tertiary);
+	--tertiary-6: color-mix(in oklab, var(--accent-tertiary) 75%, white);
+	--tertiary-7: color-mix(in oklab, var(--accent-tertiary) 50%, white);
+	--tertiary-8: color-mix(in oklab, var(--accent-tertiary) 25%, white);
+	--tertiary-9: color-mix(in oklab, var(--accent-tertiary) 0%, white);
+
+	--success-0: color-mix(in oklab, var(--status-success) 0%, black);
+	--success-1: color-mix(in oklab, var(--status-success) 20%, black);
+	--success-2: color-mix(in oklab, var(--status-success) 40%, black);
+	--success-3: color-mix(in oklab, var(--status-success) 60%, black);
+	--success-4: color-mix(in oklab, var(--status-success) 80%, black);
+	--success-5: var(--status-success);
+	--success-6: color-mix(in oklab, var(--status-success) 75%, white);
+	--success-7: color-mix(in oklab, var(--status-success) 50%, white);
+	--success-8: color-mix(in oklab, var(--status-success) 25%, white);
+	--success-9: color-mix(in oklab, var(--status-success) 0%, white);
+
+	--warning-0: color-mix(in oklab, var(--status-warning) 0%, black);
+	--warning-1: color-mix(in oklab, var(--status-warning) 20%, black);
+	--warning-2: color-mix(in oklab, var(--status-warning) 40%, black);
+	--warning-3: color-mix(in oklab, var(--status-warning) 60%, black);
+	--warning-4: color-mix(in oklab, var(--status-warning) 80%, black);
+	--warning-5: var(--status-warning);
+	--warning-6: color-mix(in oklab, var(--status-warning) 75%, white);
+	--warning-7: color-mix(in oklab, var(--status-warning) 50%, white);
+	--warning-8: color-mix(in oklab, var(--status-warning) 25%, white);
+	--warning-9: color-mix(in oklab, var(--status-warning) 0%, white);
+
+	--danger-0: color-mix(in oklab, var(--status-danger) 0%, black);
+	--danger-1: color-mix(in oklab, var(--status-danger) 20%, black);
+	--danger-2: color-mix(in oklab, var(--status-danger) 40%, black);
+	--danger-3: color-mix(in oklab, var(--status-danger) 60%, black);
+	--danger-4: color-mix(in oklab, var(--status-danger) 80%, black);
+	--danger-5: var(--status-danger);
+	--danger-6: color-mix(in oklab, var(--status-danger) 75%, white);
+	--danger-7: color-mix(in oklab, var(--status-danger) 50%, white);
+	--danger-8: color-mix(in oklab, var(--status-danger) 25%, white);
+	--danger-9: color-mix(in oklab, var(--status-danger) 0%, white);
+}
+
+/* More contrast on request: hairlines step up so borders and dividers hold at
+   3:1 against the surface. Placed after the derived layer so it wins. */
+@media (prefers-contrast: more) {
+
+	:root,
+	[data-theme],
+	[data-zest-scope] {
+		--border-default: var(--color-neutral-5);
+		--border-strong: var(--color-neutral-6);
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. Light palette: "haze"
+ * A quiet paper canvas with opaque raised surfaces. Type and control geometry
+ * match dark, so switching schemes never reflows the interface.
+ *
+ * The ramp is authored by hand because its direction differs from dark. Its
+ * steps follow surface roles, not lightness: 0 is the page, 1 lifts above it
+ * (raised surfaces read lighter on paper), 2 recedes below it, 3 and 4 are
+ * lines, 5 to 9 descend into ink. That is why components read roles.
+ * Anything a palette leaves out is inherited from the surrounding theme, not
+ * from dark.
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+	color-scheme: light;
+
+	--color-neutral-0: oklch(0.966 0.006 146);
+	--color-neutral-1: oklch(0.988 0.004 146);
+	--color-neutral-2: oklch(0.951 0.008 146);
+	--color-neutral-3: oklch(0.876 0.011 146);
+	--color-neutral-4: oklch(0.818 0.014 146);
+	--color-neutral-5: oklch(0.628 0.017 146);
+	/* neutral-6 is --text-secondary. 0.528 measured 4.4:1 as small text on the
+     8%-tinted alert and toast surfaces; 0.5 clears 4.5:1 on all of them. */
+	--color-neutral-6: oklch(0.5 0.02 146);
+	--color-neutral-7: oklch(0.408 0.02 146);
+	--color-neutral-8: oklch(0.286 0.02 146);
+	--color-neutral-9: oklch(0.176 0.022 146);
+
+	/* Accents sit a few steps darker than in dark. On paper one colour has to be
+     legible as text and also carry white text as a solid fill, and only the
+     darker end of each hue clears both. Picked against measured contrast on
+     --color-neutral-0, not by eye. */
+	--accent-secondary: oklch(0.525 0.195 288);
+	--accent-tertiary: oklch(0.565 0.2 12);
+	--accent-spark-1: oklch(0.58 0.26 288);
+	--accent-spark-2: oklch(0.62 0.26 355);
+	--accent-spark-3: oklch(0.74 0.19 60);
+	--accent-spark-4: oklch(0.66 0.21 155);
+	--accent-spark-5: oklch(0.64 0.18 235);
+	--status-success: oklch(0.522 0.128 155);
+	--status-warning: oklch(0.55 0.125 70);
+	--status-danger: oklch(0.555 0.195 27);
+
+	--on-accent: #fff;
+	--on-tone-lightness: 1;
+	--on-tone-chroma: 0;
+
+	/* A pale highlighter band tinted with the neutral hue, with ink dark enough
+     to stay comfortable inside it. */
+	--surface-selection: oklch(0.87 0.072 146);
+	--text-selection: oklch(0.22 0.03 146);
+
+	--shadow-overlay:
+		0 8px 24px -8px oklch(0.25 0.02 146 / 0.22), 0 1px 2px oklch(0.25 0.02 146 / 0.06);
+	--shadow-modal: 0 24px 64px -16px oklch(0.25 0.02 146 / 0.32);
+
+	/* Code gets its own light palette rather than the dark one dimmed: held near
+     L 0.5 so every token clears text contrast on the pale code surface while
+     the hues stay recognisably the same language. */
+	--syntax-comment: oklch(0.578 0.019 146);
+	--syntax-keyword: oklch(0.5 0.18 288);
+	--syntax-string: oklch(0.475 0.125 152);
+	--syntax-number: oklch(0.52 0.125 62);
+	--syntax-constant: oklch(0.52 0.16 40);
+	--syntax-function: oklch(0.53 0.185 8);
+	--syntax-class: oklch(0.5 0.115 215);
+	--syntax-property: oklch(0.475 0.09 235);
+	--syntax-operator: oklch(0.55 0.018 146);
+	--syntax-tag: oklch(0.53 0.185 8);
+	--syntax-variable: oklch(0.3 0.02 146);
+	--syntax-regex: oklch(0.475 0.125 168);
+}</style>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTU7PB1QTsUX8KYthSQBLyM.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/dm-mono-400.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/dmmono/v16/aFTR7PB1QTsUX8KYvumzEY2tbZX9.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'DM Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/dm-mono-500.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* arabic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjcUvaYr.woff2) format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC, U+102E0-102FB, U+10E60-10E7E, U+10EC2-10EC7, U+10EC9-10EEE, U+10EF0-10EFF, U+1EE00-1EE03, U+1EE05-1EE1F, U+1EE21-1EE22, U+1EE24, U+1EE27, U+1EE29-1EE32, U+1EE34-1EE37, U+1EE39, U+1EE3B, U+1EE42, U+1EE47, U+1EE49, U+1EE4B, U+1EE4D-1EE4F, U+1EE51-1EE52, U+1EE54, U+1EE57, U+1EE59, U+1EE5B, U+1EE5D, U+1EE5F, U+1EE61-1EE62, U+1EE64, U+1EE67-1EE6A, U+1EE6C-1EE72, U+1EE74-1EE77, U+1EE79-1EE7C, U+1EE7E, U+1EE80-1EE89, U+1EE8B-1EE9B, U+1EEA1-1EEA3, U+1EEA5-1EEA9, U+1EEAB-1EEBB, U+1EEF0-1EEF1;
+}
+/* armenian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiIUvaYr.woff2) format('woff2');
+  unicode-range: U+0308, U+0530-058F, U+2010, U+2024, U+25CC, U+FB13-FB17;
+}
+/* bengali */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiAUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+1CD0, U+1CD2, U+1CD5-1CD6, U+1CD8, U+1CE1, U+1CEA, U+1CED, U+1CF2, U+1CF5-1CF7, U+200C-200D, U+20B9, U+25CC, U+A8F1, U+11DF0-11DF1;
+}
+/* canadian-aboriginal */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPh0UvaYr.woff2) format('woff2');
+  unicode-range: U+02C7, U+02D8-02D9, U+02DB, U+0307, U+1400-167F, U+18B0-18F5, U+25CC, U+11AB0-11ABF;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj8UvaYr.woff2) format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjYUvaYr.woff2) format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjMUvaYr.woff2) format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* ethiopic */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiMUvaYr.woff2) format('woff2');
+  unicode-range: U+030E, U+1200-1399, U+2D80-2DDE, U+AB01-AB2E, U+1E7E0-1E7E6, U+1E7E8-1E7EB, U+1E7ED-1E7EE, U+1E7F0-1E7FE;
+}
+/* georgian */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi0UvaYr.woff2) format('woff2');
+  unicode-range: U+0589, U+10A0-10FF, U+1C90-1CBA, U+1CBD-1CBF, U+205A, U+2D00-2D2F, U+2E31;
+}
+/* greek-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj4UvaYr.woff2) format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+/* greek */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjEUvaYr.woff2) format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* gujarati */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPikUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A80-0AFF, U+200C-200D, U+20B9, U+25CC, U+A830-A839;
+}
+/* gurmukhi */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPhEUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0A01-0A76, U+200C-200D, U+20B9, U+25CC, U+262C, U+A830-A839;
+}
+/* hebrew */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjAUvaYr.woff2) format('woff2');
+  unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F;
+}
+/* kannada */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPigUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C80-0CF3, U+1CD0, U+1CD2-1CD3, U+1CDA, U+1CF2, U+1CF4, U+200C-200D, U+20B9, U+25CC, U+A830-A835;
+}
+/* khmer */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjkUvaYr.woff2) format('woff2');
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+/* lao */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjsUvaYr.woff2) format('woff2');
+  unicode-range: U+0E81-0EDF, U+200C-200D, U+25CC;
+}
+/* malayalam */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPioUvaYr.woff2) format('woff2');
+  unicode-range: U+0307, U+0323, U+0951-0952, U+0964-0965, U+0B83, U+0D00-0D7F, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC, U+A830-A832;
+}
+/* oriya */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPisUvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B01-0B77, U+1CDA, U+1CF2, U+200C-200D, U+20B9, U+25CC;
+}
+/* sinhala */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi8UvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0D81-0DF4, U+1CF2, U+200C-200D, U+25CC, U+111E1-111F4;
+}
+/* symbols */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPlwUvaYr.woff2) format('woff2');
+  unicode-range: U+0001-000C, U+000E-001F, U+007F-009F, U+20DD-20E0, U+20E2-20E4, U+2150-218F, U+2190, U+2192, U+2194-2199, U+21AF, U+21E6-21F0, U+21F3, U+2218-2219, U+2299, U+22C4-22C6, U+2300-243F, U+2440-244A, U+2460-24FF, U+25A0-27BF, U+2800-28FF, U+2921-2922, U+2981, U+29BF, U+29EB, U+2B00-2BFF, U+4DC0-4DFF, U+FFF9-FFFB, U+10140-1018E, U+10190-1019C, U+101A0, U+101D0-101FD, U+102E0-102FB, U+10E60-10E7E, U+1D2C0-1D2D3, U+1D2E0-1D37F, U+1F000-1F0FF, U+1F100-1F1AE, U+1F1E6-1F1FF, U+1F30D-1F30F, U+1F315, U+1F31C, U+1F31E, U+1F320-1F32C, U+1F336, U+1F378, U+1F37D, U+1F382, U+1F393-1F39F, U+1F3A7-1F3A8, U+1F3AC-1F3AF, U+1F3C2, U+1F3C4-1F3C6, U+1F3CA-1F3CE, U+1F3D4-1F3E0, U+1F3ED, U+1F3F1-1F3F3, U+1F3F5-1F3F7, U+1F408, U+1F415, U+1F41F, U+1F426, U+1F43F, U+1F441-1F442, U+1F444, U+1F446-1F449, U+1F44C-1F44E, U+1F453, U+1F46A, U+1F47D, U+1F4A3, U+1F4B0, U+1F4B3, U+1F4B9, U+1F4BB, U+1F4BF, U+1F4C8-1F4CB, U+1F4D6, U+1F4DA, U+1F4DF, U+1F4E3-1F4E6, U+1F4EA-1F4ED, U+1F4F7, U+1F4F9-1F4FB, U+1F4FD-1F4FE, U+1F503, U+1F507-1F50B, U+1F50D, U+1F512-1F513, U+1F53E-1F54A, U+1F54F-1F5FA, U+1F610, U+1F650-1F67F, U+1F687, U+1F68D, U+1F691, U+1F694, U+1F698, U+1F6AD, U+1F6B2, U+1F6B9-1F6BA, U+1F6BC, U+1F6C6-1F6CF, U+1F6D3-1F6D7, U+1F6E0-1F6EA, U+1F6F0-1F6F3, U+1F6F7-1F6FC, U+1F700-1F80B, U+1F810-1F847, U+1F850-1F859, U+1F860-1F887, U+1F890-1F8AD, U+1F8B0-1F8BB, U+1F8C0-1F8C1, U+1F8D0-1F8D8, U+1F900-1F90B, U+1F93B, U+1F946, U+1F984, U+1F996, U+1F9E9, U+1FA00-1FA6F, U+1FA70-1FA7C, U+1FA80-1FAC6, U+1FAC8, U+1FACC-1FADD, U+1FADF-1FAEB, U+1FAEF-1FAFA, U+1FB00-1FBFF;
+}
+/* tamil */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiQUvaYr.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+/* telugu */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPi4UvaYr.woff2) format('woff2');
+  unicode-range: U+0951-0952, U+0964-0965, U+0B83, U+0C00-0C7F, U+1CD5-1CD6, U+1CD8, U+1CDA, U+1CF2, U+200C-200D, U+25CC;
+}
+/* thai */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPiYUvaYr.woff2) format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPj0UvaYr.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjwUvaYr.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/googlesans/v76/4UasrENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RPjIUvQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+body{margin:0;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-secondary)}a:hover{color:var(--text-primary)}
+.theme-light{--canvas:var(--surface-default);--surface:var(--surface-page);--surface-2:var(--surface-subtle);--surface-3:var(--surface-strong);--border:var(--border-default);--text:var(--text-primary);--text-muted:var(--text-secondary);--text-faint:var(--text-tertiary);--text-disabled:var(--color-neutral-4);--accent:var(--accent-secondary);--accent-hover:color-mix(in oklch,var(--accent-secondary) 88%,black);--accent-soft:color-mix(in oklch,var(--accent-secondary) 12%,transparent);--accent-text:var(--accent-secondary);--record:var(--status-danger);--record-soft:color-mix(in oklch,var(--status-danger) 12%,transparent);--mute:var(--status-warning);--mute-text:var(--on-accent);--success:var(--status-success);--radius-s:var(--radius-sm);--radius-m:var(--radius-md);--radius-l:var(--radius-lg);--line-faint:color-mix(in oklch,var(--border-default) 45%,transparent);--line-soft:color-mix(in oklch,var(--border-default) 75%,transparent);--hover-wash:color-mix(in oklch,var(--text-primary) 5%,transparent);--hairline-wash:color-mix(in oklch,var(--text-primary) 10%,transparent);--root-row:color-mix(in oklch,var(--accent-secondary) 7%,transparent);--black-key:var(--color-neutral-7);font-family:var(--font-sans);color:var(--text-primary)}
+button,select,input{font-family:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.app-bar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:16px;height:52px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--border)}
+.app-bar-start{display:flex;align-items:center;gap:4px;justify-self:start}
+.app-bar-end{display:flex;align-items:center;gap:6px;justify-self:end}
+.editor-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:48px;padding:0 12px;background:var(--canvas);border-bottom:1px solid var(--border)}
+.track-strip{display:flex;align-items:center;gap:6px;min-width:0}
+.tool-strip{display:flex;align-items:center;gap:6px}
+.tool-group{display:flex;align-items:center;gap:2px}
+.toolbar-divider{width:1px;height:20px;margin:0 6px;background:var(--border)}
+
+.icon-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);cursor:pointer}
+.icon-button:hover{background:var(--surface-2);color:var(--text)}
+.icon-button.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.icon-button.isRecord{color:var(--record)}
+.icon-button.isRecord.isActive{background:var(--record-soft);color:var(--record)}
+.icon-button.isTiny{width:22px;height:22px;border-radius:var(--radius-s)}
+.icon-button:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.capture-button{position:relative}
+.capture-badge{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--record)}
+
+.ghost-button{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;font-weight:500;cursor:pointer}
+.ghost-button:hover,.ghost-button.isOpen{background:var(--surface-2)}
+.solid-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 12px;border:0;border-radius:var(--radius-m);background:var(--text);color:#FFFFFF;font-size:13px;font-weight:500;cursor:pointer}
+.solid-button:hover,.solid-button.isOpen{background:#2E2E33}
+.solid-button .chevron{color:#A1A1AA}
+.outline-button{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.outline-button:hover{background:var(--surface)}
+.project-mark{width:18px;height:18px;border-radius:5px;background:var(--text)}
+.chevron{display:flex;color:var(--text-faint)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.status-dot.isOff{background:var(--border-strong)}
+
+.transport{display:flex;align-items:center;gap:2px;height:38px;padding:0 5px;background:var(--canvas);border:1px solid var(--border);border-radius:var(--radius-l)}
+.play-button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:28px;padding:0;border:0;border-radius:var(--radius-m);background:var(--accent);color:var(--on-accent);cursor:pointer}
+.play-button:hover{background:var(--accent-hover)}
+.transport-divider{width:1px;height:18px;margin:0 6px;background:var(--border)}
+.readout{display:flex;align-items:baseline;gap:10px;padding:0 6px;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.readout-primary{min-width:54px;font-size:14px;font-weight:600;color:var(--text)}
+.readout-sep{padding:0 1px;font-weight:500;color:var(--text-faint)}
+.readout-secondary{min-width:44px;font-size:12px;color:var(--text-faint)}
+.tempo-field{display:flex;align-items:center;gap:4px;height:28px;padding:0 6px;border-radius:var(--radius-m);cursor:text}
+.tempo-field:hover,.tempo-field:focus-within{background:var(--surface)}
+.tempo-input{width:3.2ch;padding:0;border:0;background:transparent;color:var(--text);font:500 14px var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.tempo-input:focus,.tempo-input:focus-visible{outline:none}
+.tempo-unit{font-size:11px;font-weight:500;color:var(--text-faint)}
+
+.slider{position:relative;flex:1 1 auto;height:20px}
+.slider-track{position:absolute;top:8px;left:0;right:0;height:4px;border-radius:2px;background:var(--surface-3)}
+.slider-fill{position:absolute;top:8px;left:0;height:4px;border-radius:2px;background:var(--text-muted)}
+.slider-thumb{position:absolute;top:4px;width:12px;height:12px;box-sizing:border-box;margin-left:-6px;border:1.5px solid var(--text-muted);border-radius:50%;background:var(--canvas)}
+.slider.isDimmed .slider-fill{background:var(--border-strong)}
+.slider.isDimmed .slider-thumb{border-color:var(--border-strong)}
+.slider-input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.slider:focus-within .slider-thumb{outline:2px solid var(--accent);outline-offset:1px}
+.slider-row{display:flex;align-items:center;gap:8px}
+.value-label{font-size:12px;font-weight:500;color:var(--text-muted);font-variant-numeric:tabular-nums}
+
+.text-field{width:100%;height:30px;box-sizing:border-box;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:13px;font-weight:500}
+.text-field::placeholder{color:var(--text-faint);font-weight:400}
+.select-field{position:relative;display:flex}
+.select{width:100%;height:30px;box-sizing:border-box;padding:0 30px 0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;appearance:none;-webkit-appearance:none;cursor:pointer}
+.select:hover{background:var(--surface)}
+.select-chevron{position:absolute;top:0;right:10px;bottom:0;display:flex;align-items:center;color:var(--text-faint);pointer-events:none}
+
+.popover-anchor{position:relative;z-index:20}
+.popover-scrim{position:fixed;inset:0;z-index:10;padding:0;border:0;background:transparent;cursor:default}
+.popover{position:absolute;top:calc(100% + 6px);left:0;z-index:30;display:flex;flex-direction:column;gap:14px;width:272px;box-sizing:border-box;padding:14px;background:var(--surface-overlay);border:1px solid var(--border-default);border-radius:var(--radius-m);box-shadow:var(--shadow-overlay);text-align:left}
+.popover.isAlignEnd{left:auto;right:0}
+.popover.isWide{width:304px}
+.popover.isNarrow{width:240px}
+.popover.isMenu{gap:0;width:232px;padding:4px}
+.popover.isMenu.isRoomy{width:288px}
+.popover-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.popover-title{font-size:13px;font-weight:600;color:var(--text)}
+.popover-section{display:flex;flex-direction:column;gap:8px}
+.popover-hint{margin:0;font-size:11.5px;line-height:1.5;color:var(--text-faint)}
+.section-label{font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.section-header{display:flex;align-items:center;justify-content:space-between}
+.popover-divider{height:1px;margin:0 -14px;background:var(--border)}
+.sub-settings{display:flex;flex-direction:column;gap:12px;padding:12px;border-radius:8px;background:var(--surface)}
+.menu-header{display:flex;flex-direction:column;gap:6px;padding:8px 8px 10px}
+.menu-header.isRow{flex-direction:row;align-items:center;gap:4px;padding:6px 6px 8px}
+.save-status{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-faint)}
+.save-status-icon{display:flex;color:var(--success)}
+.menu-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:30px;padding:0 10px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text);font-size:13px;text-align:left;cursor:pointer}
+.menu-item:hover{background:var(--surface)}
+.menu-item:disabled{color:var(--text-disabled);background:transparent;cursor:default}
+.menu-item-lead{display:flex;align-items:center;gap:10px}
+.menu-item-stack{display:flex;flex-direction:column;gap:1px;padding:6px 0}
+.menu-item-hint{font-size:11.5px;color:var(--text-faint)}
+.menu-item:disabled .menu-item-hint{color:var(--text-disabled)}
+.menu-item-icon{display:flex;color:var(--text-faint)}
+.menu-item-check{display:flex;color:var(--accent-text)}
+.menu-divider{height:1px;margin:4px 0;background:var(--border)}
+.menu-label{padding:8px 10px 4px;font-size:11.5px;font-weight:500;color:var(--text-muted)}
+.project-list{display:flex;flex-direction:column;gap:1px;max-height:232px;overflow-y:auto}
+.project-search{padding:0 6px 6px}
+.tag{padding:2px 6px;border-radius:var(--radius-s);background:var(--surface-2);color:var(--text-muted);font-size:11px;font-weight:500}
+.empty-note{padding:12px 10px;font-size:12px;color:var(--text-faint)}
+
+.segmented{display:grid;gap:2px;padding:2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m)}
+.segmented.isCols2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.segmented.isCols3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.segmented.isCols5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.segmented.isCols6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.segmented-option{height:26px;padding:0 6px;border:1px solid transparent;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.segmented-option:hover{background:var(--surface-2);color:var(--text)}
+.segmented-option.isSelected{background:var(--canvas);border-color:var(--border-strong);color:var(--text)}
+.segmented-option.isLeft{padding:0 8px;text-align:left}
+
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.switch-copy{display:flex;flex-direction:column;gap:2px}
+.switch-label{font-size:13px;font-weight:500;color:var(--text)}
+.switch-hint{font-size:11.5px;color:var(--text-faint)}
+.switch{position:relative;flex-shrink:0;width:30px;height:18px;padding:0;border:0;border-radius:999px;background:var(--border-strong);cursor:pointer;transition:background .15s}
+.switch.isOn{background:var(--accent)}
+.switch:disabled{opacity:.45;cursor:default}
+.switch-thumb{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--on-accent);transition:left .15s}
+.switch.isOn .switch-thumb{left:15px}
+.text-button{padding:0;border:0;background:transparent;color:var(--accent-text);font-size:12px;font-weight:500;cursor:pointer}
+.text-button:hover{text-decoration:underline}
+
+.split-chip{display:inline-flex;align-items:stretch;height:30px;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);overflow:hidden}
+.split-chip:hover,.split-chip.isOpen{border-color:var(--border-strong)}
+.split-chip-toggle{display:inline-flex;align-items:center;justify-content:center;width:30px;padding:0;border:0;border-right:1px solid var(--border);background:transparent;color:var(--text-faint);cursor:pointer}
+.split-chip-toggle:hover{background:var(--surface);color:var(--text)}
+.split-chip-toggle.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.split-chip-main{display:inline-flex;align-items:center;gap:6px;padding:0 8px 0 10px;border:0;background:transparent;color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.split-chip-main:hover,.split-chip.isOpen .split-chip-main{background:var(--surface)}
+.chip{display:inline-flex;align-items:center;gap:7px;height:30px;box-sizing:border-box;padding:0 8px 0 10px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer}
+.chip:hover{border-color:var(--border-strong)}
+.chip.isOpen{border-color:var(--border-strong);background:var(--surface)}
+.chip.isEmpty{color:var(--text-muted)}
+.chip-icon{display:flex;color:var(--text-faint)}
+.chip-value{white-space:nowrap;font-variant-numeric:tabular-nums}
+.chip-suffix{margin-left:1px;color:var(--accent-text)}
+.chip-badge{display:flex;color:var(--accent-text)}
+.view-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--radius-m);background:transparent;color:var(--text-muted);font-size:12.5px;font-weight:500;font-variant-numeric:tabular-nums;cursor:pointer}
+.view-chip:hover,.view-chip.isOpen{background:var(--surface-2);color:var(--text)}
+.view-chip.isActive{background:var(--accent-soft);color:var(--accent-text)}
+.stepper{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-m);background:var(--canvas)}
+.stepper-value{min-width:44px;font-size:12px;font-weight:500;color:var(--text);font-variant-numeric:tabular-nums;text-align:center}
+.zoom-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+.track-tab{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 5px 0 6px;border-radius:8px}
+.track-tab::after{content:'';position:absolute;inset:0;border-radius:inherit;background:transparent;pointer-events:none}
+.track-tab:hover::after{background:var(--hover-wash)}
+.track-lead{position:relative;display:flex;align-items:center;justify-content:center;width:18px;height:18px}
+.track-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%}
+.track-dot.isChord{border-radius:2px}
+.track-tab.isSilent .track-dot{opacity:.35}
+.track-tab-more{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--radius-s);background:transparent;color:var(--text-muted);opacity:0;cursor:pointer}
+.track-tab-more:hover,.track-tab.isMenuOpen .track-tab-more{background:var(--hairline-wash);color:var(--text)}
+.track-tab:hover .track-tab-more,.track-tab-more:focus-visible,.track-tab.isMenuOpen .track-tab-more{opacity:1}
+.track-tab:hover .track-dot,.track-tab:focus-within .track-dot,.track-tab.isMenuOpen .track-dot{opacity:0}
+.track-tab.isMenuOpen{z-index:20}
+.track-tab-rename{position:relative;z-index:1;width:96px;height:22px;box-sizing:border-box;padding:0 6px;border:1px solid var(--accent);border-radius:var(--radius-s);background:var(--canvas);color:var(--text);font:inherit;font-size:13px;font-weight:500;outline:none}
+.track-menu{top:calc(100% + 6px);left:0}
+.track-menu-colors{display:flex;align-items:center;gap:6px;padding:8px 10px 10px}
+.track-menu-label{padding:8px 10px 0;font-size:11.5px;font-weight:500;color:var(--text-faint)}
+.color-swatch{position:relative;width:20px;height:20px;padding:0;border:0;border-radius:50%;cursor:pointer}
+.color-swatch.isSelected{box-shadow:0 0 0 2px var(--surface-overlay),0 0 0 4px var(--text)}
+.color-swatch:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.menu-item-shortcut{font-size:11.5px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.menu-item.isDanger{color:var(--status-danger)}
+.menu-item.isDanger .menu-item-icon{color:var(--status-danger)}
+.menu-item.isDanger:disabled,.menu-item.isDanger:disabled .menu-item-icon{color:var(--text-disabled)}
+.track-tab-name{position:relative;z-index:1;padding:0 2px;border:0;background:transparent;color:var(--text-muted);font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer}
+.track-tab.isActive .track-tab-name{color:var(--text)}
+.track-tab.isSilent .track-tab-name{color:var(--text-faint)}
+.track-toggles{position:relative;z-index:1;display:flex;align-items:center;gap:4px;height:20px;margin-left:4px;padding-left:8px;border-left:1px solid var(--hairline-wash)}
+.ms-toggle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--radius-s);background:color-mix(in oklch,var(--surface-default) 80%,transparent);color:var(--text-muted);font-size:10.5px;font-weight:600;cursor:pointer}
+.track-tab .ms-toggle:hover{background:var(--surface-default);color:var(--text)}
+.track-tab .ms-toggle.isMuteOn{background:color-mix(in oklab,var(--status-warning) 38%,var(--surface-default));color:color-mix(in oklab,var(--status-warning) 70%,black);font-weight:700}
+.track-tab .ms-toggle.isSoloOn{background:color-mix(in oklab,var(--accent-secondary) 34%,var(--surface-default));color:color-mix(in oklab,var(--accent-secondary) 75%,black);font-weight:700}
+
+.piano-roll{position:relative;display:flex;background:var(--canvas)}
+.roll-keys-column{flex:none;width:56px;border-right:1px solid var(--border);background:var(--canvas);cursor:ns-resize;user-select:none}
+.roll-corner{height:28px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border)}
+.roll-scroller{flex:1 1 auto;min-width:0;overflow-x:auto}
+.roll-content{min-width:100%}
+.roll-ruler{position:relative;height:28px;box-sizing:border-box;overflow:hidden;background:var(--surface);border-bottom:1px solid var(--border);cursor:ns-resize;user-select:none}
+.loop-band{position:absolute;top:0;bottom:0;left:0;width:50%;box-sizing:border-box;background:var(--accent-soft);border-top:2px solid var(--accent)}
+.ruler-bar{position:absolute;top:0;bottom:0;padding:7px 0 0 6px;border-left:1px solid var(--border-strong);color:var(--text-muted);font-size:11px;font-weight:500;font-variant-numeric:tabular-nums}
+.ruler-tick{position:absolute;bottom:0;width:1px;height:6px;background:var(--border-strong)}
+.ruler-playhead{position:absolute;bottom:0;width:9px;height:9px;margin-left:-4px;background:var(--accent);clip-path:polygon(0 0,100% 0,50% 100%)}
+.key-row{position:relative;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;padding-right:6px;border-bottom:1px solid var(--line-soft);color:var(--text-faint);font-size:10px;font-weight:500}
+.key-row.isOctave{border-bottom-color:var(--border-strong)}
+.key-black{position:absolute;top:0;bottom:0;left:0;width:30px;border-radius:0 3px 3px 0;background:var(--black-key)}
+.key-label{position:relative}
+.roll-grid{position:relative}
+.roll-row{box-sizing:border-box;border-bottom:1px solid var(--line-faint)}
+.roll-row.isTinted{background:var(--surface)}
+.roll-row.isRoot{background:var(--root-row)}
+.roll-row.isOctave{border-bottom-color:var(--border)}
+.grid-line{position:absolute;top:0;bottom:0;width:1px;background:var(--line-faint)}
+.grid-line.isBeat{background:var(--line-soft)}
+.grid-line.isBar{background:var(--border-strong)}
+.note{position:absolute;box-sizing:border-box;border-radius:3px}
+.note.isGhost{background:transparent;border:1px solid;opacity:.45}
+.note.isSilent{opacity:.3}
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent)}
+.zoom-pad{position:absolute;right:16px;bottom:16px;z-index:4;display:grid;grid-template-columns:24px 28px 24px;grid-template-rows:repeat(3,24px);gap:2px;padding:3px;background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);border-radius:10px;opacity:.8;transition:opacity .15s}
+.zoom-pad:hover,.zoom-pad:focus-within{opacity:1}
+.zoom-pad-button{display:flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:6px;background:transparent;color:var(--text-muted);cursor:pointer}
+.zoom-pad-button:hover{background:var(--surface-2);color:var(--text)}
+.zoom-pad-button.isStart{grid-column:1;grid-row:1 / span 3}
+.zoom-pad-button.isEnd{grid-column:3;grid-row:1 / span 3}
+.zoom-pad-button.isMiddle{grid-column:2}
+.scale-list{max-height:168px;margin:0 -14px;padding:0 14px;overflow-y:auto}
+.project-meta{display:flex;align-items:center;gap:6px}
+.app-bar-start .tool-group{margin-left:4px;padding-left:8px;border-left:1px solid var(--border)}
+.toast{position:absolute;bottom:16px;left:50%;z-index:5;display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:var(--radius-m);background:var(--surface-overlay);border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);color:var(--text-primary);font-size:12.5px;font-weight:500;transform:translateX(-50%);white-space:nowrap}
+.toast-dot{width:6px;height:6px;border-radius:50%;background:var(--record)}
+</style>
+</helmet>
+<div class="theme-light" data-theme="light" style="width: 100%; min-width: 0; display: flex; flex-direction: column; background: var(--surface-default)">
+
+<sc-if value="{{hasOpenPopover}}" hint-placeholder-val="{{false}}">
+<button class="popover-scrim" aria-label="Close menu" sc-camel-on-click="{{closePopover}}"></button>
+</sc-if>
+
+<header class="app-bar">
+<div class="app-bar-start">
+<div class="popover-anchor">
+<button class="{{projectButtonClass}}" sc-camel-on-click="{{toggleProject}}" aria-expanded="{{isProjectOpen}}">
+<span class="project-mark" aria-hidden="true"></span>
+<span>{{projectName}}</span>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+<sc-if value="{{isProjectOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isMenu isRoomy" role="dialog" aria-label="Project">
+
+<sc-if value="{{isProjectMenuView}}" hint-placeholder-val="{{true}}">
+<div class="menu-header">
+<input class="text-field" type="text" value="{{projectName}}" sc-camel-on-change="{{renameProject}}" aria-label="Project name">
+<span class="save-status"><span class="save-status-icon"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></span>Saved in this browser</span>
+</div>
+<div class="menu-divider" style="margin-top: 0"></div>
+<button class="menu-item" sc-camel-on-click="{{newProject}}">New project</button>
+<button class="menu-item" sc-camel-on-click="{{showProjectBrowser}}">
+<span>Open project…</span>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5"></path></svg></span>
+</button>
+<div class="menu-divider"></div>
+<button class="menu-item"><span>Import project…</span><span class="menu-item-hint">.maddie</span></button>
+<button class="menu-item"><span>Import MIDI…</span><span class="menu-item-hint">.mid</span></button>
+<div class="menu-divider"></div>
+<button class="menu-item"><span>Export project…</span><span class="menu-item-hint">.maddie</span></button>
+<button class="menu-item"><span>Export MIDI…</span><span class="menu-item-hint">.mid</span></button>
+<div class="menu-divider"></div>
+<button class="menu-item"><span>Appearance</span><span class="menu-item-hint">Light</span></button>
+</sc-if>
+
+<sc-if value="{{isProjectBrowserView}}" hint-placeholder-val="{{false}}">
+<div class="menu-header isRow">
+<button class="icon-button isTiny" sc-camel-on-click="{{showProjectMenu}}" aria-label="Back">
+<svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg>
+</button>
+<span class="popover-title">Projects</span>
+</div>
+<div class="project-search">
+<input class="text-field" type="search" placeholder="Search projects" value="{{projectQuery}}" sc-camel-on-change="{{setProjectQuery}}" aria-label="Search projects">
+</div>
+<div class="project-list" role="list">
+<sc-for list="{{projectRows}}" as="project" hint-placeholder-count="4">
+<button class="menu-item" role="listitem" sc-camel-on-click="{{project.open}}">
+<span class="menu-item-stack"><span>{{project.name}}</span><span class="menu-item-hint">{{project.details}}</span></span>
+<sc-if value="{{project.isCurrent}}" hint-placeholder-val="{{false}}"><span class="tag">Open</span></sc-if>
+<sc-if value="{{project.isOther}}" hint-placeholder-val="{{true}}"><span class="menu-item-hint">{{project.edited}}</span></sc-if>
+</button>
+</sc-for>
+<sc-if value="{{hasNoProjectMatches}}" hint-placeholder-val="{{false}}"><div class="empty-note">No projects match.</div></sc-if>
+</div>
+<div class="menu-divider"></div>
+<p class="popover-hint" style="padding: 4px 10px 6px">Projects are saved in this browser. Export one to back it up.</p>
+</sc-if>
+
+</div>
+</sc-if>
+</div>
+<div class="tool-group">
+<button class="icon-button" aria-label="Undo" title="Undo">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4L3 7l3 3"></path><path d="M3 7h6.5a3.5 3.5 0 0 1 0 7H8"></path></svg>
+</button>
+<button class="icon-button" aria-label="Redo" title="Redo" disabled="">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l3 3-3 3"></path><path d="M13 7H6.5a3.5 3.5 0 0 0 0 7H8"></path></svg>
+</button>
+</div>
+</div>
+
+<div class="transport" role="group" aria-label="Transport">
+<button class="icon-button" sc-camel-on-click="{{skipBack}}" aria-label="Go to start" title="Go to start">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5v9"></path><path d="M12.5 4v8L6.5 8z"></path></svg>
+</button>
+<button class="play-button" sc-camel-on-click="{{togglePlay}}" aria-label="{{playLabel}}" title="{{playLabel}}">
+<sc-if value="{{isPlaying}}" hint-placeholder-val="{{false}}">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" aria-hidden="true"><rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"></rect></svg>
+</sc-if>
+<sc-if value="{{isNotPlaying}}" hint-placeholder-val="{{true}}">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6c0 .5.5.8.9.5l7.4-4.8c.4-.2.4-.8 0-1L5.9 2.7c-.4-.3-.9 0-.9.5z" fill="currentColor"></path></svg>
+</sc-if>
+</button>
+<button class="{{recordClass}}" sc-camel-on-click="{{toggleRecord}}" aria-pressed="{{isRecording}}" aria-label="Record" title="Record">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.5" fill="currentColor"></circle></svg>
+</button>
+<button class="icon-button capture-button" sc-camel-on-click="{{captureMidi}}" disabled="{{isCaptureEmpty}}" aria-label="Capture MIDI" title="{{captureTitle}}">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 9.2A5 5 0 1 0 4.5 4.4"></path><path d="M4.2 1.8v2.8H7"></path><circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none"></circle></svg>
+<sc-if value="{{hasCaptureBuffer}}" hint-placeholder-val="{{true}}"><span class="capture-badge" aria-hidden="true"></span></sc-if>
+</button>
+<div class="transport-divider"></div>
+<div class="readout" aria-label="Playhead position">
+<span class="readout-primary">{{posBar}}<span class="readout-sep">.</span>{{posBeat}}<span class="readout-sep">.</span>{{posSixteenth}}</span>
+<span class="readout-secondary">{{timeLabel}}</span>
+</div>
+<div class="transport-divider"></div>
+<label class="tempo-field" title="Tempo">
+<input class="tempo-input" type="text" inputmode="numeric" value="{{bpmText}}" sc-camel-on-change="{{setBpm}}" aria-label="Tempo in BPM">
+<span class="tempo-unit">BPM</span>
+</label>
+<div class="transport-divider"></div>
+<button class="{{loopClass}}" sc-camel-on-click="{{toggleLoop}}" aria-pressed="{{isLooping}}" aria-label="Loop" title="Loop">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5V6.5a2 2 0 0 1 2-2h7.5"></path><path d="M10.5 2.5l2 2-2 2"></path><path d="M13 8.5v1a2 2 0 0 1-2 2H3.5"></path><path d="M5.5 13.5l-2-2 2-2"></path></svg>
+</button>
+<button class="{{followClass}}" sc-camel-on-click="{{toggleFollow}}" aria-pressed="{{isFollowing}}" aria-label="Follow playhead" title="Follow playhead">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"></circle><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"></path></svg>
+</button>
+<button class="{{metronomeClass}}" sc-camel-on-click="{{toggleMetronome}}" aria-pressed="{{isMetronomeOn}}" aria-label="Metronome" title="Metronome">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5h4l2.5 11h-9z"></path><path d="M8 10.5l3.5-6"></path></svg>
+</button>
+</div>
+
+<div class="app-bar-end">
+<div class="popover-anchor">
+<button class="{{inputChipClass}}" sc-camel-on-click="{{toggleInput}}" aria-expanded="{{isInputOpen}}" title="Input">
+<span class="{{inputDotClass}}" aria-hidden="true"></span>
+<span class="chip-value">Input</span>
+<sc-if value="{{isQwertyOn}}" hint-placeholder-val="{{true}}">
+<span class="chip-badge" title="Computer keyboard on"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"></rect><path d="M4.5 7h.01M7 7h.01M9.5 7h.01M12 7h.01M5.5 9.5h5"></path></svg></span>
+</sc-if>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+<sc-if value="{{isInputOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isAlignEnd isWide" role="dialog" aria-label="Input">
+<span class="popover-title">Input</span>
+
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">Computer keyboard</span><span class="switch-hint">Play notes with your QWERTY keys</span></div>
+<button class="{{qwertySwitchClass}}" role="switch" aria-checked="{{isQwertyOn}}" aria-label="Computer keyboard" sc-camel-on-click="{{toggleQwerty}}"><span class="switch-thumb"></span></button>
+</div>
+<sc-if value="{{isQwertyOn}}" hint-placeholder-val="{{true}}">
+<div class="sub-settings">
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">Play in key</span><span class="switch-hint">{{qwertySnapHint}}</span></div>
+<button class="{{qwertySnapSwitchClass}}" role="switch" aria-checked="{{isQwertySnapOn}}" aria-label="Play in key" disabled="{{isQwertySnapDisabled}}" sc-camel-on-click="{{toggleQwertySnap}}"><span class="switch-thumb"></span></button>
+</div>
+<div class="zoom-row">
+<div class="switch-copy"><span class="switch-label">Base octave</span><span class="switch-hint">Shift with − and =</span></div>
+<div class="stepper">
+<button class="icon-button isTiny" sc-camel-on-click="{{octaveDown}}" disabled="{{isOctaveAtMin}}" aria-label="Octave down"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9"></path></svg></button>
+<span class="stepper-value">{{qwertyRootLabel}}</span>
+<button class="icon-button isTiny" sc-camel-on-click="{{octaveUp}}" disabled="{{isOctaveAtMax}}" aria-label="Octave up"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"></path></svg></button>
+</div>
+</div>
+</div>
+</sc-if>
+
+<div class="popover-divider"></div>
+
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">MIDI controller</span><span class="switch-hint">Notes play and record like keys</span></div>
+<button class="{{midiInSwitchClass}}" role="switch" aria-checked="{{isMidiInOn}}" aria-label="MIDI controller" sc-camel-on-click="{{toggleMidiIn}}"><span class="switch-thumb"></span></button>
+</div>
+<sc-if value="{{isMidiInOn}}" hint-placeholder-val="{{true}}">
+<div class="select-field">
+<sc-raw-select class="select" value="{{midiInputId}}" sc-camel-on-change="{{setMidiInput}}" aria-label="MIDI input device">
+<sc-for list="{{midiInputs}}" as="option" hint-placeholder-count="2">
+<option value="{{option.id}}">{{option.label}}</option>
+</sc-for>
+</sc-raw-select>
+<span class="select-chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</div>
+</sc-if>
+</div>
+</sc-if>
+</div>
+
+<div class="popover-anchor">
+<button class="{{outputChipClass}}" sc-camel-on-click="{{toggleOutput}}" aria-expanded="{{isOutputOpen}}" title="Output">
+<span class="chip-icon">
+<sc-if value="{{isMasterAudible}}" hint-placeholder-val="{{true}}"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.2v3.6h2.4L8.5 13V3L4.9 6.2z"></path><path d="M11 5.5a3.5 3.5 0 0 1 0 5"></path></svg></sc-if>
+<sc-if value="{{isMasterMuted}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.2v3.6h2.4L8.5 13V3L4.9 6.2z"></path><path d="M11 6l3 4M14 6l-3 4"></path></svg></sc-if>
+</span>
+<span class="chip-value">Output</span>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+<sc-if value="{{isOutputOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isAlignEnd isWide" role="dialog" aria-label="Output">
+<span class="popover-title">Output</span>
+
+<div class="popover-section">
+<span class="section-label">Sound</span>
+<div class="select-field">
+<sc-raw-select class="select" value="{{soundId}}" sc-camel-on-change="{{setSound}}" aria-label="Sound">
+<option value="midi">MIDI output</option>
+<sc-for list="{{instrumentGroups}}" as="group" hint-placeholder-count="5">
+<optgroup label="{{group.label}}">
+<sc-for list="{{group.items}}" as="option" hint-placeholder-count="4">
+<option value="{{option.id}}">{{option.label}}</option>
+</sc-for>
+</optgroup>
+</sc-for>
+</sc-raw-select>
+<span class="select-chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</div>
+</div>
+
+<sc-if value="{{isMidiOutMode}}" hint-placeholder-val="{{false}}">
+<div class="popover-section">
+<span class="section-label">MIDI port</span>
+<div class="select-field">
+<sc-raw-select class="select" value="{{midiOutputId}}" sc-camel-on-change="{{setMidiOutput}}" aria-label="MIDI port">
+<sc-for list="{{midiOutputs}}" as="option" hint-placeholder-count="2">
+<option value="{{option.id}}">{{option.label}}</option>
+</sc-for>
+</sc-raw-select>
+<span class="select-chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</div>
+</div>
+</sc-if>
+
+<div class="popover-divider"></div>
+
+<div class="popover-section">
+<div class="section-header"><span class="section-label">Volume</span><span class="value-label">{{volumeLabel}}</span></div>
+<div class="slider-row">
+<button class="icon-button isTiny" sc-camel-on-click="{{toggleMasterMute}}" aria-pressed="{{isMasterMuted}}" aria-label="Mute output" title="Mute">
+<sc-if value="{{isMasterAudible}}" hint-placeholder-val="{{true}}"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.2v3.6h2.4L8.5 13V3L4.9 6.2z"></path><path d="M11 5.5a3.5 3.5 0 0 1 0 5"></path></svg></sc-if>
+<sc-if value="{{isMasterMuted}}" hint-placeholder-val="{{false}}"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.2v3.6h2.4L8.5 13V3L4.9 6.2z"></path><path d="M11 6l3 4M14 6l-3 4"></path></svg></sc-if>
+</button>
+<div class="{{masterSliderClass}}">
+<div class="slider-track"></div>
+<div class="slider-fill" style="{{volumeFillStyle}}"></div>
+<div class="slider-thumb" style="{{volumeThumbStyle}}"></div>
+<input class="slider-input" type="range" min="0" max="100" value="{{volume}}" sc-camel-on-change="{{setVolume}}" aria-label="Output volume">
+</div>
+</div>
+</div>
+
+<div class="popover-section">
+<div class="section-header"><span class="section-label">Metronome volume</span><span class="value-label">{{metronomeVolumeLabel}}</span></div>
+<div class="slider-row">
+<button class="{{metronomeTinyClass}}" sc-camel-on-click="{{toggleMetronome}}" aria-pressed="{{isMetronomeOn}}" aria-label="Metronome" title="Metronome">
+<svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5h4l2.5 11h-9z"></path><path d="M8 10.5l3.5-6"></path></svg>
+</button>
+<div class="{{metronomeSliderClass}}">
+<div class="slider-track"></div>
+<div class="slider-fill" style="{{metronomeFillStyle}}"></div>
+<div class="slider-thumb" style="{{metronomeThumbStyle}}"></div>
+<input class="slider-input" type="range" min="0" max="100" value="{{metronomeVolume}}" sc-camel-on-change="{{setMetronomeVolume}}" aria-label="Metronome volume">
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+</div>
+
+</div>
+</header>
+
+<div class="editor-bar">
+<div class="track-strip" role="tablist" aria-label="Tracks">
+<sc-for list="{{trackTabs}}" as="track" hint-placeholder-count="2">
+<div class="{{track.tabClass}}" style="{{track.tabStyle}}" sc-camel-on-context-menu="{{track.openMenuAtTab}}">
+<span class="track-lead">
+<span class="{{track.dotClass}}" style="{{track.dotStyle}}" aria-hidden="true"></span>
+<button class="track-tab-more" sc-camel-on-click="{{track.toggleMenu}}" aria-haspopup="menu" aria-expanded="{{track.isMenuOpen}}" aria-label="{{track.menuLabel}}" title="Track options">
+<svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"></circle><circle cx="8" cy="8" r="1.3"></circle><circle cx="12.5" cy="8" r="1.3"></circle></svg>
+</button>
+</span>
+<sc-if value="{{track.isRenaming}}" hint-placeholder-val="{{false}}">
+<input class="track-tab-rename" type="text" value="{{track.draftName}}" sc-camel-on-change="{{track.setDraftName}}" sc-camel-on-key-down="{{track.handleRenameKey}}" sc-camel-on-blur="{{track.commitRename}}" sc-camel-auto-focus="{{true}}" aria-label="Track name">
+</sc-if>
+<sc-if value="{{track.isNotRenaming}}" hint-placeholder-val="{{true}}">
+<button class="track-tab-name" role="tab" aria-selected="{{track.isActive}}" sc-camel-on-click="{{track.select}}" sc-camel-on-double-click="{{track.startRename}}">{{track.name}}</button>
+</sc-if>
+<sc-if value="{{track.isMenuOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isMenu track-menu" role="menu" aria-label="{{track.menuLabel}}">
+<div class="track-menu-label">Color</div>
+<div class="track-menu-colors" role="radiogroup" aria-label="Track color">
+<sc-for list="{{track.swatches}}" as="swatch" hint-placeholder-count="5">
+<button class="{{swatch.className}}" style="{{swatch.style}}" role="radio" aria-checked="{{swatch.isSelected}}" aria-label="{{swatch.label}}" sc-camel-on-click="{{swatch.pick}}"></button>
+</sc-for>
+</div>
+<div class="menu-divider" style="margin-top: 0"></div>
+<button class="menu-item" role="menuitem" sc-camel-on-click="{{track.startRename}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 3l2.5 2.5L6 12.5H3.5V10z"></path></svg></span>Rename</span><span class="menu-item-shortcut">Double-click</span></button>
+<button class="menu-item" role="menuitem" sc-camel-on-click="{{track.duplicate}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"></path></svg></span>Duplicate</span></button>
+<button class="menu-item" role="menuitem" sc-camel-on-click="{{track.exportMidi}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3M3 11.5v1A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-1"></path></svg></span>Export MIDI…</span></button>
+<div class="menu-divider"></div>
+<button class="menu-item isDanger" role="menuitem" sc-camel-on-click="{{track.remove}}" disabled="{{track.isLastTrack}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.1a1.5 1.5 0 0 0 1.5 1.4h2.8a1.5 1.5 0 0 0 1.5-1.4l.6-8.1"></path></svg></span>Delete track</span><span class="menu-item-shortcut">⌫</span></button>
+</div>
+</sc-if>
+<div class="track-toggles">
+<button class="{{track.muteClass}}" sc-camel-on-click="{{track.toggleMute}}" aria-pressed="{{track.isMuted}}" aria-label="{{track.muteLabel}}" title="Mute">M</button>
+<button class="{{track.soloClass}}" sc-camel-on-click="{{track.toggleSolo}}" aria-pressed="{{track.isSoloed}}" aria-label="{{track.soloLabel}}" title="Solo">S</button>
+</div>
+</div>
+</sc-for>
+<div class="popover-anchor">
+<button class="{{addButtonClass}}" sc-camel-on-click="{{toggleAdd}}" aria-expanded="{{isAddOpen}}" aria-label="Add track" title="Add track">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"></path></svg>
+</button>
+<sc-if value="{{isAddOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isMenu" role="menu">
+<button class="menu-item" role="menuitem" sc-camel-on-click="{{addMidiTrack}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"></rect><path d="M6 3v6M10 3v6"></path></svg></span>MIDI track</span></button>
+<button class="menu-item" role="menuitem" sc-camel-on-click="{{addChordTrack}}"><span class="menu-item-lead"><span class="menu-item-icon"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10"></path></svg></span>Chord track</span></button>
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="tool-strip">
+<div class="tool-group" style="gap: 6px">
+<div class="popover-anchor">
+<div class="{{gridChipClass}}">
+<button class="{{snapToggleClass}}" sc-camel-on-click="{{toggleSnap}}" aria-pressed="{{isSnapOn}}" aria-label="Snap to grid" title="Snap to grid">
+<svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h3v5a1.5 1.5 0 0 0 3 0v-5h3v5a4.5 4.5 0 0 1-9 0z"></path><path d="M3.5 5.5h3M9.5 5.5h3"></path></svg>
+</button>
+<button class="split-chip-main" sc-camel-on-click="{{toggleGrid}}" aria-expanded="{{isGridOpen}}" aria-label="Grid settings" title="Grid">
+<span class="chip-value">{{division}}<span class="chip-suffix">{{feelSuffix}}</span></span>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+</div>
+<sc-if value="{{isGridOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isAlignEnd" role="dialog" aria-label="Grid">
+<span class="popover-title">Grid</span>
+<div class="popover-section">
+<span class="section-label">Division</span>
+<div class="segmented isCols5">
+<sc-for list="{{divisions}}" as="option" hint-placeholder-count="5">
+<button class="{{option.className}}" sc-camel-on-click="{{option.pick}}">{{option.label}}</button>
+</sc-for>
+</div>
+</div>
+<div class="popover-section">
+<span class="section-label">Feel</span>
+<div class="segmented isCols3">
+<sc-for list="{{feels}}" as="option" hint-placeholder-count="3">
+<button class="{{option.className}}" sc-camel-on-click="{{option.pick}}">{{option.label}}</button>
+</sc-for>
+</div>
+</div>
+<div class="popover-divider"></div>
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">Snap to grid</span><span class="switch-hint">Hold Alt while dragging to bypass</span></div>
+<button class="{{snapSwitchClass}}" role="switch" aria-checked="{{isSnapOn}}" aria-label="Snap to grid" sc-camel-on-click="{{toggleSnap}}"><span class="switch-thumb"></span></button>
+</div>
+</div>
+</sc-if>
+</div>
+
+<div class="popover-anchor">
+<button class="{{keyChipClass}}" sc-camel-on-click="{{toggleKey}}" aria-expanded="{{isKeyOpen}}" title="Key and scale">
+<span class="chip-icon"><svg width="15" height="15" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12.5V3.5l7-1.5v9"></path><circle cx="4.5" cy="12.5" r="1.5"></circle><circle cx="11.5" cy="11" r="1.5"></circle></svg></span>
+<span class="chip-value">{{keyLabel}}</span>
+<sc-if value="{{isLockVisible}}" hint-placeholder-val="{{false}}">
+<span class="chip-badge" title="Notes locked to key"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"></path></svg></span>
+</sc-if>
+<span class="chevron"><svg width="12" height="12" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></span>
+</button>
+<sc-if value="{{isKeyOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isAlignEnd isWide" role="dialog" aria-label="Key and scale">
+<div class="popover-header">
+<span class="popover-title">Key</span>
+<sc-if value="{{hasKey}}" hint-placeholder-val="{{true}}"><button class="text-button" sc-camel-on-click="{{clearKey}}">Clear</button></sc-if>
+</div>
+<div class="popover-section">
+<span class="section-label">Root</span>
+<div class="segmented isCols6">
+<sc-for list="{{roots}}" as="option" hint-placeholder-count="12">
+<button class="{{option.className}}" sc-camel-on-click="{{option.pick}}">{{option.label}}</button>
+</sc-for>
+</div>
+</div>
+<div class="popover-section">
+<div class="section-header"><span class="section-label">Scale</span><span class="value-label">{{scaleCountLabel}}</span></div>
+<input class="text-field" type="search" placeholder="Search scales" value="{{scaleQuery}}" sc-camel-on-change="{{setScaleQuery}}" aria-label="Search scales">
+<div class="scale-list">
+<div class="segmented isCols2">
+<sc-for list="{{scales}}" as="option" hint-placeholder-count="12">
+<button class="{{option.className}}" sc-camel-on-click="{{option.pick}}">{{option.label}}</button>
+</sc-for>
+</div>
+<sc-if value="{{hasNoScaleMatches}}" hint-placeholder-val="{{false}}"><div class="empty-note">No scales match.</div></sc-if>
+</div>
+</div>
+<button class="outline-button" sc-camel-on-click="{{detectKey}}">
+<svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5l1.3 3.2 3.2 1.3-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z"></path></svg>
+<span>Detect from notes</span>
+</button>
+<div class="popover-divider"></div>
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">Highlight key</span><span class="switch-hint">Shade rows outside the key</span></div>
+<button class="{{highlightSwitchClass}}" role="switch" aria-checked="{{isHighlightOn}}" aria-label="Highlight key" sc-camel-on-click="{{toggleHighlight}}"><span class="switch-thumb"></span></button>
+</div>
+<div class="switch-row">
+<div class="switch-copy"><span class="switch-label">Lock to key</span><span class="switch-hint">New and moved notes stay in key</span></div>
+<button class="{{lockSwitchClass}}" role="switch" aria-checked="{{isLockOn}}" aria-label="Lock to key" sc-camel-on-click="{{toggleLock}}"><span class="switch-thumb"></span></button>
+</div>
+</div>
+</sc-if>
+</div>
+</div>
+
+<div class="toolbar-divider"></div>
+
+<div class="tool-group" role="group" aria-label="View">
+<div class="popover-anchor">
+<button class="{{foldChipClass}}" sc-camel-on-click="{{toggleFoldMenu}}" aria-expanded="{{isFoldOpen}}" aria-label="Fold rows" title="Fold rows">
+<svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v4M5.5 3.5L8 6l2.5-2.5"></path><path d="M8 14.5v-4M5.5 12.5L8 10l2.5 2.5"></path><path d="M3 8h10"></path></svg>
+<sc-if value="{{isFolded}}" hint-placeholder-val="{{false}}"><span>{{foldLabel}}</span></sc-if>
+</button>
+<sc-if value="{{isFoldOpen}}" hint-placeholder-val="{{false}}">
+<div class="popover isMenu isAlignEnd" role="menu">
+<div class="menu-label">Fold rows</div>
+<sc-for list="{{foldOptions}}" as="option" hint-placeholder-count="3">
+<button class="menu-item" role="menuitemradio" aria-checked="{{option.isSelected}}" disabled="{{option.isDisabled}}" sc-camel-on-click="{{option.pick}}">
+<span class="menu-item-stack"><span>{{option.label}}</span><span class="menu-item-hint">{{option.hint}}</span></span>
+<sc-if value="{{option.isSelected}}" hint-placeholder-val="{{false}}"><span class="menu-item-check"><svg width="14" height="14" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></span></sc-if>
+</button>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</div>
+</div>
+</div>
+
+<div class="piano-roll">
+<div class="roll-keys-column" sc-camel-on-mouse-down="{{startRowDrag}}" title="Drag up or down to zoom pitch" aria-hidden="true">
+<div class="roll-corner"></div>
+<sc-for list="{{keyRows}}" as="row" hint-placeholder-count="24">
+<div class="{{row.className}}" style="{{rowHeightStyle}}">
+<sc-if value="{{row.isBlack}}" hint-placeholder-val="{{false}}"><span class="key-black"></span></sc-if>
+<span class="key-label">{{row.label}}</span>
+</div>
+</sc-for>
+</div>
+<div class="roll-scroller" ref="{{scrollerRef}}">
+<div class="roll-content" style="{{contentWidthStyle}}">
+<div class="roll-ruler" sc-camel-on-mouse-down="{{startRulerDrag}}" title="Click to move the playhead, drag up or down to zoom">
+<sc-if value="{{isLooping}}" hint-placeholder-val="{{true}}"><div class="loop-band"></div></sc-if>
+<sc-for list="{{rulerTicks}}" as="tick" hint-placeholder-count="12">
+<div class="ruler-tick" style="{{tick.style}}"></div>
+</sc-for>
+<sc-for list="{{rulerBars}}" as="bar" hint-placeholder-count="4">
+<div class="ruler-bar" style="{{bar.style}}">{{bar.label}}</div>
+</sc-for>
+<div class="ruler-playhead" style="{{playheadStyle}}"></div>
+</div>
+<div class="roll-grid">
+<sc-for list="{{rollRows}}" as="row" hint-placeholder-count="24">
+<div class="{{row.className}}" style="{{rowHeightStyle}}"></div>
+</sc-for>
+<sc-for list="{{gridLines}}" as="line" hint-placeholder-count="64">
+<div class="{{line.className}}" style="{{line.style}}"></div>
+</sc-for>
+<sc-for list="{{notes}}" as="note" hint-placeholder-count="16">
+<div class="{{note.className}}" style="{{note.style}}"></div>
+</sc-for>
+<div class="playhead" style="{{playheadStyle}}"></div>
+</div>
+</div>
+</div>
+
+<sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
+<div class="toast" role="status"><span class="toast-dot" aria-hidden="true"></span>{{toastText}}</div>
+</sc-if>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:620}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      isPlaying: false,
+      isRecording: false,
+      isLooping: true,
+      isMetronomeOn: false,
+      metronomeVolume: 70,
+      isFollowing: true,
+      step: 0,
+      bpmText: '120',
+      volume: 80,
+      isMasterMuted: false,
+      isQwertyOn: true,
+      isQwertySnapOn: true,
+      qwertyOctave: 3,
+      isMidiInOn: true,
+      midiInputId: 'all',
+      soundId: 'grand-piano',
+      midiOutputId: 'loopmidi',
+      hasCaptureBuffer: true,
+      toastText: null,
+      zoom: 100,
+      rowHeight: 20,
+      foldMode: 'off',
+      openPopover: null,
+      projectView: 'menu',
+      projectQuery: '',
+      currentProjectId: 'p1',
+      projects: [
+        { id: 'p1', name: 'Untitled Project', edited: 'Now', bpm: 120, keyLabel: 'C minor' },
+        { id: 'p2', name: 'Night drive idea', edited: '2h ago', bpm: 94, keyLabel: 'F♯ minor' },
+        { id: 'p3', name: 'Bassline loop', edited: 'Yesterday', bpm: 140, keyLabel: 'D dorian' },
+        { id: 'p4', name: 'Chord sketches', edited: 'Nov 12', bpm: 72, keyLabel: 'E♭ major' },
+        { id: 'p5', name: 'Arp test', edited: 'Nov 3', bpm: 128, keyLabel: 'No key' }
+      ],
+      scaleQuery: '',
+      renamingTrackId: null,
+      draftTrackName: '',
+      nextProjectNumber: 6,
+      isSnapOn: true,
+      division: '1/16',
+      feel: 'straight',
+      root: 0,
+      scaleId: 'minor',
+      isHighlightOn: true,
+      isLockOn: false,
+      activeTrackId: 'keys',
+      nextTrackNumber: 3,
+      tracks: [
+        { id: 'keys', name: 'Keys', color: 'var(--accent-spark-1)', kind: 'midi', isMuted: false, isSoloed: false },
+        { id: 'bass', name: 'Bass', color: 'var(--accent-spark-2)', kind: 'midi', isMuted: false, isSoloed: false }
+      ]
+    };
+    this.timer = null;
+    this.toastTimer = null;
+    this.refillTimer = null;
+    this.scroller = null;
+  }
+
+  componentWillUnmount() {
+    if (this.timer) clearInterval(this.timer);
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (this.refillTimer) clearTimeout(this.refillTimer);
+  }
+
+  getData() {
+    return {
+      noteNames: ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'],
+      scales: [
+        { id: 'major', label: 'Major', intervals: [0, 2, 4, 5, 7, 9, 11] },
+        { id: 'minor', label: 'Minor', intervals: [0, 2, 3, 5, 7, 8, 10] },
+        { id: 'dorian', label: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
+        { id: 'phrygian', label: 'Phrygian', intervals: [0, 1, 3, 5, 7, 8, 10] },
+        { id: 'lydian', label: 'Lydian', intervals: [0, 2, 4, 6, 7, 9, 11] },
+        { id: 'mixolydian', label: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10] },
+        { id: 'harmonic', label: 'Harmonic minor', intervals: [0, 2, 3, 5, 7, 8, 11] },
+        { id: 'pentatonic', label: 'Minor pentatonic', intervals: [0, 3, 5, 7, 10] },
+        { id: 'locrian', label: 'Locrian', intervals: [0, 1, 3, 5, 6, 8, 10] },
+        { id: 'melodic', label: 'Melodic minor', intervals: [0, 2, 3, 5, 7, 9, 11] },
+        { id: 'major-pentatonic', label: 'Major pentatonic', intervals: [0, 2, 4, 7, 9] },
+        { id: 'blues', label: 'Blues', intervals: [0, 3, 5, 6, 7, 10] },
+        { id: 'major-blues', label: 'Major blues', intervals: [0, 2, 3, 4, 7, 9] },
+        { id: 'whole-tone', label: 'Whole tone', intervals: [0, 2, 4, 6, 8, 10] },
+        { id: 'diminished', label: 'Diminished', intervals: [0, 2, 3, 5, 6, 8, 9, 11] },
+        { id: 'augmented', label: 'Augmented', intervals: [0, 3, 4, 7, 8, 11] },
+        { id: 'hungarian-minor', label: 'Hungarian minor', intervals: [0, 2, 3, 6, 7, 8, 11] },
+        { id: 'gypsy', label: 'Gypsy', intervals: [0, 2, 3, 6, 7, 8, 10] },
+        { id: 'phrygian-dominant', label: 'Phrygian dominant', intervals: [0, 1, 4, 5, 7, 8, 10] },
+        { id: 'double-harmonic', label: 'Double harmonic', intervals: [0, 1, 4, 5, 7, 8, 11] },
+        { id: 'persian', label: 'Persian', intervals: [0, 1, 4, 5, 6, 8, 11] },
+        { id: 'arabic', label: 'Arabic', intervals: [0, 2, 4, 5, 6, 8, 10] },
+        { id: 'egyptian', label: 'Egyptian', intervals: [0, 2, 5, 7, 10] },
+        { id: 'hirajoshi', label: 'Hirajoshi', intervals: [0, 2, 3, 7, 8] },
+        { id: 'in-sen', label: 'In sen', intervals: [0, 1, 5, 7, 10] },
+        { id: 'iwato', label: 'Iwato', intervals: [0, 1, 5, 6, 10] },
+        { id: 'pelog', label: 'Pelog', intervals: [0, 1, 3, 7, 8] },
+        { id: 'balinese', label: 'Balinese', intervals: [0, 1, 3, 7, 8] },
+        { id: 'chinese', label: 'Chinese', intervals: [0, 4, 6, 7, 11] },
+        { id: 'lydian-dominant', label: 'Lydian dominant', intervals: [0, 2, 4, 6, 7, 9, 10] },
+        { id: 'super-locrian', label: 'Super locrian', intervals: [0, 1, 3, 4, 6, 8, 10] },
+        { id: 'dorian-sharp-four', label: 'Dorian ♯4', intervals: [0, 2, 3, 6, 7, 9, 10] },
+        { id: 'neapolitan-minor', label: 'Neapolitan minor', intervals: [0, 1, 3, 5, 7, 8, 11] },
+        { id: 'neapolitan-major', label: 'Neapolitan major', intervals: [0, 1, 3, 5, 7, 9, 11] },
+        { id: 'enigmatic', label: 'Enigmatic', intervals: [0, 1, 4, 6, 8, 10, 11] },
+        { id: 'prometheus', label: 'Prometheus', intervals: [0, 2, 4, 6, 9, 10] },
+        { id: 'bebop-major', label: 'Bebop major', intervals: [0, 2, 4, 5, 7, 8, 9, 11] },
+        { id: 'bebop-dominant', label: 'Bebop dominant', intervals: [0, 2, 4, 5, 7, 9, 10, 11] }
+      ],
+      divisions: ['1/4', '1/8', '1/16', '1/32', '1/64'],
+      feels: [
+        { id: 'straight', label: 'Straight', suffix: '' },
+        { id: 'triplet', label: 'Triplet', suffix: 'T' },
+        { id: 'dotted', label: 'Dotted', suffix: '.' }
+      ],
+      instrumentGroups: [
+        { label: 'Keys', items: ['Grand Piano', 'Electric Piano', 'Organ', 'Clavinet'] },
+        { label: 'Bass', items: ['Sub Bass', '808', 'Analog Bass', 'Pluck Bass'] },
+        { label: 'Leads', items: ['Saw Lead', 'Square Lead', 'Supersaw', 'Sine Lead'] },
+        { label: 'Pads', items: ['Warm Pad', 'Glass Pad', 'Strings', 'Choir'] },
+        { label: 'Mallets & plucks', items: ['Pluck', 'Bell', 'Marimba', 'Music Box'] }
+      ],
+      midiInputs: [
+        { id: 'all', label: 'All devices' },
+        { id: 'loopmidi', label: 'loopMIDI Port' }
+      ],
+      midiOutputs: [
+        { id: 'loopmidi', label: 'loopMIDI Port' },
+        { id: 'usb', label: 'USB MIDI interface' }
+      ],
+      notes: {
+        keys: [[67, 0, 4], [70, 4, 2], [68, 6, 2], [67, 8, 6], [63, 14, 2], [65, 16, 4], [67, 20, 4], [68, 24, 8], [70, 32, 4], [68, 36, 2], [67, 38, 2], [65, 40, 8], [63, 48, 4], [62, 52, 4], [60, 56, 8]],
+        bass: [[48, 0, 6], [48, 8, 4], [53, 16, 6], [53, 24, 6], [56, 32, 6], [56, 40, 4], [55, 48, 8], [55, 56, 6]]
+      },
+      trackColors: [
+        { label: 'Violet', value: 'var(--accent-spark-1)' },
+        { label: 'Pink', value: 'var(--accent-spark-2)' },
+        { label: 'Amber', value: 'var(--accent-spark-3)' },
+        { label: 'Green', value: 'var(--accent-spark-4)' },
+        { label: 'Blue', value: 'var(--accent-spark-5)' }
+      ],
+      newTrackColors: ['var(--accent-spark-4)', 'var(--accent-spark-3)', 'var(--accent-spark-5)', 'var(--accent-spark-1)', 'var(--accent-spark-2)']
+    };
+  }
+
+  toSlug(label) {
+    return label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  }
+
+  getBpm() {
+    const parsedBpm = parseInt(this.state.bpmText, 10) || 120;
+    return Math.max(20, Math.min(300, parsedBpm));
+  }
+
+  togglePopover(name) {
+    const isSameOpen = this.state.openPopover === name;
+    const nextPopover = isSameOpen ? null : name;
+    this.setState({ openPopover: nextPopover, projectView: 'menu', projectQuery: '', scaleQuery: '' });
+  }
+
+  followPlayhead(step) {
+    const canFollow = this.state.isFollowing && this.scroller;
+    if (!canFollow) return;
+    const playheadX = (step / 64) * this.scroller.scrollWidth;
+    const viewStart = this.scroller.scrollLeft;
+    const viewEnd = viewStart + this.scroller.clientWidth;
+    const isOutOfView = playheadX < viewStart || playheadX > viewEnd - 40;
+    if (isOutOfView) this.scroller.scrollLeft = Math.max(0, playheadX - 40);
+  }
+
+  advance() {
+    const nextStep = this.state.step + 1;
+    const hasHitLoopEnd = this.state.isLooping && nextStep >= 32;
+    const resolvedStep = hasHitLoopEnd ? 0 : nextStep % 64;
+    this.setState({ step: resolvedStep });
+    this.followPlayhead(resolvedStep);
+  }
+
+  togglePlay() {
+    if (this.state.isPlaying) {
+      clearInterval(this.timer);
+      this.timer = null;
+      this.setState({ isPlaying: false });
+      return;
+    }
+    const stepMilliseconds = 60000 / this.getBpm() / 4;
+    this.timer = setInterval(() => this.advance(), stepMilliseconds);
+    this.setState({ isPlaying: true });
+  }
+
+  showToast(text) {
+    this.setState({ toastText: text });
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.setState({ toastText: null }), 2400);
+  }
+
+  captureMidi() {
+    if (!this.state.hasCaptureBuffer) return;
+    const activeTrack = this.state.tracks.find((track) => track.id === this.state.activeTrackId);
+    const trackName = activeTrack ? activeTrack.name : 'track';
+    this.setState({ hasCaptureBuffer: false });
+    this.showToast('Captured 12 notes to ' + trackName);
+    this.refillTimer = setTimeout(() => this.setState({ hasCaptureBuffer: true }), 6000);
+  }
+
+  renameProject(event) {
+    const nextName = event.target.value;
+    const projects = this.state.projects.map((project) => (project.id === this.state.currentProjectId ? Object.assign({}, project, { name: nextName }) : project));
+    this.setState({ projects: projects });
+  }
+
+  openProject(projectId) {
+    const project = this.state.projects.find((item) => item.id === projectId);
+    this.setState({ currentProjectId: projectId, openPopover: null, projectView: 'menu' });
+    this.showToast('Opened ' + project.name);
+  }
+
+  newProject() {
+    const projectNumber = this.state.nextProjectNumber;
+    const projectId = 'p' + projectNumber;
+    const newProject = { id: projectId, name: 'Untitled Project ' + projectNumber, edited: 'Now', bpm: 120, keyLabel: 'No key' };
+    this.setState({ projects: [newProject].concat(this.state.projects), currentProjectId: projectId, nextProjectNumber: projectNumber + 1, openPopover: null });
+  }
+
+  startVerticalDrag(event, onDelta) {
+    const startY = event.clientY;
+    const handleMove = (moveEvent) => onDelta(startY - moveEvent.clientY);
+    const handleUp = () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+  }
+
+  startRulerDrag(event) {
+    const rulerBox = event.currentTarget.getBoundingClientRect();
+    const clickRatio = (event.clientX - rulerBox.left) / rulerBox.width;
+    const clickedStep = Math.max(0, Math.min(63, Math.round(clickRatio * 64)));
+    const startZoom = this.state.zoom;
+    this.setState({ step: clickedStep });
+    this.startVerticalDrag(event, (deltaY) => {
+      const nextZoom = Math.round(Math.max(50, Math.min(400, startZoom + deltaY * 2)));
+      this.setState({ zoom: nextZoom });
+    });
+  }
+
+  startRowDrag(event) {
+    const startRowHeight = this.state.rowHeight;
+    this.startVerticalDrag(event, (deltaY) => {
+      const nextRowHeight = Math.round(Math.max(10, Math.min(32, startRowHeight + deltaY / 8)));
+      this.setState({ rowHeight: nextRowHeight });
+    });
+  }
+
+  updateTrack(trackId, patch) {
+    const tracks = this.state.tracks.map((track) => (track.id === trackId ? Object.assign({}, track, patch) : track));
+    this.setState({ tracks: tracks });
+  }
+
+  removeTrack(trackId) {
+    const isLastTrack = this.state.tracks.length === 1;
+    if (isLastTrack) return;
+    const remainingTracks = this.state.tracks.filter((track) => track.id !== trackId);
+    const wasActive = this.state.activeTrackId === trackId;
+    const nextActiveId = wasActive ? remainingTracks[0].id : this.state.activeTrackId;
+    this.setState({ tracks: remainingTracks, activeTrackId: nextActiveId, openPopover: null });
+  }
+
+  duplicateTrack(trackId) {
+    const sourceIndex = this.state.tracks.findIndex((track) => track.id === trackId);
+    const sourceTrack = this.state.tracks[sourceIndex];
+    const trackNumber = this.state.nextTrackNumber;
+    const copyId = 'track' + trackNumber;
+    // The mock has no note editing, so a copy reads its source's notes.
+    const noteSource = sourceTrack.noteSource || sourceTrack.id;
+    const copyTrack = Object.assign({}, sourceTrack, { id: copyId, name: sourceTrack.name + ' copy', isSoloed: false, noteSource: noteSource });
+    const tracks = this.state.tracks.slice();
+    tracks.splice(sourceIndex + 1, 0, copyTrack);
+    this.setState({ tracks: tracks, activeTrackId: copyId, nextTrackNumber: trackNumber + 1, openPopover: null });
+  }
+
+  startRename(track) {
+    this.setState({ renamingTrackId: track.id, draftTrackName: track.name, openPopover: null });
+  }
+
+  commitRename() {
+    const renamingId = this.state.renamingTrackId;
+    if (!renamingId) return;
+    const trimmedName = this.state.draftTrackName.trim();
+    const hasName = trimmedName.length > 0;
+    if (hasName) this.updateTrack(renamingId, { name: trimmedName });
+    this.setState({ renamingTrackId: null });
+  }
+
+  handleRenameKey(event) {
+    const isEnter = event.key === 'Enter';
+    if (isEnter) return this.commitRename();
+    const isEscape = event.key === 'Escape';
+    if (isEscape) this.setState({ renamingTrackId: null });
+  }
+
+  addTrack(kind) {
+    const data = this.getData();
+    const trackNumber = this.state.nextTrackNumber;
+    const trackId = 'track' + trackNumber;
+    const isChord = kind === 'chord';
+    const trackName = isChord ? 'Chords' : 'Track ' + trackNumber;
+    const colorIndex = (trackNumber - 3) % data.newTrackColors.length;
+    const newTrack = { id: trackId, name: trackName, color: data.newTrackColors[colorIndex], kind: kind, isMuted: false, isSoloed: false };
+    this.setState({ tracks: this.state.tracks.concat([newTrack]), activeTrackId: trackId, nextTrackNumber: trackNumber + 1, openPopover: null });
+  }
+
+  getVisiblePitches(allPitches, notePitches, scalePitchClasses, hasKey) {
+    const foldMode = this.state.foldMode;
+    if (foldMode === 'notes') return allPitches.filter((pitch) => notePitches.includes(pitch));
+    const canFoldToScale = foldMode === 'scale' && hasKey;
+    if (canFoldToScale) return allPitches.filter((pitch) => scalePitchClasses.includes(pitch % 12));
+    return allPitches;
+  }
+
+  getTrackTint(track, isActive, isAudible) {
+    const tintFor = (percent) => 'color-mix(in oklch, ' + track.color + ' ' + percent + '%, transparent)';
+    if (!isAudible) return tintFor(5);
+    if (isActive) return tintFor(17);
+    return tintFor(9);
+  }
+
+  renderVals() {
+    const state = this.state;
+    const data = this.getData();
+    const bpm = this.getBpm();
+    const blackPitchClasses = [1, 3, 6, 8, 10];
+    const openPopover = state.openPopover;
+    const switchClass = (isOn) => (isOn ? 'switch isOn' : 'switch');
+    const toggleClass = (base, isOn) => (isOn ? base + ' isActive' : base);
+    const openClass = (base, name) => (openPopover === name ? base + ' isOpen' : base);
+
+    const hasKey = state.root !== null;
+    const scale = data.scales.find((item) => item.id === state.scaleId);
+    const scalePitchClasses = hasKey ? scale.intervals.map((interval) => (state.root + interval) % 12) : [];
+    const isScaleShaded = hasKey && state.isHighlightOn;
+    const keyLabel = hasKey ? data.noteNames[state.root] + ' ' + scale.label.toLowerCase() : 'No key';
+    const feel = data.feels.find((item) => item.id === state.feel);
+    const anySolo = state.tracks.some((track) => track.isSoloed);
+    const checkAudible = (track) => !track.isMuted && (!anySolo || track.isSoloed);
+
+    const allPitches = Array.from({ length: 24 }, (unused, offset) => 71 - offset);
+    const notePitches = state.tracks.map((track) => (data.notes[track.noteSource || track.id] || []).map((note) => note[0])).flat();
+    const visiblePitches = this.getVisiblePitches(allPitches, notePitches, scalePitchClasses, hasKey);
+    const isFoldActive = visiblePitches.length !== allPitches.length;
+    const rowHeight = state.rowHeight;
+
+    const keyRows = visiblePitches.map((pitch) => {
+      const pitchClass = pitch % 12;
+      const isOctave = pitchClass === 0;
+      const octaveNumber = Math.floor(pitch / 12) - 1;
+      const noteName = data.noteNames[pitchClass] + octaveNumber;
+      const shouldLabel = isOctave || isFoldActive;
+      return { isBlack: blackPitchClasses.includes(pitchClass), label: shouldLabel ? noteName : '', className: isOctave ? 'key-row isOctave' : 'key-row' };
+    });
+
+    const rollRows = visiblePitches.map((pitch) => {
+      const pitchClass = pitch % 12;
+      const classes = ['roll-row'];
+      if (pitchClass === 0) classes.push('isOctave');
+      const isRootRow = isScaleShaded && pitchClass === state.root;
+      const isOutOfScale = isScaleShaded && !scalePitchClasses.includes(pitchClass);
+      const isBlackRow = !isScaleShaded && blackPitchClasses.includes(pitchClass);
+      if (isRootRow) classes.push('isRoot');
+      if (isOutOfScale || isBlackRow) classes.push('isTinted');
+      return { className: classes.join(' ') };
+    });
+
+    const denominator = parseInt(state.division.split('/')[1], 10);
+    const feelFactor = state.feel === 'triplet' ? 2 / 3 : state.feel === 'dotted' ? 1.5 : 1;
+    const unitInBars = feelFactor / denominator;
+    const subdivisionCount = Math.min(256, Math.floor(4 / unitInBars));
+    const subdivisionLines = Array.from({ length: subdivisionCount }, (unused, index) => ({ className: 'grid-line', style: 'left: ' + ((index * unitInBars) / 4) * 100 + '%' }));
+    const beatLines = Array.from({ length: 16 }, (unused, index) => ({ className: 'grid-line isBeat', style: 'left: ' + (index / 16) * 100 + '%' }));
+    const barLines = Array.from({ length: 4 }, (unused, index) => ({ className: 'grid-line isBar', style: 'left: ' + index * 25 + '%' }));
+    const gridLines = subdivisionLines.concat(beatLines, barLines);
+
+    const buildTrackNotes = (track) => {
+      const isActive = track.id === state.activeTrackId;
+      const isAudible = checkAudible(track);
+      const trackNotes = data.notes[track.noteSource || track.id] || [];
+      const shownNotes = trackNotes.filter((note) => visiblePitches.includes(note[0]));
+      return shownNotes.map((note) => {
+        const classes = ['note'];
+        if (!isActive) classes.push('isGhost');
+        if (!isAudible) classes.push('isSilent');
+        const rowIndex = visiblePitches.indexOf(note[0]);
+        const colorRule = isActive ? 'background: ' + track.color : 'border-color: ' + track.color;
+        const position = 'left: ' + (note[1] / 64) * 100 + '%; width: calc(' + (note[2] / 64) * 100 + '% - 2px); top: ' + (rowIndex * rowHeight + 1) + 'px; height: ' + (rowHeight - 2) + 'px; ';
+        return { className: classes.join(' '), style: position + colorRule, isActive: isActive };
+      });
+    };
+    const allNotes = state.tracks.map(buildTrackNotes).flat();
+    const notes = allNotes.filter((note) => !note.isActive).concat(allNotes.filter((note) => note.isActive));
+
+    const trackTabs = state.tracks.map((track) => {
+      const isActive = track.id === state.activeTrackId;
+      const isAudible = checkAudible(track);
+      const tabClasses = ['track-tab'];
+      if (isActive) tabClasses.push('isActive');
+      if (!isAudible) tabClasses.push('isSilent');
+      const isMenuOpen = openPopover === 'track-' + track.id;
+      if (isMenuOpen) tabClasses.push('isMenuOpen');
+      return {
+        name: track.name,
+        isActive: isActive,
+        isMuted: track.isMuted,
+        isSoloed: track.isSoloed,
+        tabClass: tabClasses.join(' '),
+        tabStyle: 'background: ' + this.getTrackTint(track, isActive, isAudible),
+        dotClass: track.kind === 'chord' ? 'track-dot isChord' : 'track-dot',
+        dotStyle: 'background: ' + track.color,
+        muteClass: track.isMuted ? 'ms-toggle isMuteOn' : 'ms-toggle',
+        soloClass: track.isSoloed ? 'ms-toggle isSoloOn' : 'ms-toggle',
+        muteLabel: 'Mute ' + track.name,
+        soloLabel: 'Solo ' + track.name,
+        menuLabel: track.name + ' options',
+        isMenuOpen: isMenuOpen,
+        isRenaming: state.renamingTrackId === track.id,
+        isNotRenaming: state.renamingTrackId !== track.id,
+        draftName: state.draftTrackName,
+        isLastTrack: state.tracks.length === 1,
+        swatches: data.trackColors.map((swatch) => {
+          const isSelected = swatch.value === track.color;
+          const swatchClass = isSelected ? 'color-swatch isSelected' : 'color-swatch';
+          return { label: swatch.label, isSelected: isSelected, className: swatchClass, style: 'background: ' + swatch.value, pick: () => this.updateTrack(track.id, { color: swatch.value }) };
+        }),
+        toggleMenu: () => this.togglePopover('track-' + track.id),
+        openMenuAtTab: (event) => {
+          event.preventDefault();
+          this.setState({ openPopover: 'track-' + track.id, activeTrackId: track.id });
+        },
+        startRename: () => this.startRename(track),
+        setDraftName: (event) => this.setState({ draftTrackName: event.target.value }),
+        handleRenameKey: (event) => this.handleRenameKey(event),
+        commitRename: () => this.commitRename(),
+        duplicate: () => this.duplicateTrack(track.id),
+        exportMidi: () => this.setState({ openPopover: null }),
+        select: () => this.setState({ activeTrackId: track.id }),
+        toggleMute: () => this.updateTrack(track.id, { isMuted: !track.isMuted }),
+        toggleSolo: () => this.updateTrack(track.id, { isSoloed: !track.isSoloed }),
+        remove: () => this.removeTrack(track.id)
+      };
+    });
+
+    const optionClass = (isSelected, extra) => ['segmented-option', extra || '', isSelected ? 'isSelected' : ''].join(' ').trim();
+    const divisions = data.divisions.map((division) => ({ label: division, className: optionClass(division === state.division), pick: () => this.setState({ division: division }) }));
+    const feels = data.feels.map((item) => ({ label: item.label, className: optionClass(item.id === state.feel), pick: () => this.setState({ feel: item.id }) }));
+    const roots = data.noteNames.map((label, index) => ({ label: label, className: optionClass(hasKey && index === state.root), pick: () => this.setState({ root: index }) }));
+    const normalizedScaleQuery = state.scaleQuery.trim().toLowerCase();
+    const matchingScales = data.scales.filter((item) => item.label.toLowerCase().includes(normalizedScaleQuery));
+    const scales = matchingScales.map((item) => {
+      const nextRoot = hasKey ? state.root : 0;
+      return { label: item.label, className: optionClass(hasKey && item.id === state.scaleId, 'isLeft'), pick: () => this.setState({ scaleId: item.id, root: nextRoot }) };
+    });
+
+    const isMidiOutMode = state.soundId === 'midi';
+    const instrumentGroups = data.instrumentGroups.map((group) => ({
+      label: group.label,
+      items: group.items.map((label) => ({ id: this.toSlug(label), label: label }))
+    }));
+    const allInstruments = data.instrumentGroups.map((group) => group.items).flat();
+    const instrumentName = allInstruments.find((label) => this.toSlug(label) === state.soundId) || 'Grand Piano';
+    const midiOutput = data.midiOutputs.find((item) => item.id === state.midiOutputId);
+    const soundLabel = isMidiOutMode ? midiOutput.label : instrumentName;
+
+    const qwertyRootLabel = String(state.qwertyOctave);
+    const qwertySnapHint = hasKey ? 'Only play notes in ' + keyLabel : 'Pick a key first';
+
+    const currentProject = state.projects.find((project) => project.id === state.currentProjectId);
+    const normalizedQuery = state.projectQuery.trim().toLowerCase();
+    const matchingProjects = state.projects.filter((project) => project.name.toLowerCase().includes(normalizedQuery));
+    const projectRows = matchingProjects.map((project) => {
+      const isCurrent = project.id === state.currentProjectId;
+      const projectBpm = isCurrent ? bpm : project.bpm;
+      const projectKey = isCurrent ? keyLabel : project.keyLabel;
+      return {
+        name: project.name,
+        details: projectBpm + ' BPM · ' + projectKey,
+        edited: project.edited,
+        isCurrent: isCurrent,
+        isOther: !isCurrent,
+        open: () => this.openProject(project.id)
+      };
+    });
+
+    const foldOptions = [
+      { id: 'off', label: 'Off', hint: 'Show every pitch', isDisabled: false },
+      { id: 'notes', label: 'Notes', hint: 'Only rows with notes', isDisabled: false },
+      { id: 'scale', label: 'In key', hint: hasKey ? 'Only rows in ' + keyLabel : 'Pick a key first', isDisabled: !hasKey }
+    ].map((option) => Object.assign({}, option, { isSelected: option.id === state.foldMode, pick: () => this.setState({ foldMode: option.id, openPopover: null }) }));
+    const foldLabelMap = { off: '', notes: 'Notes', scale: 'In key' };
+
+    const rulerBars = [0, 1, 2, 3].map((bar) => ({ label: String(bar + 1), style: 'left: ' + bar * 25 + '%' }));
+    const beatIndexes = Array.from({ length: 16 }, (unused, index) => index).filter((index) => index % 4 !== 0);
+    const rulerTicks = beatIndexes.map((index) => ({ style: 'left: ' + (index / 16) * 100 + '%' }));
+
+    const secondsPerStep = 60 / bpm / 4;
+    const elapsedSeconds = state.step * secondsPerStep;
+    const minutes = Math.floor(elapsedSeconds / 60);
+    const seconds = (elapsedSeconds % 60).toFixed(1).padStart(4, '0');
+    const fillStyle = (value) => 'width: ' + value + '%';
+    const thumbStyle = (value) => 'left: ' + value + '%';
+    const fitRowHeight = Math.max(10, Math.min(32, Math.floor(480 / visiblePitches.length)));
+
+    return {
+      projectName: currentProject.name,
+      isProjectMenuView: state.projectView === 'menu',
+      isProjectBrowserView: state.projectView === 'browse',
+      showProjectBrowser: () => this.setState({ projectView: 'browse' }),
+      showProjectMenu: () => this.setState({ projectView: 'menu', projectQuery: '' }),
+      renameProject: (event) => this.renameProject(event),
+      newProject: () => this.newProject(),
+      projectQuery: state.projectQuery,
+      setProjectQuery: (event) => this.setState({ projectQuery: event.target.value }),
+      projectRows: projectRows,
+      hasNoProjectMatches: projectRows.length === 0,
+
+      isPlaying: state.isPlaying,
+      isNotPlaying: !state.isPlaying,
+      playLabel: state.isPlaying ? 'Pause' : 'Play',
+      isRecording: state.isRecording,
+      recordClass: toggleClass('icon-button isRecord', state.isRecording),
+      hasCaptureBuffer: state.hasCaptureBuffer,
+      isCaptureEmpty: !state.hasCaptureBuffer,
+      captureTitle: state.hasCaptureBuffer ? 'Capture what you just played' : 'Play something to capture it',
+      captureMidi: () => this.captureMidi(),
+      hasToast: state.toastText !== null,
+      toastText: state.toastText,
+      isLooping: state.isLooping,
+      loopClass: toggleClass('icon-button', state.isLooping),
+      isMetronomeOn: state.isMetronomeOn,
+      metronomeClass: toggleClass('icon-button', state.isMetronomeOn),
+      metronomeTinyClass: toggleClass('icon-button isTiny', state.isMetronomeOn),
+      isFollowing: state.isFollowing,
+      followClass: toggleClass('icon-button', state.isFollowing),
+      posBar: Math.floor(state.step / 16) + 1,
+      posBeat: Math.floor((state.step % 16) / 4) + 1,
+      posSixteenth: (state.step % 4) + 1,
+      timeLabel: minutes + ':' + seconds,
+      bpmText: state.bpmText,
+      setBpm: (event) => this.setState({ bpmText: event.target.value.replace(/[^0-9]/g, '').slice(0, 3) }),
+      skipBack: () => this.setState({ step: 0 }),
+      togglePlay: () => this.togglePlay(),
+      toggleRecord: () => this.setState({ isRecording: !state.isRecording }),
+      toggleLoop: () => this.setState({ isLooping: !state.isLooping }),
+      toggleMetronome: () => this.setState({ isMetronomeOn: !state.isMetronomeOn }),
+      toggleFollow: () => this.setState({ isFollowing: !state.isFollowing }),
+
+      isInputOpen: openPopover === 'input',
+      toggleInput: () => this.togglePopover('input'),
+      inputChipClass: openClass('chip', 'input'),
+      inputDotClass: state.isMidiInOn ? 'status-dot' : 'status-dot isOff',
+      isQwertyOn: state.isQwertyOn,
+      qwertySwitchClass: switchClass(state.isQwertyOn),
+      toggleQwerty: () => this.setState({ isQwertyOn: !state.isQwertyOn }),
+      isQwertySnapOn: state.isQwertySnapOn && hasKey,
+      isQwertySnapDisabled: !hasKey,
+      qwertySnapSwitchClass: switchClass(state.isQwertySnapOn && hasKey),
+      qwertySnapHint: qwertySnapHint,
+      toggleQwertySnap: () => this.setState({ isQwertySnapOn: !state.isQwertySnapOn }),
+      qwertyRootLabel: qwertyRootLabel,
+      isOctaveAtMin: state.qwertyOctave <= 0,
+      isOctaveAtMax: state.qwertyOctave >= 7,
+      octaveDown: () => this.setState({ qwertyOctave: Math.max(0, state.qwertyOctave - 1) }),
+      octaveUp: () => this.setState({ qwertyOctave: Math.min(7, state.qwertyOctave + 1) }),
+      isMidiInOn: state.isMidiInOn,
+      midiInSwitchClass: switchClass(state.isMidiInOn),
+      toggleMidiIn: () => this.setState({ isMidiInOn: !state.isMidiInOn }),
+      midiInputs: data.midiInputs,
+      midiInputId: state.midiInputId,
+      setMidiInput: (event) => this.setState({ midiInputId: event.target.value }),
+
+      isOutputOpen: openPopover === 'output',
+      toggleOutput: () => this.togglePopover('output'),
+      outputChipClass: openClass('chip', 'output'),
+      soundLabel: soundLabel,
+      soundId: state.soundId,
+      setSound: (event) => this.setState({ soundId: event.target.value }),
+      isMidiOutMode: isMidiOutMode,
+      instrumentGroups: instrumentGroups,
+      midiOutputs: data.midiOutputs,
+      midiOutputId: state.midiOutputId,
+      setMidiOutput: (event) => this.setState({ midiOutputId: event.target.value }),
+      volume: state.volume,
+      volumeLabel: state.isMasterMuted ? 'Muted' : state.volume + '%',
+      isMasterMuted: state.isMasterMuted,
+      isMasterAudible: !state.isMasterMuted,
+      masterSliderClass: state.isMasterMuted ? 'slider isDimmed' : 'slider',
+      volumeFillStyle: fillStyle(state.volume),
+      volumeThumbStyle: thumbStyle(state.volume),
+      setVolume: (event) => this.setState({ volume: Number(event.target.value), isMasterMuted: false }),
+      toggleMasterMute: () => this.setState({ isMasterMuted: !state.isMasterMuted }),
+      metronomeVolume: state.metronomeVolume,
+      metronomeVolumeLabel: state.isMetronomeOn ? state.metronomeVolume + '%' : 'Off',
+      metronomeSliderClass: state.isMetronomeOn ? 'slider' : 'slider isDimmed',
+      metronomeFillStyle: fillStyle(state.metronomeVolume),
+      metronomeThumbStyle: thumbStyle(state.metronomeVolume),
+      setMetronomeVolume: (event) => this.setState({ metronomeVolume: Number(event.target.value), isMetronomeOn: true }),
+
+      isExportOpen: openPopover === 'export',
+      toggleExport: () => this.togglePopover('export'),
+      exportButtonClass: openClass('solid-button', 'export'),
+
+      hasOpenPopover: openPopover !== null,
+      closePopover: () => this.setState({ openPopover: null }),
+      isProjectOpen: openPopover === 'project',
+      isAddOpen: openPopover === 'add',
+      isGridOpen: openPopover === 'grid',
+      isKeyOpen: openPopover === 'key',
+      projectButtonClass: openClass('ghost-button', 'project'),
+      addButtonClass: toggleClass('icon-button', openPopover === 'add'),
+      toggleProject: () => this.togglePopover('project'),
+      toggleAdd: () => this.togglePopover('add'),
+      toggleGrid: () => this.togglePopover('grid'),
+      toggleKey: () => this.togglePopover('key'),
+
+      trackTabs: trackTabs,
+      addMidiTrack: () => this.addTrack('midi'),
+      addChordTrack: () => this.addTrack('chord'),
+
+      isSnapOn: state.isSnapOn,
+      gridChipClass: openClass('split-chip', 'grid'),
+      snapToggleClass: toggleClass('split-chip-toggle', state.isSnapOn),
+      snapSwitchClass: switchClass(state.isSnapOn),
+      toggleSnap: () => this.setState({ isSnapOn: !state.isSnapOn }),
+      division: state.division,
+      feelSuffix: feel.suffix,
+      divisions: divisions,
+      feels: feels,
+
+      hasKey: hasKey,
+      keyLabel: keyLabel,
+      keyChipClass: [openClass('chip', 'key'), hasKey ? '' : 'isEmpty'].join(' ').trim(),
+      isLockVisible: hasKey && state.isLockOn,
+      roots: roots,
+      scales: scales,
+      scaleQuery: state.scaleQuery,
+      setScaleQuery: (event) => this.setState({ scaleQuery: event.target.value }),
+      hasNoScaleMatches: scales.length === 0,
+      scaleCountLabel: data.scales.length + ' scales',
+      clearKey: () => this.setState({ root: null, foldMode: state.foldMode === 'scale' ? 'off' : state.foldMode }),
+      detectKey: () => this.setState({ root: 0, scaleId: 'minor' }),
+      isHighlightOn: state.isHighlightOn,
+      isLockOn: state.isLockOn,
+      highlightSwitchClass: switchClass(state.isHighlightOn),
+      lockSwitchClass: switchClass(state.isLockOn),
+      toggleHighlight: () => this.setState({ isHighlightOn: !state.isHighlightOn }),
+      toggleLock: () => this.setState({ isLockOn: !state.isLockOn }),
+
+      isFoldOpen: openPopover === 'fold',
+      toggleFoldMenu: () => this.togglePopover('fold'),
+      isFolded: isFoldActive,
+      foldLabel: foldLabelMap[state.foldMode],
+      foldChipClass: [openClass('view-chip', 'fold'), isFoldActive ? 'isActive' : ''].join(' ').trim(),
+      foldOptions: foldOptions,
+
+      isZoomOpen: openPopover === 'zoom',
+      toggleZoomMenu: () => this.togglePopover('zoom'),
+      zoomChipClass: openClass('view-chip', 'zoom'),
+      zoomLabel: state.zoom + '%',
+      rowZoomLabel: Math.round((rowHeight / 16) * 100) + '%',
+      zoomIn: () => this.setState({ zoom: Math.min(400, state.zoom + 25) }),
+      zoomOut: () => this.setState({ zoom: Math.max(50, state.zoom - 25) }),
+      rowsTaller: () => this.setState({ rowHeight: Math.min(32, rowHeight + 2) }),
+      rowsShorter: () => this.setState({ rowHeight: Math.max(10, rowHeight - 2) }),
+      zoomToFit: () => this.setState({ zoom: 100, rowHeight: fitRowHeight }),
+      startRulerDrag: (event) => this.startRulerDrag(event),
+      startRowDrag: (event) => this.startRowDrag(event),
+      scrollerRef: (element) => { this.scroller = element; },
+      contentWidthStyle: 'width: ' + state.zoom + '%',
+      rowHeightStyle: 'height: ' + rowHeight + 'px',
+
+      rulerBars: rulerBars,
+      rulerTicks: rulerTicks,
+      playheadStyle: 'left: ' + (state.step / 64) * 100 + '%',
+      keyRows: keyRows,
+      rollRows: rollRows,
+      gridLines: gridLines,
+      notes: notes
+    };
+  }
+}
+</script>
+
+
+</body></html>

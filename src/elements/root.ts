@@ -1,9 +1,9 @@
 import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { createEditor, parseKey, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type FoldMode, type NoteColorMode } from '../core';
+import { createEditor, fromMidiVelocity, parseKey, pitchRangeChords, type Editor, type MaddieDoc, type Note, type NoteInput, type Output, type Patch, type FoldMode, type NoteColorMode } from '../core';
 import { Engine } from '../engine/engine';
 import { OutputRouter, type SoundChoice } from '../engine/output-router';
-import { defaultKeymap, handleKey, type Keymap } from '../engine/keymap';
+import { defaultKeymap, HeldShortcuts, type Keymap } from '../engine/keymap';
 import { ContextRequestEvent, editorContext, ROOT_READY } from './context';
 import { computerKeyDown, computerKeyUp, releaseAll } from '../engine/computer-keyboard';
 import { pickMidiFile } from './midi-io';
@@ -11,6 +11,7 @@ import { tokens } from './tokens';
 
 /** Zest elements that handle their own keyboard input: the editor's shortcuts stay out of the way. */
 const OWN_KEYS = new Set(['z-select', 'z-number-input', 'z-input', 'z-slider', 'z-range', 'z-range-handle', 'z-switch', 'z-popover', 'z-badge', 'z-menu', 'z-context-menu', 'z-toggle-button-group']);
+const VELOCITY_ENTRY_DELAY = 1100;
 
 const bool = (v: string | null) => v !== null && v !== 'false' && v !== 'off';
 
@@ -75,6 +76,8 @@ export class MaddieRoot extends LitElement {
   @property({ attribute: false }) keymap: Keymap = defaultKeymap;
 
   private engine = Engine.for(this.editor);
+  private heldShortcuts = new HeldShortcuts(this.editor, () => this.shortcutKeymap());
+  private velocityEntry?: { text: string; timer?: number; trackId: string; selection: Editor['selection'] };
 
   constructor() {
     super();
@@ -179,7 +182,9 @@ export class MaddieRoot extends LitElement {
     if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
     window.addEventListener('keydown', this.onWindowKeyDown);
     window.addEventListener('keyup', this.onWindowKeyUp);
+    window.addEventListener('keyup', this.onShortcutKeyUp, true);
     window.addEventListener('blur', this.onWindowBlur);
+    window.addEventListener('focusin', this.clearShortcutState, true);
     document.dispatchEvent(new Event(ROOT_READY));
     this.readMotion();
   }
@@ -221,6 +226,10 @@ export class MaddieRoot extends LitElement {
     return html`<slot></slot>`;
   }
 
+  protected shortcutKeymap(): Keymap {
+    return this.keymap;
+  }
+
   // ── Internals ─────────────────────────────────────────────────────
 
   private wireEvents() {
@@ -237,21 +246,119 @@ export class MaddieRoot extends LitElement {
       Object.defineProperty(detail, 'doc', { get: () => ed.doc, enumerable: true });
       fire('maddie-change', detail);
     });
-    ed.on('selection', (e) => fire('maddie-selectionchange', { ids: [...e.ids] }));
+    ed.on('selection', (e) => {
+      this.clearVelocityEntry();
+      fire('maddie-selectionchange', { ids: [...e.ids] });
+    });
     ed.on('view', (e) => fire('maddie-viewchange', { view: e.view }));
     ed.on('transport', (e) => fire('maddie-transportchange', e));
     ed.on('noteon', (e) => fire('maddie-noteon', e));
-    ed.on('tracks', (e) => fire('maddie-trackchange', e));
+    ed.on('tracks', (e) => {
+      if (this.velocityEntry?.trackId !== ed.activeTrackId) this.clearVelocityEntry();
+      fire('maddie-trackchange', e);
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this.onWindowKeyDown);
     window.removeEventListener('keyup', this.onWindowKeyUp);
+    window.removeEventListener('keyup', this.onShortcutKeyUp, true);
     window.removeEventListener('blur', this.onWindowBlur);
+    window.removeEventListener('focusin', this.clearShortcutState, true);
+    this.clearShortcutState();
   }
 
-  private onWindowBlur = () => releaseAll(this.editor);
+  private onWindowBlur = () => {
+    this.clearShortcutState();
+    releaseAll(this.editor);
+  };
+
+  private clearShortcutState = () => {
+    this.clearVelocityEntry();
+    this.heldShortcuts.clear();
+  };
+
+  private clearVelocityEntry = () => {
+    window.clearTimeout(this.velocityEntry?.timer);
+    this.velocityEntry = undefined;
+  };
+
+  private commitVelocityEntry = () => {
+    const entry = this.velocityEntry;
+    this.clearVelocityEntry();
+    const ed = this.editor;
+    if (!entry || entry.trackId !== ed.activeTrackId || entry.selection !== ed.selection) return;
+    const values = /^(\d{1,3})(?:-(\d{1,3}))?$/.exec(entry.text);
+    if (!values) {
+      this.engine.toast('Enter a velocity like 80 or a range like 50–70', 'warning');
+      return;
+    }
+    const first = Number(values[1]);
+    const last = Number(values[2] ?? values[1]);
+    const lo = Math.min(first, last);
+    const hi = Math.max(first, last);
+    if (lo < 1 || hi > 127) {
+      this.engine.toast('Velocity must be between 1 and 127', 'warning');
+      return;
+    }
+    const from = fromMidiVelocity(lo);
+    const to = fromMidiVelocity(hi);
+    try {
+      if (ed.chordRegions) ed.chordTrack.commitChanged(pitchRangeChords(ed.selectedChordRegions, from, to), 'Change chord velocity');
+      else ed.commands.setVelocityRange(undefined, from, to);
+      this.engine.toast(lo === hi ? `Velocity ${lo}` : `Velocity ${lo}–${hi}`);
+    } catch (error) {
+      this.engine.toast((error as Error).message, 'error');
+    }
+  };
+
+  private handleTrackTab(event: KeyboardEvent, target?: HTMLElement) {
+    if (event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey ||
+      target?.closest('button, a[href], [role="button"], [role="tab"]')) return false;
+    const ed = this.editor;
+    const ids = ed.trackIds;
+    if (ids.length < 2) return false;
+    this.clearShortcutState();
+    if (!event.repeat) {
+      const offset = event.shiftKey ? -1 : 1;
+      const next = (ids.indexOf(ed.activeTrackId) + offset + ids.length) % ids.length;
+      ed.setActiveTrack(ids[next]);
+    }
+    return true;
+  }
+
+  private handleVelocityEntry(event: KeyboardEvent) {
+    const ed = this.editor;
+    const pending = this.velocityEntry;
+    const key = event.key;
+    const digit = /^\d$/.test(key);
+    const isEditing = pending && ['-', 'Backspace', 'Enter', 'Escape'].includes(key);
+    if (!ed.selection.size || event.ctrlKey || event.metaKey || event.altKey ||
+      (!digit && !isEditing) || (key === '0' && !pending)) {
+      this.clearVelocityEntry();
+      return false;
+    }
+    if (event.repeat) return true;
+    if (key === 'Enter') this.commitVelocityEntry();
+    else if (key === 'Escape') {
+      this.clearVelocityEntry();
+      this.engine.toast('Velocity entry cancelled');
+    } else {
+      const entry = pending ?? { text: '', trackId: ed.activeTrackId, selection: ed.selection };
+      window.clearTimeout(entry.timer);
+      if (key === 'Backspace') entry.text = entry.text.slice(0, -1);
+      else if ((key !== '-' || !entry.text.includes('-')) && entry.text.length < 7) entry.text += key;
+      if (entry.text) {
+        entry.timer = entry.text.endsWith('-') ? undefined : window.setTimeout(this.commitVelocityEntry, VELOCITY_ENTRY_DELAY);
+        this.velocityEntry = entry;
+        this.engine.toast(`Velocity ${entry.text.replace('-', '–')} · Enter to apply`);
+      } else this.clearVelocityEntry();
+    }
+    return true;
+  }
+
+  private onShortcutKeyUp = (e: KeyboardEvent) => this.heldShortcuts.keyUp(e);
 
   private onWindowKeyUp = (e: KeyboardEvent) => {
     // Always release, wherever focus went.
@@ -269,35 +376,23 @@ export class MaddieRoot extends LitElement {
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
-    const target = e.composedPath()[0] as HTMLElement | undefined;
+    const path = e.composedPath();
+    const target = path[0] as HTMLElement | undefined;
     const tag = target?.tagName;
-    const textInput =
-      (tag === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)) ||
-      tag === 'TEXTAREA' || tag === 'SELECT' ||
-      target?.isContentEditable;
-    if (textInput) return;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || e.isComposing) return;
     const isOctaveKey = !e.metaKey && !e.ctrlKey && !e.altKey && (e.code === 'Equal' || e.code === 'Minus');
-    if (isOctaveKey && computerKeyDown(this.editor, e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     // Zest fields (selects, sliders, switches, number inputs) and open popovers keep their own keys.
-    if (!e.metaKey && !e.ctrlKey && e.composedPath().some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
-    if (computerKeyDown(this.editor, e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+    if (!isOctaveKey && !e.metaKey && !e.ctrlKey && path.some((el) => el instanceof HTMLElement && OWN_KEYS.has(el.localName))) return;
+    const handledEditorKey = this.handleTrackTab(e, target) || this.handleVelocityEntry(e);
     // Keep native activation for focused buttons.
-    const isButtonActivation = tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ');
+    const isButtonActivation = !handledEditorKey && tag === 'BUTTON' && (e.key === 'Enter' || e.key === ' ');
     if (isButtonActivation) return;
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       pickMidiFile(this.editor, this);
       return;
     }
-    if (handleKey(this.editor, e, this.keymap)) {
+    if (handledEditorKey || this.heldShortcuts.keyDown(e, () => computerKeyDown(this.editor, e))) {
       e.preventDefault();
       e.stopPropagation();
     }

@@ -8,7 +8,11 @@ import { icons } from '../elements/icons';
 import { pickMidiFile, requestMidiExport } from '../elements/midi-io';
 import { tokens } from '../elements/tokens';
 import { allowClicksThroughClosingPopover, showEditorToast } from '../elements/zest';
-import { downloadProject, parseProject } from './project-file';
+import { downloadProject, parseProject, projectFilename } from './project-file';
+import {
+  folderPermission, listFolderProjects, loadProjectFolder, openFolderProject, projectFolderPicker,
+  rememberProjectFolder, saveFolderProject, type ProjectFolder,
+} from './project-folder';
 import type { Projects } from './projects';
 import projectStyles from './project-menu.css?raw';
 
@@ -38,8 +42,15 @@ export class MaddieProjectMenu extends LitElement {
   @property({ attribute: false }) projects?: Projects;
   @property({ attribute: false }) editor?: Editor;
   @state() private draft: string | null = null;
-  @state() private isLibrary = false;
+  @state() private screen: 'menu' | 'library' | 'folder' = 'menu';
   @state() private query = '';
+  @state() private folder?: ProjectFolder;
+  @state() private folderReady = false;
+  @state() private folderFiles: string[] = [];
+  @state() private folderBusy = false;
+  @state() private replaceFile?: string;
+  private restoredFolder = false;
+  private folderSources = new Map<string, string>();
   private unsubscribe?: () => void;
 
   connectedCallback() {
@@ -92,16 +103,17 @@ export class MaddieProjectMenu extends LitElement {
     if (isOpen) this.projects?.refreshLibrary();
     if (!isOpen) this.commit();
     this.query = '';
-    this.isLibrary = false;
+    this.screen = 'menu';
+    this.replaceFile = undefined;
   };
 
   private showLibrary = () => {
-    this.isLibrary = true;
+    this.screen = 'library';
     void this.updateComplete.then(() => this.renderRoot.querySelector<SearchInputT>('.project-search')?.focus());
   };
 
   private hideLibrary = () => {
-    this.isLibrary = false;
+    this.screen = 'menu';
     this.query = '';
     void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.open-project')?.focus());
   };
@@ -122,6 +134,120 @@ export class MaddieProjectMenu extends LitElement {
       }
     }, { once: true });
     input.click();
+  };
+
+  private showFolder = () => {
+    this.commit();
+    this.screen = 'folder';
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.folder-back')?.focus());
+    void this.folderAction("Couldn't read the project folder.", async () => {
+      if (!this.restoredFolder) {
+        this.folder = await loadProjectFolder().catch(() => undefined);
+        this.restoredFolder = true;
+      }
+      await this.refreshFolder();
+    });
+  };
+
+  private hideFolder = () => {
+    this.screen = 'menu';
+    this.replaceFile = undefined;
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.open-folder')?.focus());
+  };
+
+  private async folderAction(message: string, run: () => Promise<void>) {
+    if (this.folderBusy) return;
+    this.folderBusy = true;
+    try {
+      await run();
+    } catch (error) {
+      const permissionLost = error instanceof DOMException && error.name === 'NotAllowedError';
+      if (permissionLost) {
+        this.folderReady = false;
+        this.folderFiles = [];
+      }
+      showEditorToast(permissionLost ? 'Allow access to the project folder and try again.' : message);
+    } finally {
+      this.folderBusy = false;
+    }
+  }
+
+  private async refreshFolder() {
+    const folder = this.folder;
+    this.folderReady = Boolean(folder && await folderPermission(folder) === 'granted');
+    this.folderFiles = this.folderReady && folder ? await listFolderProjects(folder) : [];
+  }
+
+  private chooseFolder = () => {
+    const pick = projectFolderPicker();
+    if (!pick) return;
+    void this.folderAction("Couldn't connect to that folder. Choose a project folder and try again.", async () => {
+      let folder: ProjectFolder;
+      try {
+        folder = await pick();
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        throw error;
+      }
+      this.folder = folder;
+      this.folderReady = false;
+      this.folderFiles = [];
+      this.folderSources.clear();
+      this.replaceFile = undefined;
+      await rememberProjectFolder(folder).catch(() => showEditorToast('Folder access is available for this session.'));
+      await this.refreshFolder();
+    });
+  };
+
+  private allowFolder = () => {
+    const folder = this.folder;
+    if (!folder) return;
+    void this.folderAction("Couldn't access the project folder.", async () => {
+      if (await folderPermission(folder, true) !== 'granted') {
+        showEditorToast('Folder permission was declined.');
+        return;
+      }
+      await this.refreshFolder();
+    });
+  };
+
+  private disconnectFolder = () => {
+    void this.folderAction("Couldn't forget the project folder.", async () => {
+      await rememberProjectFolder(null);
+      this.folder = undefined;
+      this.folderReady = false;
+      this.folderFiles = [];
+      this.folderSources.clear();
+      this.replaceFile = undefined;
+    });
+  };
+
+  private openFromFolder = (filename: string) => {
+    const { folder, projects } = this;
+    if (!folder || !projects) return;
+    void this.folderAction(`Couldn't open ${filename}.`, async () => {
+      const project = await openFolderProject(folder, filename);
+      projects.importProject(project);
+      this.folderSources.set(projects.activeId, filename);
+      this.close();
+      showEditorToast('Opened ' + project.name);
+    });
+  };
+
+  private saveToFolder = (replace = false) => {
+    const { folder, projects } = this;
+    if (!folder || !projects) return;
+    const project = projects.snapshot();
+    const filename = this.folderSources.get(projects.activeId) ?? projectFilename(project.name);
+    if (replace && this.replaceFile !== filename) return;
+    void this.folderAction(`Couldn't save ${filename}.`, async () => {
+      const result = await saveFolderProject(folder, filename, project, replace);
+      this.replaceFile = result === 'exists' ? filename : undefined;
+      if (result === 'saved') {
+        showEditorToast('Saved ' + filename);
+        await this.refreshFolder().catch(() => showEditorToast('Saved the project, but the folder list could not be refreshed.'));
+      }
+    });
   };
 
   private renderEntry = (projects: Projects, entry: ProjectEntryT) => {
@@ -164,6 +290,38 @@ export class MaddieProjectMenu extends LitElement {
     <p class="project-footer">Projects are saved in this browser. Export one to back it up.</p>`;
   };
 
+  private renderFolder = () => {
+    const busy = this.folderBusy;
+    const filename = this.replaceFile;
+    return html`<div class="projects-header">
+      <z-tooltip content="Back to project menu" placement="bottom">
+        <z-button class="folder-back" is-icon size="xs" kind="ghost" aria-label="Back to project menu" @click=${this.hideFolder}>${icons.back}</z-button>
+      </z-tooltip><strong>Local project folder</strong>
+    </div>
+    ${this.folder ? html`<p class="folder-caption" title=${this.folder.name}>${this.folder.name}</p>` : nothing}
+    ${this.folderReady ? html`
+      <button class="project-action" ?disabled=${busy || Boolean(filename)} type="button" @click=${() => this.saveToFolder()}>Save project here<span>.maddie</span></button>
+      ${filename ? html`<div class="folder-replace">
+        <p role="status">Replace ${filename}?</p>
+        <button class="project-action" ?disabled=${busy} type="button" @click=${() => this.saveToFolder(true)}>Replace file</button>
+        <button class="project-action" ?disabled=${busy} type="button" @click=${() => { this.replaceFile = undefined; }}>Cancel</button>
+      </div>` : nothing}
+      <z-separator></z-separator>
+      <z-scroll-area class="folder-list" aria-label="Projects in folder">
+        ${this.folderFiles.map((name) => html`<button class="project-row" ?disabled=${busy || Boolean(filename)} type="button" title=${name}
+          @click=${() => this.openFromFolder(name)}><span class="project-name">${name}</span></button>`)}
+        ${!this.folderFiles.length && !busy ? html`<p>No .maddie files in this folder.</p>` : nothing}
+      </z-scroll-area>
+    ` : this.folder ? html`
+      <button class="project-action" ?disabled=${busy} type="button" @click=${this.allowFolder}>Allow folder access</button>
+    ` : html`<p class="folder-caption">Choose or create a folder for your .maddie files.</p>`}
+    ${busy ? html`<p class="folder-caption" role="status">Working…</p>` : nothing}
+    <div class="folder-footer">
+      <button class="project-action" ?disabled=${busy} type="button" @click=${this.chooseFolder}>${this.folder ? 'Change folder…' : 'Choose folder…'}</button>
+      ${this.folder ? html`<button class="project-action" ?disabled=${busy} type="button" @click=${this.disconnectFolder}>Forget folder</button>` : nothing}
+    </div>`;
+  };
+
   private renderMain = (projects: Projects, ed: Editor) => {
     const name = this.draft ?? projects.current.name;
     const setDraft = (event: CustomEvent<{ value: string }>) => { this.draft = event.detail.value; };
@@ -193,6 +351,7 @@ export class MaddieProjectMenu extends LitElement {
     <z-separator></z-separator>
     <button class="project-action" type="button" @click=${newProject}>New project</button>
     <button class="project-action open-project" type="button" @click=${this.showLibrary}>Open project…<span aria-hidden="true">›</span></button>
+    ${projectFolderPicker() ? html`<button class="project-action open-folder" type="button" @click=${this.showFolder}>Local project folder…<span aria-hidden="true">›</span></button>` : nothing}
     <z-separator></z-separator>
     <button class="project-action" type="button" @click=${importProject}>Import project…<span>.maddie</span></button>
     <button class="project-action" type="button" @click=${importMidi}>Import MIDI…<span>.mid</span></button>
@@ -206,7 +365,8 @@ export class MaddieProjectMenu extends LitElement {
     const ed = this.editor;
     if (!projects || !ed) return nothing;
     const name = this.draft ?? projects.current.name;
-    const panel = this.isLibrary ? this.renderLibrary(projects) : this.renderMain(projects, ed);
+    const panel = this.screen === 'folder' ? this.renderFolder() :
+      this.screen === 'library' ? this.renderLibrary(projects) : this.renderMain(projects, ed);
 
     return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-start" offset="6" aria-label="Project" @toggle=${this.toggle}>
       <z-button slot="trigger" kind="ghost" size="md" title=${name}>

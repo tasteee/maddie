@@ -2,17 +2,39 @@ import type { ScaledT } from '@tasteee/scaled/types';
 import type { ChordFamily } from './music/chords';
 import type { FoldMode } from './music/rowmap';
 import type { GridValue } from './music/grid';
-import type { Tick } from './types';
+import type { ChordRegion, Tick } from './types';
 
 
 /** How notes are colored. `pitch`: low → high gradient. `pitch-class`: every C the same. `mono`: one color. */
 export type NoteColorMode = 'pitch' | 'pitch-class' | 'mono';
 
 export const CHORD_VOICINGS: Record<ScaledT.VoicingNameT, string> = {
-  rootPosition: 'Root position', closed: 'Closed', open: 'Open', dynamic: 'Dynamic',
+  rootPosition: 'Standard', closed: 'Closed', open: 'Open', dynamic: 'Dynamic',
   dynamicBass: 'Dynamic with bass', guitar: 'Guitar', drop2: 'Drop 2', drop3: 'Drop 3',
   drop4: 'Drop 4', drop2and3: 'Drop 2 and 3', drop2and4: 'Drop 2 and 4', spread: 'Spread', shell: 'Shell',
 };
+
+export const CHORD_INVERSION_LABELS = ['No inversion', '1st inversion', '2nd inversion', '3rd inversion'] as const;
+
+/**
+ * Voicings hidden for now. Dynamic voicings depend on the chord before them, so editing one
+ * chord would re-voice the chords after it and change sounds the user already chose.
+ */
+export const DISABLED_VOICINGS: readonly ScaledT.VoicingNameT[] = ['dynamic', 'dynamicBass'];
+
+/** The voicings the pickers offer. */
+export const offeredVoicings = (names: readonly ScaledT.VoicingNameT[]): ScaledT.VoicingNameT[] =>
+  names.filter((name) => !DISABLED_VOICINGS.includes(name));
+
+export function chordCraftSettings(region: ChordRegion, tonic = 0): Pick<ViewState, 'chordOctave' | 'chordInversion' | 'chordVoicing' | 'chordTemplateId'> {
+  const rootMidi = region.rootMidi ?? Math.min(...region.pitches);
+  return {
+    chordOctave: Math.max(1, Math.min(6, Math.floor((rootMidi - tonic) / 12) - 1)),
+    chordInversion: region.inversion ?? 0,
+    chordVoicing: region.voicing ?? 'rootPosition',
+    chordTemplateId: region.performance?.templateId ?? '',
+  };
+}
 
 /** Everything about how the doc is looked at. Never undoable. */
 export interface ViewState {
@@ -55,13 +77,15 @@ export interface ViewState {
   chordsTab: 'all' | 'project';
   /** The Suggestions rail beside the chords panel, open or folded. It shows either way. */
   suggestionsOpen: boolean;
+  /** The velocity lane under the grid, open or folded to its label strip. */
+  velocityLaneOpen: boolean;
   /** Which pattern picker is open: for the chord being crafted, or for the selected chords. */
   patternPicker: 'craft' | 'selection' | null;
   /** Experimental app settings: force parts of the chords panel to the dark theme. */
   chordsPanelDark: boolean;
   chordCraftDark: boolean;
   suggestionsDark: boolean;
-  chordFamily: ChordFamily | 'all';
+  hiddenChordFamilies: readonly ChordFamily[];
   chordQuery: string;
   chordOctave: number;
   chordInversion: number;
@@ -81,10 +105,20 @@ export interface ViewState {
   ghostNotes: boolean;
 }
 
+/**
+ * Pixels of empty grid before tick 0, so a note at the very start isn't flush against the
+ * keyboard: its velocity handle and edges stay whole and grabbable. Scrolled fully left,
+ * `scrollTick` is `minScrollTick(pxPerTick)`, a little below 0.
+ */
+export const TIME_LEAD_IN_PX = 12;
+
+/** The furthest left the view scrolls at this zoom: tick 0 sits `TIME_LEAD_IN_PX` in. */
+export const minScrollTick = (pxPerTick: number): number => -TIME_LEAD_IN_PX / pxPerTick;
+
 export const DEFAULT_VIEW: ViewState = {
   pxPerTick: 0.09,
   rowHeight: 20,
-  scrollTick: 0,
+  scrollTick: -TIME_LEAD_IN_PX / 0.09,
   scrollRow: null,
   grid: '1/16',
   snap: true,
@@ -104,11 +138,12 @@ export const DEFAULT_VIEW: ViewState = {
   chordsPanel: false,
   chordsTab: 'all',
   suggestionsOpen: true,
+  velocityLaneOpen: true,
   patternPicker: null,
   chordsPanelDark: false,
   chordCraftDark: false,
   suggestionsDark: false,
-  chordFamily: 'all',
+  hiddenChordFamilies: [],
   chordQuery: '',
   chordOctave: 3,
   chordInversion: 0,

@@ -1,4 +1,4 @@
-import { barsInRange, pitchClass, resolveGrid, snapTick, timeSigAt, type Editor, type Note, type NoteColorMode } from '../core';
+import { barLength, barsInRange, beatLength, gridTicksInRange, MIN_BAR_PX, MIN_LINE_PX, pitchClass, resolveGrid, snapTick, timeSigAt, type Editor, type Note, type NoteColorMode } from '../core';
 import type { NoteDisplay } from '../engine/animation';
 import { clamp, easeOut } from '../engine/ease';
 import type { DisplayView, Engine } from '../engine/engine';
@@ -137,28 +137,27 @@ export function drawTimeGrid(
   const from = v.scrollTick;
   const to = from + width / v.pxPerTick;
   const bars = barsInRange(Math.max(0, from - ppq * 16), to, meta.timeSignature, ppq);
-  const grid = resolveGrid(editor.view.grid, ppq, v.pxPerTick, bars[0]?.sig);
-  const subPx = grid * v.pxPerTick;
-  const gridFade = easeOut(clamp((now - engine.gridChangedAt) / engine.motion.slow, 0, 1));
-  const subAlpha = subPx >= MIN_LINE_PX ? gridFade : 0;
-  const showBeats = ppq * v.pxPerTick >= MIN_LINE_PX;
+  const gridFade = engine.motion.slow > 0 ? easeOut(clamp((now - engine.gridChangedAt) / engine.motion.slow, 0, 1)) : 1;
+  const tickPadding = 1 / v.pxPerTick;
   const x = (t: number) => (t - from) * v.pxPerTick;
 
   ctx.lineWidth = 1;
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
-    const barLen = (bars[i + 1]?.tick ?? bar.tick + (ppq * 4 * bar.sig.numerator) / bar.sig.denominator) - bar.tick;
-    const beat = ppq;
+    const barEnd = bars[i + 1]?.tick ?? bar.tick + barLength(bar.sig, ppq);
+    const beat = beatLength(bar.sig, ppq);
+    const showBeats = beat * v.pxPerTick >= MIN_LINE_PX;
+    const grid = resolveGrid(editor.view.grid, ppq, v.pxPerTick, bar.sig);
     // Subdivisions.
-    if (subAlpha > 0.01) {
-      ctx.strokeStyle = withAlpha(p['line-sub'], subAlpha);
+    if (gridFade > 0.01 && grid * v.pxPerTick >= MIN_LINE_PX) {
+      ctx.strokeStyle = withAlpha(p['line-sub'], gridFade);
       ctx.beginPath();
-      for (let t = bar.tick + grid; t < bar.tick + barLen - 0.5; t += grid) {
-        if (Math.abs((t - bar.tick) % beat) < 0.5) continue;
-        const xx = x(t);
-        if (xx < -1 || xx > width + 1) continue;
-        ctx.moveTo(crisp(xx), top);
-        ctx.lineTo(crisp(xx), top + height);
+      for (const tick of gridTicksInRange(Math.max(bar.tick, from - tickPadding), Math.min(barEnd, to + tickPadding), grid, bar.sig.tick)) {
+        const beatTick = bar.tick + Math.round((tick - bar.tick) / beat) * beat;
+        if (Math.abs(tick - bar.tick) <= 0.5 || (showBeats && Math.abs(tick - beatTick) <= 0.5)) continue;
+        const xx = crisp(x(tick));
+        ctx.moveTo(xx, top);
+        ctx.lineTo(xx, top + height);
       }
       ctx.stroke();
     }
@@ -166,7 +165,7 @@ export function drawTimeGrid(
     if (showBeats) {
       ctx.strokeStyle = p['line-beat'];
       ctx.beginPath();
-      for (let t = bar.tick + beat; t < bar.tick + barLen - 0.5; t += beat) {
+      for (let t = bar.tick + beat; t < barEnd - 0.5; t += beat) {
         const xx = x(t);
         if (xx < -1 || xx > width + 1) continue;
         ctx.moveTo(crisp(xx), top);
@@ -176,7 +175,7 @@ export function drawTimeGrid(
     }
   }
   // Bars (thinned when zoomed far out).
-  const barPx = (bars[0] ? (ppq * 4 * bars[0].sig.numerator) / bars[0].sig.denominator : ppq * 4) * v.pxPerTick;
+  const barPx = (bars[0] ? barLength(bars[0].sig, ppq) : ppq * 4) * v.pxPerTick;
   const every = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
   ctx.strokeStyle = p['line-bar'];
   ctx.beginPath();
@@ -190,10 +189,6 @@ export function drawTimeGrid(
   ctx.stroke();
 }
 
-// The grid's drawing thresholds, shared with snapping so nothing snaps to a hidden line.
-const MIN_LINE_PX = 4;
-const MIN_BAR_PX = 12;
-
 /**
  * The drawn grid line nearest `tick`: bar lines (thinned when zoomed out), beat lines,
  * and subdivisions, each only while the grid draws it at this zoom.
@@ -201,16 +196,18 @@ const MIN_BAR_PX = 12;
 export function nearestVisibleLine(editor: Editor, tick: number, pxPerTick: number): number {
   const { ppq, meta } = editor;
   const sigs = meta.timeSignature;
+  const sig = timeSigAt(Math.max(0, tick), sigs);
   const near = barsInRange(Math.max(0, tick - ppq * 32), tick + ppq * 32, sigs, ppq);
   const firstSig = near[0]?.sig;
-  const barTicks = firstSig ? (ppq * 4 * firstSig.numerator) / firstSig.denominator : ppq * 4;
+  const barTicks = firstSig ? barLength(firstSig, ppq) : ppq * 4;
   const barPx = barTicks * pxPerTick;
   const barEvery = barPx >= MIN_BAR_PX ? 1 : Math.pow(2, Math.ceil(Math.log2(MIN_BAR_PX / barPx)));
   const candidates = near.filter((bar) => (bar.index - 1) % barEvery === 0).map((bar) => bar.tick);
 
-  const areBeatsDrawn = ppq * pxPerTick >= MIN_LINE_PX;
-  if (areBeatsDrawn) candidates.push(snapTick(tick, ppq, sigs));
-  const grid = resolveGrid(editor.view.grid, ppq, pxPerTick, timeSigAt(Math.max(0, tick), sigs));
+  const beat = beatLength(sig, ppq);
+  const areBeatsDrawn = beat * pxPerTick >= MIN_LINE_PX;
+  if (areBeatsDrawn) candidates.push(snapTick(tick, beat, sigs));
+  const grid = resolveGrid(editor.view.grid, ppq, pxPerTick, sig);
   const areSubdivisionsDrawn = grid * pxPerTick >= MIN_LINE_PX;
   if (areSubdivisionsDrawn) candidates.push(snapTick(tick, grid, sigs));
 
@@ -234,12 +231,19 @@ export function drawLoop(ctx: CanvasRenderingContext2D, editor: Editor, v: Displ
   ctx.fillRect(x0, 0, x1 - x0, height);
 }
 
-/** Playhead line. Dimmed while stopped. */
+/** A stationary insert marker and a solid playhead while playback runs. */
 export function drawPlayhead(ctx: CanvasRenderingContext2D, editor: Editor, v: DisplayView, p: Palette, height: number) {
-  const pos = editor.transport.position;
-  const x = (pos - v.scrollTick) * v.pxPerTick;
-  ctx.fillStyle = p.playhead;
-  ctx.fillRect(Math.round(x), 0, 1, height);
+  const x = (tick: number) => Math.round((tick - v.scrollTick) * v.pxPerTick);
+  const markerX = x(editor.view.cursor);
+  ctx.fillStyle = withAlpha(p.playhead, 0.8);
+  for (let y = 0; y < height; y += 8) {
+    ctx.fillRect(markerX, y, 1, Math.min(5, height - y));
+  }
+  const playheadX = x(editor.transport.position);
+  if (editor.transport.playing || playheadX !== markerX) {
+    ctx.fillStyle = p.playhead;
+    ctx.fillRect(playheadX, 0, 1, height);
+  }
 }
 
 /** Rounded rect path (radius clamped to size). */

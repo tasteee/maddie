@@ -6,6 +6,7 @@ import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
 import { PROJECT_VIEW_KEYS, readProject, restoreProjectView, type MaddieProject } from './project-file';
 
 export const PROJECT_STORAGE_KEY = 'maddie.projects.v1';
+export const BACKUP_STORAGE_KEY = 'maddie.projects.v1.backup';
 const EMPTY_LOOP = { enabled: false, start: 0, end: 0 };
 const UNTITLED = 'Untitled Project';
 const VIEWPORT_KEYS = new Set<keyof ViewState>(['scrollTick', 'scrollRow', 'pxPerTick', 'rowHeight']);
@@ -225,10 +226,11 @@ export class Projects {
       const ed = this.editor;
       const { activeTrackId, loop, marker, soundId, midiPortId, volume, metronomeEnabled, metronomeVolume } = file.settings ?? {};
       const view = restoreProjectView(file.settings);
+      view.cursor = marker ?? view.cursor;
       ed.capture.clear();
       ed.setDoc(file.doc);
       ed.setActiveTrack(activeTrackId && ed.trackIds.includes(activeTrackId) ? activeTrackId : ed.trackIds[0]);
-      ed.transport.seek(marker ?? 0);
+      ed.transport.seek(view.cursor);
       ed.transport.setLoop(loop ?? EMPTY_LOOP);
       ed.transport.setMetronome({
         enabled: metronomeEnabled ?? DEFAULT_METRONOME.enabled,
@@ -276,13 +278,34 @@ export class Projects {
     }
     const value = JSON.parse(raw) as Partial<ProjectShelf> | null;
     if (!value || typeof value.activeId !== 'string' || !Array.isArray(value.projects)) throw new Error('Invalid project library');
-    const projects = value.projects.map(({ id, file }) => {
-      if (typeof id !== 'string' || !id) throw new Error('Invalid project identifier');
-      return { id, file: readProject(file) };
-    });
+    // One bad project must not take the whole library with it. Skip it, say why, keep a copy.
+    const projects: ProjectEntry[] = [];
+    let hasRejected = false;
+    for (const entry of value.projects) {
+      try {
+        const hasId = typeof entry?.id === 'string' && entry.id !== '';
+        if (!hasId) throw new Error('Invalid project identifier');
+        projects.push({ id: entry.id, file: readProject(entry.file) });
+      } catch (error) {
+        hasRejected = true;
+        console.error('Maddie: skipped a saved project that failed validation.', entry?.id, (error as Error).message);
+      }
+    }
+    if (hasRejected) this.keepBackup(raw);
     if (new Set(projects.map((project) => project.id)).size !== projects.length) throw new Error('Duplicate project identifier');
     this.lastRaw = raw;
     return this.lastShelf = { activeId: value.activeId, projects };
+  }
+
+  // The next save rewrites the library without the skipped projects, so keep the original once.
+  private keepBackup(raw: string) {
+    try {
+      const hasBackup = this.storage?.getItem(BACKUP_STORAGE_KEY) != null;
+      if (hasBackup) return;
+      this.storage?.setItem(BACKUP_STORAGE_KEY, raw);
+    } catch {
+      // Storage is full or unavailable. The original stays in place until the next save.
+    }
   }
 
   private blank(): MaddieProject {

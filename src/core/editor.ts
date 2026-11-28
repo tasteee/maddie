@@ -12,7 +12,7 @@ import { Recorder } from './recorder';
 import { Transport } from './transport';
 import { getAudibleTrackIds, getTrackColor } from './tracks';
 import type { ChordRegion, MaddieDoc, Note, NoteId, Tick, Track, TrackChangesT, TrackMetaT, TrackNoteT } from './types';
-import { DEFAULT_VIEW, ZOOM_LIMITS, type ViewState } from './view';
+import { DEFAULT_VIEW, minScrollTick, ZOOM_LIMITS, type ViewState } from './view';
 import { clampVelocity } from './music/velocity';
 
 export const DEFAULT_VOLUME = { level: 0.8, muted: false };
@@ -183,6 +183,7 @@ export class Editor extends Emitter<EditorEvents> {
   /** Replace the whole document. Clears history by default. */
   setDoc(doc: Partial<MaddieDoc>, { keepHistory = false, origin = 'load' as Origin } = {}) {
     const next = createDoc(doc);
+    this.transport.clearResumePosition();
     this._meta = { ppq: next.ppq, tempo: next.tempo, timeSignature: next.timeSignature, key: next.key };
     this.tracks.clear();
     for (const t of next.tracks) {
@@ -385,12 +386,19 @@ export class Editor extends Emitter<EditorEvents> {
     return this._view;
   }
 
+  /** Set the paste destination and the next playback start together. */
+  setInsertMarker(tick: Tick) {
+    const cursor = Math.max(0, tick);
+    this.setView({ cursor });
+    this.transport.setMarker(cursor);
+  }
+
   setView(partial: Partial<ViewState>, { animate = false } = {}) {
     const prev = this._view;
     const next = { ...prev, ...partial };
     next.pxPerTick = Math.min(ZOOM_LIMITS.pxPerTick[1], Math.max(ZOOM_LIMITS.pxPerTick[0], next.pxPerTick));
     next.rowHeight = Math.min(ZOOM_LIMITS.rowHeight[1], Math.max(ZOOM_LIMITS.rowHeight[0], next.rowHeight));
-    next.scrollTick = Math.max(0, next.scrollTick);
+    next.scrollTick = Math.max(minScrollTick(next.pxPerTick), next.scrollTick);
     next.noteVelocity = clampVelocity(next.noteVelocity);
     let changed = false;
     for (const k in next) if (next[k as keyof ViewState] !== prev[k as keyof ViewState]) changed = true;
@@ -650,18 +658,18 @@ export class Editor extends Emitter<EditorEvents> {
   }
 
   /** Audition a rendered passage without changing the transport position. */
-  auditionNotes(notes: readonly Note[], origin: Tick) {
+  auditionNotes(notes: readonly Note[], origin: Tick, trackId = this.activeTrackId) {
     this.stopChord();
-    const trackId = this.activeTrackId;
     const out = this.getTrackOutput(trackId);
-    if (!out || this.volume.muted || !notes.length) return;
+    const audible = notes.filter((note) => !note.muted);
+    if (!out || this.volume.muted || !audible.length) return;
     this.claimOutput(out);
     const { tempo, ppq } = this.meta;
     const seconds = (tick: Tick) => ticksToSeconds(tick, tempo, ppq);
     const offset = seconds(origin);
     const chord = { output: out, started: new Set<Note>(), timers: [] as Array<ReturnType<typeof setTimeout>> };
     this.chord = chord;
-    for (const note of [...notes].sort((a, b) => a.start - b.start)) {
+    for (const note of audible.sort((a, b) => a.start - b.start)) {
       const start = () => {
         if (this.volume.muted || this.getTrackGain(trackId) === 0) return;
         chord.started.add(note);

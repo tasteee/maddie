@@ -1,4 +1,5 @@
-import { unsafeCSS, html, nothing } from 'lit';
+import { unsafeCSS, html, nothing, svg } from 'lit';
+import { maxScrollTick } from '../engine/interact';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ref } from 'lit/directives/ref.js';
 import { live } from 'lit/directives/live.js';
@@ -6,15 +7,19 @@ import {
   ticksToSeconds,
   exportFilename,
   formatBBT,
-  GRID_OPTIONS,
+  GRID_DIVISIONS,
+  GRID_FEELS,
+  FOLD_CHOICES,
   type GridValue,
   GRID_MODIFIERS,
   canHaveModifier,
   getGridModifier,
   getStraightGrid,
   setGridModifier,
+  detectKey,
   displayPitchClass,
   getEditorScaleId,
+  inScale,
   SCALES,
   EDITOR_SCALE_IDS,
   type Editor,
@@ -25,7 +30,7 @@ import {
 import type { Engine } from '../engine/engine';
 import { clamp } from '../engine/ease';
 import { setBaseOctave, setComputerKeyboard, setKeyboardScale } from '../engine/computer-keyboard';
-import { captureMidi, modKeyLabel } from '../engine/keymap';
+import { actions, captureMidi, modKeyLabel } from '../engine/keymap';
 import { MidiInput, setMidiDevice, setMidiInput } from '../engine/midi-input';
 import { MIDI_SOURCE, OutputRouter } from '../engine/output-router';
 import { applyTheme, readAppSettings, writeAppSettings, type ExperimentalThemeKeyT, type ThemePreferenceT } from '../engine/app-settings';
@@ -35,7 +40,7 @@ import { icons } from './icons';
 import { pickMidiFile, requestMidiExport } from './midi-io';
 import { tokens } from './tokens';
 import type { ZestTone, ZestOptionT } from './zest';
-import { allowClicksThroughClosingPopover, sizeEditorMenu } from './zest';
+import { allowClicksThroughClosingPopover } from './zest';
 import dividerCss from './toolbar-divider.css?raw';
 import panelCss from './controls.css?raw';
 import controlCss from './control.css?raw';
@@ -66,6 +71,62 @@ class ControlElement extends MaddieElement {
     this.track(editor.on('view', update), editor.on('change', update), editor.on('history', update), editor.on('transport', update));
   }
 }
+
+type ShortcutPopover = HTMLElement & { isOpen: boolean };
+
+class ShortcutMenuControl extends ControlElement {
+  private returnFocus?: HTMLElement;
+  private pendingKey?: string;
+
+  protected get menu() { return this.renderRoot.querySelector<ShortcutPopover>('z-popover'); }
+
+  private get menuTrigger() {
+    const trigger = this.menu?.querySelector<HTMLElement>('[slot="trigger"]');
+    return trigger?.querySelector<HTMLElement>('z-button, z-toggle-button') ?? trigger;
+  }
+
+  openMenu(returnFocus: HTMLElement) {
+    const menu = this.menu;
+    if (!menu || menu.isOpen) return;
+    this.returnFocus = returnFocus;
+    this.pendingKey = undefined;
+    menu.isOpen = true;
+    this.menuTrigger?.focus({ preventScroll: true });
+  }
+
+  protected closeMenu() {
+    const menu = this.menu;
+    if (!menu?.isOpen) return;
+    const focus = this.returnFocus?.isConnected ? this.returnFocus : this.menuTrigger;
+    menu.isOpen = false;
+    focus?.focus({ preventScroll: true });
+  }
+
+  protected onMenuToggle = (event: CustomEvent<{ open: boolean }>) => {
+    if (event.target !== event.currentTarget || event.detail.open) return;
+    this.pendingKey = undefined;
+    this.returnFocus = undefined;
+  };
+
+  protected handleMenuKey(event: KeyboardEvent, opener: string, commands: Record<string, () => void>) {
+    if (!this.menu?.isOpen || event.defaultPrevented || event.isComposing ||
+      event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== 'escape' && key !== opener && !Object.hasOwn(commands, key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.type === 'keydown') {
+      if (key === 'escape') this.closeMenu();
+      else if (!event.repeat) this.pendingKey ??= key;
+    } else if (key === this.pendingKey) {
+      this.pendingKey = undefined;
+      if (key === opener) this.closeMenu();
+      else commands[key]?.();
+    }
+  }
+}
+
+const shortcutLabel = (label: string, key: string) => html`<span class="shortcut-label">${label}<kbd aria-hidden="true">${key}</kbd></span>`;
 
 const tip = (label: string, shortcut?: string) => (shortcut ? `${label}   ${shortcut}` : label);
 
@@ -189,19 +250,41 @@ const renderChoices = (
   </z-toggle-button-group>`;
 };
 
-const GRID_DIVISIONS = GRID_OPTIONS.filter((option) =>
-  ['1/4', '1/8', '1/16', '1/32', '1/64'].includes(option.value),
-);
-const GRID_FEELS = [
-  { label: 'Straight', value: 'straight' },
-  { label: 'Triplet', value: 'triplet' },
-  { label: 'Dotted', value: 'dotted' },
-] as const;
-
 @customElement('maddie-grid-select')
-export class MaddieGridSelect extends ControlElement {
-  /** The division to return to when Follow zoom is turned off. */
+export class MaddieGridSelect extends ShortcutMenuControl {
+  /** The division to return to when Auto is turned off. */
   private lastFixedGrid: GridValue = '1/16';
+
+  private setAuto(ed: Editor, isOn: boolean) {
+    if (isOn) {
+      this.lastFixedGrid = ed.view.grid;
+      ed.setView({ grid: 'auto' });
+    } else ed.setView({ grid: this.lastFixedGrid });
+  }
+
+  private onMenuKey = (event: KeyboardEvent) => {
+    const ed = this.ed;
+    if (!ed) return;
+    this.handleMenuKey(event, 'g', {
+      d: () => this.cycleChoice(ed, 'Division', actions.cycleGridDivision, getStraightGrid),
+      f: () => this.cycleChoice(ed, 'Feel', actions.cycleGridFeel, getGridModifier),
+      a: () => this.setAuto(ed, ed.view.grid !== 'auto'),
+      s: () => actions.toggleSnap(ed),
+    });
+  };
+
+  private cycleChoice(ed: Editor, group: 'Division' | 'Feel', cycle: (editor: Editor) => void, valueOf: (grid: GridValue) => string) {
+    const previous = ed.view.grid;
+    cycle(ed);
+    const grid = ed.view.grid;
+    if (grid === previous) return;
+    void this.updateComplete.then(() => {
+      if (!this.menu?.isOpen || ed.view.grid !== grid) return;
+      const value = CSS.escape(valueOf(grid));
+      this.renderRoot.querySelector<HTMLElement>(`[aria-label="${group}"] z-toggle-button-group-item[value="${value}"]`)
+        ?.focus({ preventScroll: true });
+    });
+  }
 
   render = () => {
     const ed = this.ed;
@@ -235,19 +318,9 @@ export class MaddieGridSelect extends ControlElement {
     const divisions = renderChoices('Division', GRID_DIVISIONS, size, pickSize, GRID_DIVISIONS.length);
     const modifiers = renderChoices('Feel', feels, feel, pickFeel, feels.length);
     const snap = switchRow('Snap to grid', 'Hold Alt while dragging to bypass', ed.view.snap,
-      (isChecked) => ed.setView({ snap: isChecked }));
-    // Follow zoom: the grid gets finer as you zoom in, and snapping uses the lines you see.
-    // Picking a division turns it off; turning it off brings back the last division.
+      (isChecked) => ed.setView({ snap: isChecked }), false, 'S');
     const isAuto = ed.view.grid === 'auto';
-    const toggleAuto = (isOn: boolean) => {
-      if (isOn) {
-        this.lastFixedGrid = ed.view.grid;
-        ed.setView({ grid: 'auto' });
-        return;
-      }
-      ed.setView({ grid: this.lastFixedGrid });
-    };
-    const followZoom = switchRow('Follow zoom', 'Finer lines as you zoom in; snaps to the lines you see', isAuto, toggleAuto);
+    const auto = switchRow('Auto', 'Grid follows zoom', isAuto, (isOn) => this.setAuto(ed, isOn), false, 'A');
     const toggle = iconToggle({
       label: 'Snap to grid',
       tip: 'Snap to grid',
@@ -258,15 +331,16 @@ export class MaddieGridSelect extends ControlElement {
 
     return html`<z-button-group class="grid-chip" aria-label="Grid">
       ${toggle}
-      <z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" aria-label="Grid">
-        <z-button class="grid-value" slot="trigger" kind="ghost" size="sm" aria-label="Grid settings">
-          ${triggerText}${suffixBadge}${icons.chevron}
-        </z-button>
+      <z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" label="Grid"
+        @keydown=${this.onMenuKey} @keyup=${this.onMenuKey} @toggle=${this.onMenuToggle}>
+        <z-tooltip slot="trigger" content=${tip('Grid settings', 'G')} placement="bottom">
+          <z-button class="grid-value" kind="ghost" size="sm" aria-label="Grid settings">${triggerText}${suffixBadge}${icons.chevron}</z-button>
+        </z-tooltip>
         <div class="panel standard-panel">
           <strong>Grid</strong>
-          <div class="field"><span class="hint">Division</span>${divisions}</div>
-          <div class="field"><span class="hint">Feel</span>${modifiers}</div>
-          <z-separator></z-separator>${followZoom}${snap}
+          <div class="field"><span class="hint">${shortcutLabel('Division', 'D')}</span>${divisions}</div>
+          <div class="field"><span class="hint">${shortcutLabel('Feel', 'F')}</span>${modifiers}</div>
+          <z-separator></z-separator>${auto}${snap}
         </div>
       </z-popover>
     </z-button-group>`;
@@ -280,7 +354,7 @@ export class MaddieSnapToggle extends ControlElement {
     if (!ed) return nothing;
     return iconToggle({
       label: 'Snap to grid',
-      tip: tip('Snap · hold ⌥ to bypass', 'S'),
+      tip: tip('Snap · hold ⌥ to bypass', 'S + T + G'),
       icon: icons.magnet,
       tone: 'secondary',
       on: ed.view.snap,
@@ -299,7 +373,7 @@ export class MaddieChordsToggle extends ControlElement {
     if (!ed) return nothing;
     return iconToggle({
       label: 'Chords',
-      tip: tip('Chords that fit the key', 'H'),
+      tip: tip('Chords that fit the key', '/ + C'),
       icon: icons.chords,
       text: 'Chords',
       on: ed.view.chordsPanel,
@@ -356,8 +430,26 @@ export class MaddieKeySelect extends ControlElement {
       const isOwnEvent = event.target === event.currentTarget;
       if (isOwnEvent) this.query = '';
     };
-    // TODO(design): Connect detection once its behavior is decided.
-    const detect = () => this.engine?.toast("Couldn't detect a key.");
+    const detect = () => {
+      const notes = ed.trackIds.flatMap((id) => ed.notes(id)).filter((note) => !note.muted);
+      if (!notes.length) {
+        this.engine?.toast('No unmuted notes to detect a key from.', 'warning');
+        return;
+      }
+      const currentKey = ed.key;
+      if (currentKey && notes.every((note) => inScale(note.pitch, currentKey))) {
+        this.engine?.toast(`Key · ${formatEditorKey(currentKey)} · every note fits`);
+        return;
+      }
+      const guess = detectKey(notes);
+      if (!guess) return;
+      ed.commands.setKey(guess.key);
+      if (ed.key?.root !== guess.key.root || ed.key.scale !== guess.key.scale) return;
+      const fit = guess.outside
+        ? `${Math.round(guess.fit * 100)}% fits · ${guess.outside} ${guess.outside === 1 ? 'note' : 'notes'} outside`
+        : 'every note fits';
+      this.engine?.toast(`Key · ${formatEditorKey(guess.key)} · ${fit}`);
+    };
     const highlight = switchRow('Highlight key', 'Shade rows outside the key', ed.view.scaleHighlight,
       (isChecked) => ed.setView({ scaleHighlight: isChecked }));
     const lockSetting = switchRow('Lock to key', 'New and moved notes stay in key', ed.view.scaleLock,
@@ -403,38 +495,56 @@ export class MaddieScaleLock extends ControlElement {
   }
 }
 
-const FOLD_CHOICES: readonly { value: FoldMode; label: string }[] = [
-  { value: 'none', label: 'Off' },
-  { value: 'used', label: 'Notes' },
-  { value: 'scale', label: 'In key' },
-];
-
 @customElement('maddie-fold-select')
-export class MaddieFoldSelect extends ControlElement {
+export class MaddieFoldSelect extends ShortcutMenuControl {
+  private pick(ed: Editor, fold: FoldMode) {
+    if (fold === 'scale' && !ed.key) return;
+    ed.setView({ fold }, { animate: true });
+    this.closeMenu();
+  }
+
+  private onMenuKey = (event: KeyboardEvent) => {
+    const ed = this.ed;
+    if (!ed) return;
+    this.handleMenuKey(event, 'f', { o: () => this.pick(ed, 'none'), n: () => this.pick(ed, 'used'), k: () => this.pick(ed, 'scale') });
+    if (event.type !== 'keydown' || !this.menu?.isOpen || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.fold-option:not(:disabled)'));
+    const index = options.indexOf(event.composedPath()[0] as HTMLButtonElement);
+    const offset = event.key === 'ArrowDown' ? 1 : -1;
+    event.preventDefault();
+    event.stopPropagation();
+    const next = index < 0 ? (offset > 0 ? 0 : options.length - 1) : (index + offset + options.length) % options.length;
+    options[next]?.focus();
+  };
+
   render = () => {
     const ed = this.ed;
     if (!ed) return nothing;
     const hasKey = Boolean(ed.key);
     const fold = ed.view.fold;
     const isFolded = fold !== 'none' && (fold !== 'scale' || hasKey);
-    const isNotesMode = fold === 'used';
-    const isKeyMode = isFolded && fold === 'scale';
+    const selected = isFolded ? fold : 'none';
     const mode = FOLD_CHOICES.find((choice) => choice.value === fold);
     const label = isFolded ? mode?.label : nothing;
-    const keyDescription = ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first';
-    const pick = (event: CustomEvent<{ value: FoldMode }>) => {
-      ed.setView({ fold: event.detail.value }, { animate: true });
+    const descriptions: Record<FoldMode, string> = {
+      none: 'Show every pitch',
+      used: 'Only rows with notes',
+      scale: ed.key ? `Only rows in ${formatEditorKey(ed.key)}` : 'Pick a key first',
     };
+    const shortcuts: Record<FoldMode, string> = { none: 'O', used: 'N', scale: 'K' };
     const button = html`<z-toggle-button class="fold" kind="ghost" size="sm" tone="secondary" ?is-icon=${!isFolded}
       aria-label="Fold rows" .isPressed=${live(isFolded)}>${icons.fold}${label}</z-toggle-button>`;
 
-    return html`<z-menu ${ref(sizeEditorMenu)} align="end" aria-label="Fold rows" @select=${pick}>
-      <z-tooltip slot="trigger" content="Fold rows" placement="bottom">${button}</z-tooltip>
-      <z-menu-item type="radio" value="none" ?is-checked=${!isFolded} description="Show every pitch">Off</z-menu-item>
-      <z-menu-item type="radio" value="used" ?is-checked=${isNotesMode} description="Only rows with notes">Notes</z-menu-item>
-      <z-menu-item type="radio" value="scale" ?is-checked=${isKeyMode}
-        ?is-disabled=${!hasKey} description=${keyDescription}>In key</z-menu-item>
-    </z-menu>`;
+    return html`<z-popover ${ref(allowClicksThroughClosingPopover)} placement="bottom-end" offset="6" label="Fold rows"
+      @keydown=${this.onMenuKey} @keyup=${this.onMenuKey} @toggle=${this.onMenuToggle}>
+      <z-tooltip slot="trigger" content=${tip('Fold rows', 'F')} placement="bottom">${button}</z-tooltip>
+      <div class="panel fold-options" role="group" aria-label="Fold rows">
+        ${FOLD_CHOICES.map(({ value, label }) => html`<button type="button" class="fold-option" aria-pressed=${value === selected}
+          ?disabled=${value === 'scale' && !hasKey} @click=${() => this.pick(ed, value)}>
+          ${shortcutLabel(label, shortcuts[value])}<span class="hint">${descriptions[value]}</span>
+        </button>`)}
+      </div>
+    </z-popover>`;
   };
 }
 
@@ -520,7 +630,7 @@ export class MaddieTransport extends ControlElement {
     const time = `${Math.floor(tenths / 600)}:${String(Math.floor(tenths / 10) % 60).padStart(2, '0')}.${tenths % 10}`;
     const loop = iconToggle({
       label: 'Loop',
-      tip: 'Loop',
+      tip: tip('Loop', 'T then L'),
       icon: icons.loop,
       on: transport.loop.enabled,
       onToggle: (enabled) => {
@@ -535,14 +645,14 @@ export class MaddieTransport extends ControlElement {
     });
     const follow = iconToggle({
       label: 'Follow playhead',
-      tip: 'Follow playhead',
+      tip: tip('Follow playhead', 'T then F'),
       icon: icons.follow,
       on: ed.view.follow,
       onToggle: (isFollowing) => ed.setView({ follow: isFollowing }),
     });
     const metronome = iconToggle({
       label: 'Metronome',
-      tip: 'Metronome',
+      tip: tip('Metronome', 'T then M'),
       icon: icons.metronome,
       on: transport.metronome.enabled,
       onToggle: (enabled) => transport.setMetronome({ enabled }),
@@ -572,11 +682,11 @@ export class MaddieTransport extends ControlElement {
   };
 }
 
-const switchRow = (label: string, hint: string, on: boolean, onToggle: (on: boolean) => void, isDisabled = false) => {
+const switchRow = (label: string, hint: string, on: boolean, onToggle: (on: boolean) => void, isDisabled = false, shortcut?: string) => {
   const change = (event: CustomEvent<{ checked: boolean }>) => onToggle(event.detail.checked);
 
   return html`<div class="switch-row">
-    <span class="switch-copy" aria-hidden="true"><span>${label}</span><span class="hint">${hint}</span></span>
+    <span class="switch-copy" aria-hidden="true">${shortcut ? shortcutLabel(label, shortcut) : html`<span>${label}</span>`}<span class="hint">${hint}</span></span>
     <z-switch size="sm" tone="secondary" aria-label=${label} description=${hint}
       .isChecked=${live(on)} ?is-disabled=${isDisabled} @change=${change}></z-switch>
   </div>`;
@@ -629,7 +739,7 @@ export class MaddieLoopToggle extends ControlElement {
     const t = ed.transport;
     return iconToggle({
       label: 'Loop',
-      tip: tip('Loop · drag the ruler to set', `${modKeyLabel} L`),
+      tip: tip('Loop · drag the ruler to set', 'T then L'),
       icon: icons.loop,
       on: t.loop.enabled,
       onToggle: (enabled) => {
@@ -647,7 +757,7 @@ export class MaddieFollowToggle extends ControlElement {
     if (!ed) return nothing;
     return iconToggle({
       label: 'Follow playhead',
-      tip: tip('Follow playhead', 'F'),
+      tip: tip('Follow playhead', 'T then F'),
       icon: icons.follow,
       on: ed.view.follow,
       onToggle: (follow) => ed.setView({ follow }),
@@ -1010,7 +1120,7 @@ export class MaddieZoom extends ControlElement {
       const half = engine.viewport.width / 2;
       const anchor = view.scrollTick + half / view.pxPerTick;
       const pxPerTick = clamp(view.pxPerTick * factor, minTime, maxTime);
-      ed.setView({ pxPerTick, scrollTick: Math.max(0, anchor - half / pxPerTick) }, { animate: true });
+      ed.setView({ pxPerTick, scrollTick: anchor - half / pxPerTick }, { animate: true });
     };
     const fit = () => {
       const notes = ed.notes();
@@ -1030,27 +1140,92 @@ export class MaddieZoom extends ControlElement {
       engine.pauseFollow();
       ed.setView({
         pxPerTick,
-        scrollTick: Math.max(0, (start + end - width / pxPerTick) / 2),
+        scrollTick: (start + end - width / pxPerTick) / 2,
         rowHeight,
         scrollRow: clamp((top + bottom - height / rowHeight) / 2, 0, engine.maxScrollRow(rowHeight)),
       }, { animate: true });
     };
-    const button = (label: string, icon: unknown, click: () => void, isDisabled = false) => html`
-      <z-tooltip content=${label} placement="top">
-        <button type="button" class="cell" aria-label=${label} ?disabled=${isDisabled} @click=${click}>${icon}</button>
-      </z-tooltip>`;
-    const out = button('Zoom out in time · Ctrl + scroll, or drag the ruler down', icons.minus, () => setTime(0.8), view.pxPerTick <= minTime);
-    const inward = button('Zoom in on time · Ctrl + scroll, or drag the ruler up', icons.plus, () => setTime(1.25), view.pxPerTick >= maxTime);
-    const shorter = button('Shorter rows · Alt + scroll, or drag the keyboard down', icons.minus, () => setRows(-2), view.rowHeight <= minRow);
-    const taller = button('Taller rows · Alt + scroll, or drag the keyboard up', icons.plus, () => setRows(2), view.rowHeight >= maxRow);
-    const all = button('Zoom to fit', icons.fit, fit, !ed.notes().length);
+    const step = (label: string, path: unknown, click: () => void, isDisabled: boolean) => html`
+      <button type="button" class="zoom-step" aria-label=${label} title=${label} ?disabled=${isDisabled} @click=${click}>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">${path}</svg>
+      </button>`;
+    const minusPath = svg`<path d="M3 8h10"/>`;
+    const plusPath = svg`<path d="M8 3v10M3 8h10"/>`;
+    const fitPath = svg`<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>`;
 
-    // A flush L in the grid's corner: time zoom along the bottom edge, row height up
-    // the right edge, Fit where they meet. Each control sits on the edge it changes.
-    return html`<div class="rows" role="group" aria-label="Row height">${shorter}${taller}</div>
-      <div class="time" role="group" aria-label="Time zoom">${out}${inward}</div>
-      <div class="corner">${all}</div>`;
+    // Thumbs show the visible part of the whole song (time) and of all rows.
+    const visibleTicks = engine.viewport.width / view.pxPerTick;
+    const totalTicks = maxScrollTick(ed) + visibleTicks;
+    const thumbLeft = (Math.max(0, view.scrollTick) / totalTicks) * 100;
+    const thumbWidth = Math.min(100, (visibleTicks / totalTicks) * 100);
+    const visibleRows = engine.viewport.height / view.rowHeight;
+    const totalRows = Math.max(visibleRows, ed.rowMap.length);
+    const thumbTop = ((view.scrollRow ?? 0) / totalRows) * 100;
+    const thumbHeight = Math.min(100, (visibleRows / totalRows) * 100);
+    const thumbXStyle = `left: ${thumbLeft}%; width: ${thumbWidth}%`;
+    const thumbYStyle = `top: ${thumbTop}%; height: ${thumbHeight}%`;
+
+    // A flat scrollbar on the roll's bottom and right edges. Zoom steps sit at the end of
+    // the bar for the axis they change; Fit sits in the corner where the bars meet.
+    return html`<div class="scroll-x">
+        <div class="scroll-track" @pointerdown=${(event: PointerEvent) => this.dragScroll(event, 'x', totalTicks)}>
+          <span class="scroll-thumb" style=${thumbXStyle}></span>
+        </div>
+        ${step('Zoom out in time · Ctrl + scroll', minusPath, () => setTime(0.8), view.pxPerTick <= minTime)}
+        ${step('Zoom in on time · Ctrl + scroll', plusPath, () => setTime(1.25), view.pxPerTick >= maxTime)}
+      </div>
+      <div class="scroll-y">
+        <div class="scroll-track" @pointerdown=${(event: PointerEvent) => this.dragScroll(event, 'y', totalRows)}>
+          <span class="scroll-thumb" style=${thumbYStyle}></span>
+        </div>
+        ${step('Shorter rows · Alt + scroll', minusPath, () => setRows(-2), view.rowHeight <= minRow)}
+        ${step('Taller rows · Alt + scroll', plusPath, () => setRows(2), view.rowHeight >= maxRow)}
+      </div>
+      <button type="button" class="zoom-corner" aria-label="Zoom to fit" title="Zoom to fit" ?disabled=${!ed.notes().length} @click=${fit}>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${fitPath}</svg>
+      </button>`;
   };
+
+  /**
+   * Drag a scrollbar thumb, or press the track to jump there (the view centers on the
+   * press, then follows the drag). `total` is the axis length in ticks or rows.
+   */
+  private dragScroll(down: PointerEvent, axis: 'x' | 'y', total: number) {
+    const ed = this.ed;
+    const engine = this.engine;
+    const isPrimary = down.button === 0;
+    if (!ed || !engine || !isPrimary) return;
+    const track = down.currentTarget as HTMLElement;
+    const box = track.getBoundingClientRect();
+    const isX = axis === 'x';
+    const trackLength = isX ? box.width : box.height;
+    const visible = isX ? engine.viewport.width / ed.view.pxPerTick : engine.viewport.height / ed.view.rowHeight;
+    const unitsPerPx = total / Math.max(1, trackLength);
+    const thumb = track.querySelector('.scroll-thumb') as HTMLElement;
+    const isOnThumb = down.target === thumb;
+    const scrollTo = (value: number) => {
+      if (isX) return ed.setView({ scrollTick: Math.min(value, maxScrollTick(ed)) });
+      ed.setView({ scrollRow: clamp(value, 0, engine.maxScrollRow()) });
+    };
+    const pressOffset = isX ? down.clientX - box.left : down.clientY - box.top;
+    if (!isOnThumb) scrollTo(pressOffset * unitsPerPx - visible / 2);
+    const startValue = isX ? ed.view.scrollTick : ed.view.scrollRow ?? 0;
+    const startPointer = isX ? down.clientX : down.clientY;
+    engine.pauseFollow();
+    track.setPointerCapture(down.pointerId);
+    const move = (event: PointerEvent) => {
+      const pointer = isX ? event.clientX : event.clientY;
+      scrollTo(startValue + (pointer - startPointer) * unitsPerPx);
+    };
+    const finish = () => {
+      track.removeEventListener('pointermove', move);
+      track.removeEventListener('pointerup', finish);
+      track.removeEventListener('lostpointercapture', finish);
+    };
+    track.addEventListener('pointermove', move);
+    track.addEventListener('pointerup', finish);
+    track.addEventListener('lostpointercapture', finish);
+  }
 }
 
 @customElement('maddie-export')
@@ -1133,6 +1308,10 @@ export class MaddieEditbar extends MaddieElement {
     dividerStyles,
     unsafeCSS(editbarCss),
   ];
+
+  openMenu(kind: 'grid' | 'fold', returnFocus: HTMLElement) {
+    this.renderRoot.querySelector(kind === 'grid' ? 'maddie-grid-select' : 'maddie-fold-select')?.openMenu(returnFocus);
+  }
 
   render = () => html`
     <div class="tracks"><slot name="tracks"></slot></div>

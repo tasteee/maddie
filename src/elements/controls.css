@@ -129,6 +129,37 @@ z-button.grid-value {
 .switch-row z-switch { flex: none; }
 .fold { color: var(--accent); }
 .fold[is-pressed] { --on-accent: var(--accent); }
+.shortcut-label { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.shortcut-label kbd {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 1.25rem;
+  min-height: 1.25rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-default);
+  color: var(--text-secondary);
+  font: 500 var(--font-size-xs) var(--font-mono);
+}
+.switch-row:has(.shortcut-label) .switch-copy { flex: 1; }
+.panel.fold-options { width: min(216px, 75vw); gap: var(--space-0-5); }
+.fold-option {
+  display: grid;
+  gap: var(--space-0-5);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.fold-option:hover:not(:disabled) { background: var(--surface-subtle); }
+.fold-option[aria-pressed='true'] { background: color-mix(in oklch, var(--accent-secondary) 12%, transparent); }
+.fold-option:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.fold-option:disabled { color: var(--text-tertiary); cursor: default; }
 z-popover[is-open] > z-button[slot='trigger'] {
   background: var(--surface-page);
   border-radius: var(--radius-md);
