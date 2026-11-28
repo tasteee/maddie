@@ -1,8 +1,7 @@
 /* Flat scrollbars on the roll's bottom and right edges, with the zoom steps at
-   their ends and Fit in the corner where they meet. The host covers the roll;
-   only the bars take pointer events. */
+   their ends and Fit in the corner where they meet. Only the bars take pointer events. */
 :host {
-  --_bar: 14px;
+  --_bar: var(--_zoom-bar-size, 14px);
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--_bar);
   grid-template-rows: minmax(0, 1fr) var(--_bar);

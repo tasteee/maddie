@@ -4,7 +4,6 @@ import { live } from 'lit/directives/live.js';
 import { ref } from 'lit/directives/ref.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { classMap } from 'lit/directives/class-map.js';
-import { keyed } from 'lit/directives/keyed.js';
 import { createId, getTrackName } from '../core';
 import type { Editor, TrackMetaT } from '../core';
 import { modKeyLabel } from '../engine/keymap';
@@ -46,28 +45,36 @@ const navigateSwatches = (event: KeyboardEvent) => {
   next.click();
 };
 
+const isTrackMenuOpen = (panel?: HTMLElement | null) =>
+  Boolean(panel?.matches(':popover-open') && panel.dataset.state !== 'closing');
+
 const bindTrackMenu = (element?: Element) => {
   if (!element) return;
   const root = element.shadowRoot;
+  const panel = root?.querySelector<HTMLElement>('[popover]');
   const trigger = element.querySelector('.track-menu');
-  if (!root || !trigger) {
+  if (!panel || !trigger) {
     requestAnimationFrame(() => {
       if (element.isConnected) bindTrackMenu(element);
     });
     return;
   }
 
-  root.addEventListener('toggle', (event) => {
-    const panel = event.target;
-    if (!(panel instanceof HTMLElement) || !panel.hasAttribute('popover')) return;
-    const isOpen = panel.matches(':popover-open');
+  const update = () => {
+    const isOpen = isTrackMenuOpen(panel);
+    const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+    // Zest leaves the popover in the top layer while it fades out.
+    panel.style.pointerEvents = panel.dataset.state === 'closing' ? 'none' : '';
     trigger.setAttribute('aria-expanded', String(isOpen));
     element.toggleAttribute('data-expanded', isOpen);
-    if (!isOpen) return;
+    if (!isOpen || wasOpen) return;
     const input = element.querySelector('.track-name-field')?.shadowRoot?.querySelector('input');
     input?.focus({ preventScroll: true });
     input?.select();
-  }, true);
+  };
+  panel.addEventListener('toggle', update);
+  new MutationObserver(update).observe(panel, { attributeFilter: ['data-state'] });
+  update();
 };
 
 const renderSwatches = (ed: Editor, track: TrackMetaT) => {
@@ -106,9 +113,8 @@ export class MaddieTracks extends MaddieElement {
   static styles = [tokens, unsafeCSS(trackStyles)];
 
   @state() private hasOverflow = false;
-  // Bumped after a drag so the list is rebuilt from data, not from the nodes the sortable moved.
-  @state() private sortEpoch = 0;
   private lastActiveId?: string;
+  private sortPosition?: { tab: Element; next: ChildNode | null; newIndex?: number };
   private gainGestures = new WeakMap<HTMLInputElement, string>();
 
   protected attach(editor: Editor) {
@@ -196,7 +202,8 @@ export class MaddieTracks extends MaddieElement {
     const trigger = event.currentTarget as HTMLButtonElement;
     const tab = trigger.closest('.track');
     if (!tab) return;
-    const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+    const panel = tab.closest('z-context-menu')?.shadowRoot?.querySelector<HTMLElement>('[popover]');
+    const wasOpen = isTrackMenuOpen(panel);
     this.closeOpenMenus();
     if (wasOpen) return;
     const bounds = tab.getBoundingClientRect();
@@ -265,6 +272,10 @@ export class MaddieTracks extends MaddieElement {
       ed.commands.soloTrack(track.id, isAdditive);
     };
     const activateOnContext = (event: MouseEvent) => {
+      const tab = event.currentTarget as HTMLElement;
+      const panel = tab.closest('z-context-menu')?.shadowRoot?.querySelector<HTMLElement>('[popover]');
+      // Zest cancels the exit timer on reopen, but a still-visible popover keeps its closing state.
+      if (panel?.dataset.state === 'closing') delete panel.dataset.state;
       const isContextClick = event.detail !== -1;
       if (!isContextClick) return;
       ed.setActiveTrack(track.id);
@@ -273,6 +284,7 @@ export class MaddieTracks extends MaddieElement {
       this.closeOpenMenus();
     };
     const selectAction = (event: CustomEvent<{ value: TrackActionT }>) => {
+      if (!ed.trackIds.includes(track.id)) return;
       const action = event.detail.value;
       if (action === 'duplicate') ed.commands.duplicateTrack(track.id);
       if (action === 'delete') {
@@ -330,13 +342,32 @@ export class MaddieTracks extends MaddieElement {
     if (shouldIgnore) event.stopPropagation();
   };
 
-  private sortTracks = (event: CustomEvent<{ oldIndex: number; newIndex: number }>) => {
+  private startSort = (event: CustomEvent<{ index: number }>) => {
+    const sortable = event.currentTarget as HTMLElement;
+    const tab = Array.from(sortable.children).filter((child) => child.matches('.tab-slot'))[event.detail.index];
+    this.sortPosition = tab ? { tab, next: tab.nextSibling } : undefined;
+  };
+
+  private sortTracks = (event: CustomEvent<{ newIndex: number }>) => {
     event.stopPropagation();
+    if (this.sortPosition) this.sortPosition.newIndex = event.detail.newIndex;
+  };
+
+  private endSort = (event: Event) => {
+    const position = this.sortPosition;
+    this.sortPosition = undefined;
+    const sortable = event.currentTarget as HTMLElement;
+    if (!position || position.tab.parentNode !== sortable) return;
+    const { tab, next, newIndex } = position;
+    if (next && next.parentNode !== sortable) return;
+    // Sortable can move a tab past Lit's markers even when its element index is unchanged.
+    // Restore its original place so repeat can reconcile the new track order.
+    if (tab.nextSibling !== next) sortable.insertBefore(tab, next);
     const ed = this.ed;
-    if (!ed) return;
-    const movedId = ed.trackIds[event.detail.oldIndex];
-    if (movedId) ed.commands.moveTrack(movedId, event.detail.newIndex);
-    this.sortEpoch += 1;
+    if (!ed || newIndex === undefined) return;
+    const oldIndex = Array.from(sortable.children).indexOf(tab);
+    const movedId = ed.trackIds[oldIndex];
+    if (movedId) ed.commands.moveTrack(movedId, newIndex);
   };
 
   private moveTab = (event: KeyboardEvent) => {
@@ -370,9 +401,9 @@ export class MaddieTracks extends MaddieElement {
     // TODO(design): Consider a side list for larger sessions.
     const guardOptions = { handleEvent: this.guardSortPointer, capture: true };
     const sortable = html`<z-sortable is-horizontal handle=".track"
-      @pointerdown=${guardOptions} @sort=${this.sortTracks}>${tracks}</z-sortable>`;
+      @pointerdown=${guardOptions} @start=${this.startSort} @sort=${this.sortTracks} @end=${this.endSort}>${tracks}</z-sortable>`;
     return html`<div class="tabs" role="tablist" aria-label="Tracks" @keydown=${this.moveTab}>
-      ${keyed(this.sortEpoch, sortable)}
+      ${sortable}
     </div>
     <div class="add-track" ?data-overflow=${this.hasOverflow}>
       <z-menu ${ref(sizeEditorMenu)} align="start" @select=${addTrack}>
